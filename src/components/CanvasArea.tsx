@@ -1,0 +1,1448 @@
+import React, { useRef, useState, useEffect } from 'react';
+import { Point, VectorObject, Bone, Pivot, Frame } from '../types';
+import { 
+  distance, 
+  pointToPolylineDistance, 
+  isPointInPolygon, 
+  localToWorld, 
+  worldToLocal, 
+  deformPoints, 
+  calculateBoundingBox,
+  rotatePoint
+} from '../utils/math';
+
+interface CanvasAreaProps {
+  objects: { [id: string]: VectorObject };
+  setObjects: React.Dispatch<React.SetStateAction<{ [id: string]: VectorObject }>>;
+  selectedObjectId: string | null;
+  setSelectedObjectId: (id: string | null) => void;
+  activeTool: string;
+  frames: Frame[];
+  currentFrameIndex: number;
+  bones: Bone[];
+  setBones: React.Dispatch<React.SetStateAction<Bone[]>>;
+  activeLayerId: string;
+  onionSkinEnabled: boolean;
+  isPlaying: boolean;
+  historyPush: () => void;
+}
+
+export default function CanvasArea({
+  objects,
+  setObjects,
+  selectedObjectId,
+  setSelectedObjectId,
+  activeTool,
+  frames,
+  currentFrameIndex,
+  bones,
+  setBones,
+  activeLayerId,
+  onionSkinEnabled,
+  isPlaying,
+  historyPush,
+}: CanvasAreaProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const backCanvasRef = useRef<HTMLCanvasElement>(null);
+  const frontCanvasRef = useRef<HTMLCanvasElement>(null);
+
+  // Drawing state
+  const [isDrawing, setIsPlayingState] = useState(false);
+  const [strokePoints, setStrokePoints] = useState<Point[]>([]);
+  
+  // Transform & drag gesture state
+  const [dragMode, setDragMode] = useState<'none' | 'move' | 'rotate' | 'scale' | 'pivot' | 'pin' | 'meshPoint'>('none');
+  const [dragStartPoint, setDragStartPoint] = useState<Point>({ x: 0, y: 0 });
+  const [initialTransform, setInitialTransform] = useState<any>(null);
+  const [activeHandleIndex, setActiveHandleIndex] = useState<number | null>(null);
+  const [draggedMeshPointIndex, setDraggedMeshPointIndex] = useState<number | null>(null);
+  
+  // Selection anti-unselect 3-tap counter
+  const [tapCount, setTapCount] = useState<number>(0);
+  const [lastTapTime, setLastTapTime] = useState<number>(0);
+
+  // Knife tool path state
+  const [knifePath, setKnifePath] = useState<Point[]>([]);
+
+  // Pen path creation state
+  const [penPoints, setPenPoints] = useState<Point[]>([]);
+
+  // Bone drawing state
+  const [boneStartPoint, setBoneStartPoint] = useState<Point | null>(null);
+  const [boneStartObject, setBoneStartObject] = useState<VectorObject | null>(null);
+  const [boneStartPivot, setBoneStartPivot] = useState<Pivot | null>(null);
+  const [snappedPivot, setSnappedPivot] = useState<{ objId: string; pivot: Pivot; worldX: number; worldY: number } | null>(null);
+  const [elasticWarningId, setElasticWarningId] = useState<string | null>(null);
+  const [currentCursorPos, setCurrentCursorPos] = useState<Point>({ x: 0, y: 0 });
+
+  // Get coordinates relative to canvas bounding box
+  const getCanvasCoords = (e: React.PointerEvent<HTMLCanvasElement>): Point => {
+    const canvas = frontCanvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+    };
+  };
+
+  // Get all pivots from all active objects with their world coordinates
+  const getAllPivotsWorld = () => {
+    const list: { objId: string; pivot: Pivot; worldX: number; worldY: number }[] = [];
+    Object.entries(objects).forEach(([objId, obj]) => {
+      if (obj.isHidden) return;
+      const p = obj.pivots[0] || { id: 'default', name: 'default', localX: 0, localY: 0, locked: false };
+      const world = localToWorld({ x: p.localX, y: p.localY }, obj.transform, obj.pivots[0]);
+      list.push({
+        objId,
+        pivot: p,
+        worldX: world.x,
+        worldY: world.y
+      });
+    });
+    return list;
+  };
+
+  // Perform hit testing on any drawing path
+  const performHitTest = (coords: Point): VectorObject | null => {
+    const activeObjects = Object.values(objects).filter(o => !o.isHidden);
+    // Prioritize smaller objects or front objects (by rendering layer / creation time)
+    const reversed = [...activeObjects].reverse();
+    for (const obj of reversed) {
+      // Hit test points
+      const worldPoints = obj.points.map(p => localToWorld(p, obj.transform, obj.pivots[0]));
+      
+      // If filled shape, do point-in-polygon check
+      if (obj.fillColor && obj.fillColor !== 'transparent') {
+        if (isPointInPolygon(coords, worldPoints)) {
+          return obj;
+        }
+      }
+
+      // Check distance to outline (minimum 15px radius)
+      const dist = pointToPolylineDistance(coords, worldPoints);
+      if (dist < 18) {
+        return obj;
+      }
+    }
+    return null;
+  };
+
+  // Enforce locked bone rigid distance constraints!
+  const enforceBoneConstraints = (updatedObjects: { [id: string]: VectorObject }) => {
+    let resolved = true;
+    for (let iter = 0; iter < 3; iter++) {
+      for (const bone of bones) {
+        const startObj = updatedObjects[bone.startObjectId];
+        const endObj = updatedObjects[bone.endObjectId];
+        if (!startObj || !endObj) continue;
+
+        const startWorld = localToWorld({ x: bone.startLocalX, y: bone.startLocalY }, startObj.transform, startObj.pivots[0]);
+        const endWorld = localToWorld({ x: bone.endLocalX, y: bone.endLocalY }, endObj.transform, endObj.pivots[0]);
+
+        const dist = distance(startWorld, endWorld);
+        if (Math.abs(dist - bone.lockedDistance) > 0.01 && !bone.allowDetach) {
+          const dx = endWorld.x - startWorld.x;
+          const dy = endWorld.y - startWorld.y;
+          const ratio = bone.lockedDistance / (dist || 1);
+          
+          const targetEndWorld = {
+            x: startWorld.x + dx * ratio,
+            y: startWorld.y + dy * ratio,
+          };
+
+          const worldDelta = {
+            x: targetEndWorld.x - endWorld.x,
+            y: targetEndWorld.y - endWorld.y,
+          };
+
+          endObj.transform = {
+            ...endObj.transform,
+            x: Number((endObj.transform.x + worldDelta.x).toFixed(2)),
+            y: Number((endObj.transform.y + worldDelta.y).toFixed(2)),
+          };
+          resolved = false;
+        }
+      }
+      if (resolved) break;
+    }
+  };
+
+  // Recursively propagates transforms down the bone / parent-child hierarchy tree
+  const propagateRigTransforms = (
+    updatedObjects: { [id: string]: VectorObject },
+    changedObjectId: string,
+    deltaX: number,
+    deltaY: number,
+    deltaRot: number
+  ) => {
+    const parent = updatedObjects[changedObjectId];
+    if (!parent) return;
+
+    // Get child IDs from both:
+    // 1. Direct parent-child hierarchy (child.parentId === parent.id)
+    // 2. Bone connections (bone.startObjectId === parent.id)
+    const directChildIds = Object.values(updatedObjects)
+      .filter(o => o.parentId === changedObjectId)
+      .map(o => o.id);
+      
+    const boneChildIds = bones
+      .filter(b => b.startObjectId === changedObjectId)
+      .map(b => b.endObjectId);
+
+    // Union of all unique child IDs
+    const uniqueChildIds = Array.from(new Set([...directChildIds, ...boneChildIds]));
+
+    for (const childId of uniqueChildIds) {
+      const child = updatedObjects[childId];
+      if (!child) continue;
+
+      // Find associated bone if any
+      const bone = bones.find(b => b.startObjectId === changedObjectId && b.endObjectId === childId);
+
+      // Determine rotation change
+      const nextRotation = Number((child.transform.rotation + deltaRot).toFixed(2));
+      
+      // Apply basic translation & rotation
+      child.transform = {
+        ...child.transform,
+        rotation: nextRotation,
+        x: Number((child.transform.x + deltaX).toFixed(2)),
+        y: Number((child.transform.y + deltaY).toFixed(2)),
+      };
+
+      // If the parent rotated, we should rotate the child's position around the parent's pivot/joint
+      if (deltaRot !== 0) {
+        let pJointLocal = { x: 0, y: 0 };
+        if (bone) {
+          pJointLocal = { x: bone.startLocalX, y: bone.startLocalY };
+        } else if (parent.pivots && parent.pivots[0]) {
+          pJointLocal = { x: parent.pivots[0].localX, y: parent.pivots[0].localY };
+        }
+
+        const parentJointWorld = localToWorld(
+          pJointLocal,
+          parent.transform,
+          parent.pivots[0]
+        );
+        
+        const childWorldPos = { x: child.transform.x, y: child.transform.y };
+        const rotatedChildWorldPos = rotatePoint(childWorldPos, deltaRot, parentJointWorld);
+        
+        child.transform.x = Number(rotatedChildWorldPos.x.toFixed(2));
+        child.transform.y = Number(rotatedChildWorldPos.y.toFixed(2));
+      }
+
+      // Enforce rigid joint connection: child joint must perfectly attach to parent joint
+      if (bone && !bone.allowDetach) {
+        const pJoint = localToWorld({ x: bone.startLocalX, y: bone.startLocalY }, parent.transform, parent.pivots[0]);
+        const cJoint = localToWorld({ x: bone.endLocalX, y: bone.endLocalY }, child.transform, child.pivots[0]);
+        
+        const dx = pJoint.x - cJoint.x;
+        const dy = pJoint.y - cJoint.y;
+
+        child.transform.x = Number((child.transform.x + dx).toFixed(2));
+        child.transform.y = Number((child.transform.y + dy).toFixed(2));
+      }
+
+      // Recursively propagate to grandchild objects!
+      propagateRigTransforms(updatedObjects, childId, deltaX, deltaY, deltaRot);
+    }
+  };
+
+  // Generate 10 interactive handles for scaling, rotation, and pivot anchoring
+  const getHandles = (obj: VectorObject) => {
+    const box = calculateBoundingBox(obj.points);
+    const pivot = (obj.pivots[0] || { id: 'default', name: 'default', localX: 0, localY: 0, locked: false }) as Pivot;
+    
+    const localHandles = [
+      { type: 'scale', index: 0, x: box.x, y: box.y, cursor: 'nwse-resize' }, // Top-Left
+      { type: 'scale', index: 1, x: box.x + box.width / 2, y: box.y, cursor: 'ns-resize' }, // Top-Center
+      { type: 'scale', index: 2, x: box.x + box.width, y: box.y, cursor: 'nesw-resize' }, // Top-Right
+      { type: 'scale', index: 3, x: box.x + box.width, y: box.y + box.height / 2, cursor: 'ew-resize' }, // Middle-Right
+      { type: 'scale', index: 4, x: box.x + box.width, y: box.y + box.height, cursor: 'nwse-resize' }, // Bottom-Right
+      { type: 'scale', index: 5, x: box.x + box.width / 2, y: box.y + box.height, cursor: 'ns-resize' }, // Bottom-Center
+      { type: 'scale', index: 6, x: box.x, y: box.y + box.height, cursor: 'nesw-resize' }, // Bottom-Left
+      { type: 'scale', index: 7, x: box.x, y: box.y + box.height / 2, cursor: 'ew-resize' }, // Middle-Left
+      { type: 'rotate', index: 8, x: box.x + box.width / 2, y: box.y - 25, cursor: 'grab' }, // Rotation Handle
+      { type: 'pivot', index: 9, x: pivot.localX, y: pivot.localY, cursor: 'move' } // Pivot Handle
+    ];
+
+    return localHandles.map(h => {
+      const world = localToWorld({ x: h.x, y: h.y }, obj.transform, pivot);
+      return {
+        ...h,
+        worldX: world.x,
+        worldY: world.y
+      };
+    });
+  };
+
+  // Erase any drawing points under the mouse/pointer
+  const erasePointsAt = (pt: Point) => {
+    setObjects(prev => {
+      const updated = { ...prev };
+      let changed = false;
+      
+      Object.keys(updated).forEach(id => {
+        const obj = updated[id];
+        const filteredPoints = obj.points.filter(p => {
+          const worldPt = localToWorld(p, obj.transform, obj.pivots[0]);
+          return distance(worldPt, pt) > 20; // 20px eraser radius
+        });
+
+        if (filteredPoints.length !== obj.points.length) {
+          changed = true;
+          if (filteredPoints.length < 2) {
+            delete updated[id];
+          } else {
+            updated[id] = {
+              ...obj,
+              points: filteredPoints
+            };
+          }
+        }
+      });
+
+      if (changed) {
+        return updated;
+      }
+      return prev;
+    });
+  };
+
+  // Pointer Down event handler
+  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const coords = getCanvasCoords(e);
+    setCurrentCursorPos(coords);
+
+    // 1. Bone tool creation logic
+    if (activeTool === 'BON') {
+      const pList = getAllPivotsWorld();
+      const nearPivot = pList.find(item => distance(coords, { x: item.worldX, y: item.worldY }) < 15);
+
+      if (!boneStartPoint) {
+        if (nearPivot) {
+          // Start exactly at the clicked pivot point
+          setBoneStartPoint({ x: nearPivot.worldX, y: nearPivot.worldY });
+          setBoneStartObject(objects[nearPivot.objId]);
+          setBoneStartPivot(nearPivot.pivot);
+        } else {
+          // If no pivot clicked, check if we hit any object and auto-create pivot there
+          const hitObj = performHitTest(coords);
+          if (hitObj) {
+            const local = worldToLocal(coords, hitObj.transform, hitObj.pivots[0]);
+            const newPivot: Pivot = {
+              id: `pvt_${Date.now()}`,
+              name: `Pivot_${hitObj.pivots.length + 1}`,
+              localX: Number(local.x.toFixed(2)),
+              localY: Number(local.y.toFixed(2)),
+              locked: false,
+            };
+            setObjects(prev => ({
+              ...prev,
+              [hitObj.id]: {
+                ...prev[hitObj.id],
+                pivots: [newPivot, ...prev[hitObj.id].pivots]
+              }
+            }));
+            setBoneStartPoint(coords);
+            setBoneStartObject(hitObj);
+            setBoneStartPivot(newPivot);
+          }
+        }
+      } else {
+        // Complete Bone connection
+        // Check if there is a target snapped pivot
+        const snappedTarget = pList.find(item => item.objId !== boneStartObject?.id && distance(coords, { x: item.worldX, y: item.worldY }) < 15);
+        
+        if (snappedTarget && boneStartObject) {
+          const targetObj = objects[snappedTarget.objId];
+          const startLocal = worldToLocal(boneStartPoint, boneStartObject.transform, boneStartObject.pivots[0]);
+          const endLocal = worldToLocal({ x: snappedTarget.worldX, y: snappedTarget.worldY }, targetObj.transform, targetObj.pivots[0]);
+          const len = distance(boneStartPoint, { x: snappedTarget.worldX, y: snappedTarget.worldY });
+
+          const newBone: Bone = {
+            id: `bone_${Date.now()}`,
+            name: `Bone_${bones.length + 1}`,
+            startObjectId: boneStartObject.id,
+            endObjectId: targetObj.id,
+            startLocalX: startLocal.x,
+            startLocalY: startLocal.y,
+            endLocalX: endLocal.x,
+            endLocalY: endLocal.y,
+            lockedDistance: len,
+            allowDetach: false,
+            minAngle: -180,
+            maxAngle: 180,
+            enableConstraints: true,
+          };
+
+          setBones(prev => [...prev, newBone]);
+
+          // Parent the target object to starting object
+          setObjects(prev => {
+            const updated = { ...prev };
+            updated[targetObj.id] = {
+              ...updated[targetObj.id],
+              parentId: boneStartObject.id,
+            };
+            if (!updated[boneStartObject.id].childrenIds.includes(targetObj.id)) {
+              updated[boneStartObject.id].childrenIds = [...updated[boneStartObject.id].childrenIds, targetObj.id];
+            }
+            return updated;
+          });
+
+          historyPush();
+        } else if (boneStartObject) {
+          // If no snapped pivot, check if we clicked on another object and auto-create target pivot there
+          const hitObj = performHitTest(coords);
+          if (hitObj && hitObj.id !== boneStartObject.id) {
+            const local = worldToLocal(coords, hitObj.transform, hitObj.pivots[0]);
+            const newPivot: Pivot = {
+              id: `pvt_${Date.now()}`,
+              name: `Pivot_${hitObj.pivots.length + 1}`,
+              localX: Number(local.x.toFixed(2)),
+              localY: Number(local.y.toFixed(2)),
+              locked: false,
+            };
+
+            setObjects(prev => {
+              const updated = { ...prev };
+              updated[hitObj.id] = {
+                ...updated[hitObj.id],
+                pivots: [newPivot, ...updated[hitObj.id].pivots],
+                parentId: boneStartObject.id
+              };
+              if (!updated[boneStartObject.id].childrenIds.includes(hitObj.id)) {
+                updated[boneStartObject.id].childrenIds = [...updated[boneStartObject.id].childrenIds, hitObj.id];
+              }
+              return updated;
+            });
+
+            const startLocal = worldToLocal(boneStartPoint, boneStartObject.transform, boneStartObject.pivots[0]);
+            const len = distance(boneStartPoint, coords);
+
+            const newBone: Bone = {
+              id: `bone_${Date.now()}`,
+              name: `Bone_${bones.length + 1}`,
+              startObjectId: boneStartObject.id,
+              endObjectId: hitObj.id,
+              startLocalX: startLocal.x,
+              startLocalY: startLocal.y,
+              endLocalX: local.x,
+              endLocalY: local.y,
+              lockedDistance: len,
+              allowDetach: false,
+              minAngle: -180,
+              maxAngle: 180,
+              enableConstraints: true,
+            };
+
+            setBones(prev => [...prev, newBone]);
+            historyPush();
+          }
+        }
+        
+        setBoneStartPoint(null);
+        setBoneStartObject(null);
+        setBoneStartPivot(null);
+        setSnappedPivot(null);
+      }
+      return;
+    }
+
+    // 2. Add custom pivot point (PVT tool)
+    if (activeTool === 'PVT' && selectedObjectId) {
+      const obj = objects[selectedObjectId];
+      if (obj) {
+        const local = worldToLocal(coords, obj.transform, obj.pivots[0]);
+        const newPivot: Pivot = {
+          id: `pvt_${Date.now()}`,
+          name: `Pivot_${obj.pivots.length + 1}`,
+          localX: Number(local.x.toFixed(2)),
+          localY: Number(local.y.toFixed(2)),
+          locked: false,
+        };
+        updateObjectProperties(obj.id, { pivots: [newPivot, ...obj.pivots] });
+        historyPush();
+      }
+      return;
+    }
+
+    // 3. Add puppet pin (PIN tool)
+    if (activeTool === 'PIN' && selectedObjectId) {
+      const obj = objects[selectedObjectId];
+      if (obj) {
+        const local = worldToLocal(coords, obj.transform, obj.pivots[0]);
+        const newPin: Pivot = {
+          id: `pin_${Date.now()}`,
+          name: `Pin_${(obj.pins || []).length + 1}`,
+          localX: Number(local.x.toFixed(2)),
+          localY: Number(local.y.toFixed(2)),
+          locked: false,
+          isActive: true,
+        };
+        const currentPins = obj.pins || [];
+        updateObjectProperties(obj.id, { pins: [...currentPins, newPin] });
+        historyPush();
+      }
+      return;
+    }
+
+    // 4. Knife slicing tool logic
+    if (activeTool === 'KNF') {
+      if (selectedObjectId) {
+        setKnifePath([coords]);
+        setDragMode('pivot');
+      }
+      return;
+    }
+
+    // 5. Vector Pen Tool creation logic
+    if (activeTool === 'PEN') {
+      if (penPoints.length > 0 && distance(coords, penPoints[0]) < 12) {
+        if (penPoints.length >= 3) {
+          const newId = `obj_${Date.now()}`;
+          const name = `PenPath_${Object.keys(objects).length + 1}`;
+          const newObj: VectorObject = {
+            id: newId,
+            name,
+            type: 'shape',
+            shapeType: 'rectangle',
+            points: [...penPoints, penPoints[0]],
+            strokeColor: '#E53935',
+            strokeWidth: 3.5,
+            fillColor: 'transparent',
+            opacity: 1,
+            transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+            pivots: [{ id: `pvt_${Date.now()}`, name: 'Pivot_1', localX: penPoints[0].x, localY: penPoints[0].y, locked: false }],
+            parentId: null,
+            childrenIds: [],
+            layerId: activeLayerId,
+            isLocked: false,
+            isHidden: false,
+          };
+          setObjects(prev => ({ ...prev, [newId]: newObj }));
+          setSelectedObjectId(newId);
+          historyPush();
+        }
+        setPenPoints([]);
+      } else {
+        setPenPoints(prev => [...prev, coords]);
+      }
+      return;
+    }
+
+    // 6. Shapes Tool logic
+    if (activeTool === 'SHP') {
+      setIsPlayingState(true);
+      setDragStartPoint(coords);
+      return;
+    }
+
+    // 7. Eraser Tool logic
+    if (activeTool === 'ERS') {
+      setIsPlayingState(true);
+      erasePointsAt(coords);
+      return;
+    }
+
+    // 8. Fill Bucket Tool logic
+    if (activeTool === 'FIL') {
+      const clickedObj = performHitTest(coords);
+      if (clickedObj) {
+        setObjects(prev => ({
+          ...prev,
+          [clickedObj.id]: {
+            ...prev[clickedObj.id],
+            fillColor: '#FF9800'
+          }
+        }));
+        historyPush();
+      }
+      return;
+    }
+
+    // 9. Eyedropper Tool logic
+    if (activeTool === 'EYE') {
+      const clickedObj = performHitTest(coords);
+      if (clickedObj) {
+        alert(`Sampled Color -> Stroke: ${clickedObj.strokeColor}, Fill: ${clickedObj.fillColor}`);
+      }
+      return;
+    }
+
+    // 9.5. Geometry Deform Mesh Tool logic
+    if (activeTool === 'MSH') {
+      if (selectedObjectId && objects[selectedObjectId]) {
+        const obj = objects[selectedObjectId];
+        let clickedPointIndex = -1;
+        let minPtDist = 14; // Pixels threshold in world space
+
+        obj.points.forEach((pt, idx) => {
+          const worldPt = localToWorld(pt, obj.transform, obj.pivots[0]);
+          const d = distance(coords, worldPt);
+          if (d < minPtDist) {
+            minPtDist = d;
+            clickedPointIndex = idx;
+          }
+        });
+
+        if (clickedPointIndex !== -1) {
+          setDragMode('meshPoint');
+          setDraggedMeshPointIndex(clickedPointIndex);
+          setDragStartPoint(coords);
+          return;
+        }
+      }
+
+      // If we didn't drag a mesh point, let's select an object
+      const clickedObj = performHitTest(coords);
+      if (clickedObj) {
+        setSelectedObjectId(clickedObj.id);
+      } else {
+        setSelectedObjectId(null);
+      }
+      return;
+    }
+
+    // 10. Select & Transform Logic
+    if (activeTool === 'SEL') {
+      if (selectedObjectId) {
+        const obj = objects[selectedObjectId];
+        if (obj) {
+          const handles = getHandles(obj);
+          const clickedHandle = handles.find(h => distance(coords, { x: h.worldX, y: h.worldY }) < 12);
+          
+          if (clickedHandle) {
+            if (clickedHandle.type === 'scale') {
+              setDragMode('scale');
+              setActiveHandleIndex(clickedHandle.index);
+            } else if (clickedHandle.type === 'rotate') {
+              setDragMode('rotate');
+              setActiveHandleIndex(8);
+            } else if (clickedHandle.type === 'pivot') {
+              setDragMode('pivot');
+              setActiveHandleIndex(9);
+            }
+            setDragStartPoint(coords);
+            setInitialTransform({ ...obj.transform });
+            return;
+          }
+        }
+      }
+
+      const clickedObj = performHitTest(coords);
+      if (clickedObj) {
+        setSelectedObjectId(clickedObj.id);
+        setDragMode('move');
+        setDragStartPoint(coords);
+        setInitialTransform({ ...clickedObj.transform });
+      }
+      return;
+    }
+
+    // 11. Vector brush drawing logic
+    if (activeTool === 'BRS') {
+      setIsPlayingState(true);
+      setStrokePoints([coords]);
+      return;
+    }
+  };
+
+  // Pointer Move event handler
+  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const coords = getCanvasCoords(e);
+    setCurrentCursorPos(coords);
+
+    if (dragMode === 'meshPoint' && selectedObjectId && draggedMeshPointIndex !== null) {
+      const obj = objects[selectedObjectId];
+      if (obj) {
+        const localPos = worldToLocal(coords, obj.transform, obj.pivots[0]);
+        setObjects(prev => {
+          if (!prev[selectedObjectId]) return prev;
+          const updatedPoints = [...prev[selectedObjectId].points];
+          updatedPoints[draggedMeshPointIndex] = {
+            x: Number(localPos.x.toFixed(2)),
+            y: Number(localPos.y.toFixed(2))
+          };
+          return {
+            ...prev,
+            [selectedObjectId]: {
+              ...prev[selectedObjectId],
+              points: updatedPoints
+            }
+          };
+        });
+      }
+      return;
+    }
+
+    if (activeTool === 'BON' && boneStartPoint) {
+      const pList = getAllPivotsWorld();
+      const nearPivot = pList.find(item => item.objId !== boneStartObject?.id && distance(coords, { x: item.worldX, y: item.worldY }) < 15);
+      if (nearPivot) {
+        setSnappedPivot(nearPivot);
+        setCurrentCursorPos({ x: nearPivot.worldX, y: nearPivot.worldY });
+      } else {
+        setSnappedPivot(null);
+        setCurrentCursorPos(coords);
+      }
+      return;
+    }
+
+    if (isDrawing && activeTool === 'BRS') {
+      setStrokePoints(prev => [...prev, coords]);
+      return;
+    }
+
+    if (isDrawing && activeTool === 'ERS') {
+      erasePointsAt(coords);
+      return;
+    }
+
+    if (selectedObjectId) {
+      const obj = objects[selectedObjectId];
+      if (!obj) return;
+
+      if (dragMode === 'move') {
+        const dx = coords.x - dragStartPoint.x;
+        const dy = coords.y - dragStartPoint.y;
+
+        let nextX = Number((initialTransform.x + dx).toFixed(2));
+        let nextY = Number((initialTransform.y + dy).toFixed(2));
+
+        if (obj.parentId && objects[obj.parentId]) {
+          const parent = objects[obj.parentId];
+          const bone = bones.find(b => (b.startObjectId === obj.parentId && b.endObjectId === obj.id) || (b.startObjectId === obj.id && b.endObjectId === obj.parentId));
+          
+          const parentPivot = parent.pivots[0] || { localX: 0, localY: 0 };
+          const parentPivotWorld = {
+            x: parent.transform.x + parentPivot.localX,
+            y: parent.transform.y + parentPivot.localY
+          };
+
+          const currentDist = distance({ x: nextX, y: nextY }, parentPivotWorld);
+          const restLength = bone ? bone.lockedDistance : 120;
+          const maxDistance = restLength * 1.5;
+
+          if (currentDist > maxDistance) {
+            // Elastic connection limit hit!
+            const dx_parent = nextX - parentPivotWorld.x;
+            const dy_parent = nextY - parentPivotWorld.y;
+            const ratio = maxDistance / (currentDist || 1);
+            
+            nextX = Number((parentPivotWorld.x + dx_parent * ratio).toFixed(2));
+            nextY = Number((parentPivotWorld.y + dy_parent * ratio).toFixed(2));
+            setElasticWarningId(obj.id);
+          } else {
+            setElasticWarningId(null);
+          }
+        } else {
+          setElasticWarningId(null);
+        }
+
+        const deltaX = nextX - obj.transform.x;
+        const deltaY = nextY - obj.transform.y;
+
+        setObjects(prev => {
+          const updated = { ...prev };
+          updated[selectedObjectId] = {
+            ...updated[selectedObjectId],
+            transform: {
+              ...updated[selectedObjectId].transform,
+              x: nextX,
+              y: nextY,
+            }
+          };
+
+          propagateRigTransforms(updated, selectedObjectId, deltaX, deltaY, 0);
+          return updated;
+        });
+      }
+
+      else if (dragMode === 'rotate') {
+        const pivotWorld = localToWorld(
+          { x: obj.pivots[0].localX, y: obj.pivots[0].localY },
+          obj.transform,
+          obj.pivots[0]
+        );
+        const angleStart = Math.atan2(dragStartPoint.y - pivotWorld.y, dragStartPoint.x - pivotWorld.x);
+        const angleCurrent = Math.atan2(coords.y - pivotWorld.y, coords.x - pivotWorld.x);
+        const deltaRad = angleCurrent - angleStart;
+        const deltaDeg = (deltaRad * 180) / Math.PI;
+
+        const nextRotation = Number((initialTransform.rotation + deltaDeg).toFixed(2));
+        const deltaRot = nextRotation - obj.transform.rotation;
+
+        setObjects(prev => {
+          const updated = { ...prev };
+          updated[selectedObjectId] = {
+            ...updated[selectedObjectId],
+            transform: {
+              ...updated[selectedObjectId].transform,
+              rotation: nextRotation
+            }
+          };
+
+          propagateRigTransforms(updated, selectedObjectId, 0, 0, deltaRot);
+          return updated;
+        });
+      }
+
+      else if (dragMode === 'scale') {
+        const pivotWorld = localToWorld(
+          { x: obj.pivots[0].localX, y: obj.pivots[0].localY },
+          obj.transform,
+          obj.pivots[0]
+        );
+        const initialDist = distance(dragStartPoint, pivotWorld) || 1;
+        const currentDist = distance(coords, pivotWorld);
+        const scaleFactor = currentDist / initialDist;
+
+        const nextScaleX = Number((initialTransform.scaleX * scaleFactor).toFixed(2));
+        const nextScaleY = Number((initialTransform.scaleY * scaleFactor).toFixed(2));
+
+        setObjects(prev => {
+          const updated = { ...prev };
+          const idx = activeHandleIndex;
+          
+          let scaleX = nextScaleX;
+          let scaleY = nextScaleY;
+
+          if (idx === 1 || idx === 5) {
+            scaleX = initialTransform.scaleX;
+          } else if (idx === 3 || idx === 7) {
+            scaleY = initialTransform.scaleY;
+          }
+
+          updated[selectedObjectId] = {
+            ...updated[selectedObjectId],
+            transform: {
+              ...updated[selectedObjectId].transform,
+              scaleX,
+              scaleY
+            }
+          };
+
+          propagateRigTransforms(updated, selectedObjectId, 0, 0, 0);
+          return updated;
+        });
+      }
+
+      else if (dragMode === 'pivot') {
+        const localPos = worldToLocal(coords, obj.transform, obj.pivots[0]);
+        // Snap to nearest drawing point in local space if within 15px (world space converted to local threshold)
+        let snappedLocal = { ...localPos };
+        let minDistance = 15 / (obj.transform.scaleX || 1); // 15px threshold in local space
+        obj.points.forEach(pt => {
+          const dist = distance(localPos, pt);
+          if (dist < minDistance) {
+            minDistance = dist;
+            snappedLocal = { ...pt };
+          }
+        });
+
+        setObjects(prev => {
+          const updated = { ...prev };
+          const updatedPivots = [...updated[selectedObjectId].pivots];
+          updatedPivots[0] = {
+            ...updatedPivots[0],
+            localX: Number(snappedLocal.x.toFixed(2)),
+            localY: Number(snappedLocal.y.toFixed(2))
+          };
+          updated[selectedObjectId].pivots = updatedPivots;
+          return updated;
+        });
+      }
+    }
+
+    if (dragMode === 'pivot' && activeTool === 'KNF') {
+      setKnifePath(prev => [...prev, coords]);
+    }
+  };
+
+  // Pointer Up event handler
+  const handlePointerUp = () => {
+    if (isDrawing && activeTool === 'BRS' && strokePoints.length > 1) {
+      const newId = `obj_${Date.now()}`;
+      const name = `Stroke_${Object.keys(objects).length + 1}`;
+      
+      const newObj: VectorObject = {
+        id: newId,
+        name,
+        type: 'stroke',
+        points: [...strokePoints],
+        strokeColor: '#000000',
+        strokeWidth: 3.5,
+        fillColor: 'transparent',
+        opacity: 1,
+        transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+        pivots: [{ id: `pvt_${Date.now()}`, name: 'Pivot_1', localX: strokePoints[0].x, localY: strokePoints[0].y, locked: false }],
+        parentId: null,
+        childrenIds: [],
+        layerId: activeLayerId,
+        isLocked: false,
+        isHidden: false,
+      };
+
+      setObjects(prev => ({ ...prev, [newId]: newObj }));
+      setSelectedObjectId(newId);
+      historyPush();
+    }
+
+    if (isDrawing && activeTool === 'SHP') {
+      const minX = Math.min(dragStartPoint.x, currentCursorPos.x);
+      const maxX = Math.max(dragStartPoint.x, currentCursorPos.x);
+      const minY = Math.min(dragStartPoint.y, currentCursorPos.y);
+      const maxY = Math.max(dragStartPoint.y, currentCursorPos.y);
+      const w = maxX - minX;
+      const h = maxY - minY;
+
+      if (w > 5 && h > 5) {
+        const newId = `obj_${Date.now()}`;
+        const name = `Rectangle_${Object.keys(objects).length + 1}`;
+        const points = [
+          { x: minX, y: minY },
+          { x: maxX, y: minY },
+          { x: maxX, y: maxY },
+          { x: minX, y: maxY },
+          { x: minX, y: minY }
+        ];
+
+        const newObj: VectorObject = {
+          id: newId,
+          name,
+          type: 'shape',
+          shapeType: 'rectangle',
+          points,
+          strokeColor: '#1B5E20',
+          strokeWidth: 3,
+          fillColor: '#FFE082',
+          opacity: 1,
+          transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+          pivots: [{ id: `pvt_${Date.now()}`, name: 'Pivot_1', localX: minX + w/2, localY: minY + h/2, locked: false }],
+          parentId: null,
+          childrenIds: [],
+          layerId: activeLayerId,
+          isLocked: false,
+          isHidden: false,
+        };
+
+        setObjects(prev => ({ ...prev, [newId]: newObj }));
+        setSelectedObjectId(newId);
+        historyPush();
+      }
+    }
+
+    if (dragMode === 'pivot' && activeTool === 'KNF' && selectedObjectId && knifePath.length > 1) {
+      const originalObj = objects[selectedObjectId];
+      if (originalObj) {
+        const box = calculateBoundingBox(originalObj.points);
+        const p1Points: Point[] = [];
+        const p2Points: Point[] = [];
+        
+        const lineStart = knifePath[0];
+        const lineEnd = knifePath[knifePath.length - 1];
+
+        for (const p of originalObj.points) {
+          const val = (lineEnd.x - lineStart.x) * (p.y - lineStart.y) - (lineEnd.y - lineStart.y) * (p.x - lineStart.x);
+          if (val >= 0) {
+            p1Points.push(p);
+          } else {
+            p2Points.push(p);
+          }
+        }
+
+        if (p1Points.length > 2 && p2Points.length > 2) {
+          const id1 = `obj_${Date.now()}_1`;
+          const id2 = `obj_${Date.now()}_2`;
+
+          const piece1: VectorObject = {
+            ...originalObj,
+            id: id1,
+            name: `${originalObj.name}_part_1`,
+            points: p1Points,
+          };
+
+          const piece2: VectorObject = {
+            ...originalObj,
+            id: id2,
+            name: `${originalObj.name}_part_2`,
+            points: p2Points,
+          };
+
+          setObjects(prev => {
+            const updated = { ...prev };
+            delete updated[selectedObjectId];
+            updated[id1] = piece1;
+            updated[id2] = piece2;
+            return updated;
+          });
+
+          setSelectedObjectId(id1);
+          historyPush();
+        }
+      }
+      setKnifePath([]);
+    }
+
+    if (elasticWarningId) {
+      const childId = elasticWarningId;
+      const child = objects[childId];
+      if (child && child.parentId && objects[child.parentId]) {
+        const parent = objects[child.parentId];
+        const bone = bones.find(b => (b.startObjectId === parent.id && b.endObjectId === childId) || (b.startObjectId === childId && b.endObjectId === parent.id));
+        const restLength = bone ? bone.lockedDistance : 120;
+        
+        const parentPivot = parent.pivots[0] || { localX: 0, localY: 0 };
+        const parentPivotWorld = {
+          x: parent.transform.x + parentPivot.localX,
+          y: parent.transform.y + parentPivot.localY
+        };
+
+        const currentDist = distance({ x: child.transform.x, y: child.transform.y }, parentPivotWorld) || 1;
+        const dx_parent = child.transform.x - parentPivotWorld.x;
+        const dy_parent = child.transform.y - parentPivotWorld.y;
+        
+        const ratio = restLength / currentDist;
+        const targetX = Number((parentPivotWorld.x + dx_parent * ratio).toFixed(2));
+        const targetY = Number((parentPivotWorld.y + dy_parent * ratio).toFixed(2));
+
+        const deltaX = targetX - child.transform.x;
+        const deltaY = targetY - child.transform.y;
+
+        setObjects(prev => {
+          const updated = { ...prev };
+          updated[childId] = {
+            ...updated[childId],
+            transform: {
+              ...updated[childId].transform,
+              x: targetX,
+              y: targetY
+            }
+          };
+          propagateRigTransforms(updated, childId, deltaX, deltaY, 0);
+          return updated;
+        });
+        historyPush();
+      }
+      setElasticWarningId(null);
+    }
+
+    if (dragMode === 'meshPoint') {
+      setDragMode('none');
+      setDraggedMeshPointIndex(null);
+      historyPush();
+    }
+
+    if (activeTool === 'BON' && boneStartPoint && boneStartObject) {
+      const pList = getAllPivotsWorld();
+      const targetPivot = snappedPivot || pList.find(item => item.objId !== boneStartObject.id && distance(currentCursorPos, { x: item.worldX, y: item.worldY }) < 20);
+
+      if (targetPivot) {
+        const targetObj = objects[targetPivot.objId];
+        const startLocal = worldToLocal(boneStartPoint, boneStartObject.transform, boneStartObject.pivots[0]);
+        const endLocal = worldToLocal({ x: targetPivot.worldX, y: targetPivot.worldY }, targetObj.transform, targetObj.pivots[0]);
+        const len = distance(boneStartPoint, { x: targetPivot.worldX, y: targetPivot.worldY });
+
+        // Circular checks
+        let circularDetected = false;
+        let current: VectorObject | null = boneStartObject;
+        while (current && current.parentId) {
+          if (current.parentId === targetObj.id) {
+            circularDetected = true;
+            break;
+          }
+          current = objects[current.parentId];
+        }
+
+        if (circularDetected) {
+          alert(`Circular dependency detected! Cannot connect bone.`);
+        } else {
+          const newBone: Bone = {
+            id: `bone_${Date.now()}`,
+            name: `Bone_${bones.length + 1}`,
+            startObjectId: boneStartObject.id,
+            endObjectId: targetObj.id,
+            startLocalX: startLocal.x,
+            startLocalY: startLocal.y,
+            endLocalX: endLocal.x,
+            endLocalY: endLocal.y,
+            lockedDistance: Number(len.toFixed(2)) || 100,
+            allowDetach: false,
+            minAngle: -180,
+            maxAngle: 180,
+            enableConstraints: true,
+          };
+
+          setBones(prev => [...prev, newBone]);
+
+          setObjects(prev => {
+            const updated = { ...prev };
+            updated[targetObj.id] = {
+              ...updated[targetObj.id],
+              parentId: boneStartObject.id,
+            };
+            if (!updated[boneStartObject.id].childrenIds.includes(targetObj.id)) {
+              updated[boneStartObject.id].childrenIds = [...updated[boneStartObject.id].childrenIds, targetObj.id];
+            }
+            return updated;
+          });
+
+          historyPush();
+        }
+      }
+
+      setBoneStartPoint(null);
+      setBoneStartObject(null);
+      setBoneStartPivot(null);
+      setSnappedPivot(null);
+    }
+
+    setIsPlayingState(false);
+    setDragMode('none');
+    setStrokePoints([]);
+  };
+
+  const updateObjectProperties = (id: string, updates: Partial<VectorObject>) => {
+    setObjects(prev => {
+      if (!prev[id]) return prev;
+      return {
+        ...prev,
+        [id]: { ...prev[id], ...updates }
+      };
+    });
+  };
+
+  // Dynamic canvas drawing loop
+  useEffect(() => {
+    const frontCanvas = frontCanvasRef.current;
+    if (!frontCanvas) return;
+    const ctx = frontCanvas.getContext('2d');
+    if (!ctx) return;
+
+    // Clear and Redraw
+    ctx.clearRect(0, 0, frontCanvas.width, frontCanvas.height);
+
+    // Draw active layer drawings
+    Object.values(objects).forEach((obj) => {
+      if (obj.isHidden) return;
+      ctx.save();
+
+      // Get pivot and project points to world space
+      const pivot = obj.pivots[0] || { localX: 0, localY: 0 };
+      const worldPoints = obj.points.map(p => localToWorld(p, obj.transform, pivot));
+
+      // Render vector paths
+      ctx.beginPath();
+      if (worldPoints.length > 0) {
+        ctx.moveTo(worldPoints[0].x, worldPoints[0].y);
+        for (let i = 1; i < worldPoints.length; i++) {
+          ctx.lineTo(worldPoints[i].x, worldPoints[i].y);
+        }
+      }
+
+      ctx.lineWidth = obj.strokeWidth;
+      ctx.strokeStyle = obj.strokeColor;
+      ctx.stroke();
+
+      if (obj.fillColor && obj.fillColor !== 'transparent') {
+        ctx.fillStyle = obj.fillColor;
+        ctx.fill();
+      }
+
+      ctx.restore();
+    });
+
+    // Draw select overlay bounding boxes & 10+ handles
+    if (selectedObjectId && objects[selectedObjectId]) {
+      const obj = objects[selectedObjectId];
+      const box = calculateBoundingBox(obj.points);
+      const pivot = obj.pivots[0] || { localX: 0, localY: 0 };
+      
+      const tl = localToWorld({ x: box.x, y: box.y }, obj.transform, pivot);
+      const tr = localToWorld({ x: box.x + box.width, y: box.y }, obj.transform, pivot);
+      const br = localToWorld({ x: box.x + box.width, y: box.y + box.height }, obj.transform, pivot);
+      const bl = localToWorld({ x: box.x, y: box.y + box.height }, obj.transform, pivot);
+      
+      const tc = localToWorld({ x: box.x + box.width / 2, y: box.y }, obj.transform, pivot);
+      const trRot = localToWorld({ x: box.x + box.width / 2, y: box.y - 25 }, obj.transform, pivot);
+
+      // 1. Draw outer boundary box in world space
+      ctx.strokeStyle = '#2196F3';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(tl.x, tl.y);
+      ctx.lineTo(tr.x, tr.y);
+      ctx.lineTo(br.x, br.y);
+      ctx.lineTo(bl.x, bl.y);
+      ctx.closePath();
+      ctx.stroke();
+
+      // 2. Draw line connecting to Top Rotation Handle
+      ctx.beginPath();
+      ctx.moveTo(tc.x, tc.y);
+      ctx.lineTo(trRot.x, trRot.y);
+      ctx.strokeStyle = '#2196F3';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      // 3. Draw the 10 interactive handles in world space
+      const handles = getHandles(obj);
+      handles.forEach(h => {
+        ctx.save();
+        ctx.strokeStyle = '#1E88E5';
+        ctx.lineWidth = 1.5;
+
+        if (h.type === 'scale') {
+          ctx.fillStyle = '#FFFFFF';
+          const size = (h.index % 2 === 0) ? 10 : 8;
+          ctx.fillRect(h.worldX - size / 2, h.worldY - size / 2, size, size);
+          ctx.strokeRect(h.worldX - size / 2, h.worldY - size / 2, size, size);
+        } else if (h.type === 'rotate') {
+          ctx.fillStyle = '#FF9800'; // Amber/orange for rotation!
+          ctx.beginPath();
+          ctx.arc(h.worldX, h.worldY, 6, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        } else if (h.type === 'pivot') {
+          ctx.fillStyle = '#E53935'; // Red for anchor/pivot joint!
+          ctx.beginPath();
+          ctx.arc(h.worldX, h.worldY, 7, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = '#FFFFFF';
+          ctx.beginPath();
+          ctx.moveTo(h.worldX - 4, h.worldY);
+          ctx.lineTo(h.worldX + 4, h.worldY);
+          ctx.moveTo(h.worldX, h.worldY - 4);
+          ctx.lineTo(h.worldX, h.worldY + 4);
+          ctx.stroke();
+        }
+        ctx.restore();
+      });
+    }
+
+    // Render active Geometry Mesh deform wireframe/handles
+    if (activeTool === 'MSH' && selectedObjectId && objects[selectedObjectId]) {
+      const obj = objects[selectedObjectId];
+      ctx.save();
+      // Calculate world positions for all points
+      const worldPts = obj.points.map(p => localToWorld(p, obj.transform, obj.pivots[0]));
+
+      // 1. Draw wireframe connecting the mesh points
+      if (worldPts.length > 1) {
+        ctx.beginPath();
+        ctx.moveTo(worldPts[0].x, worldPts[0].y);
+        for (let i = 1; i < worldPts.length; i++) {
+          ctx.lineTo(worldPts[i].x, worldPts[i].y);
+        }
+        ctx.strokeStyle = 'rgba(245, 158, 11, 0.45)'; // Amber for mesh wireframe
+        ctx.lineWidth = 1.8;
+        ctx.setLineDash([2, 3]);
+        ctx.stroke();
+      }
+
+      // 2. Draw little control point handles
+      worldPts.forEach((pt, i) => {
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 6, 0, Math.PI * 2);
+        ctx.fillStyle = draggedMeshPointIndex === i ? '#F59E0B' : '#3B82F6'; // Amber if dragging, bright blue otherwise
+        ctx.fill();
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Small inner point
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 1.8, 0, Math.PI * 2);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fill();
+      });
+      ctx.restore();
+    }
+
+    // Render active Pen path points & lines
+    if (activeTool === 'PEN' && penPoints.length > 0) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(penPoints[0].x, penPoints[0].y);
+      for (let i = 1; i < penPoints.length; i++) {
+        ctx.lineTo(penPoints[i].x, penPoints[i].y);
+      }
+      ctx.lineTo(currentCursorPos.x, currentCursorPos.y); // Dynamic rubberband line
+      ctx.strokeStyle = '#E53935';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 4]);
+      ctx.stroke();
+
+      // Draw little control point circles
+      penPoints.forEach((pt, i) => {
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 4, 0, Math.PI * 2);
+        ctx.fillStyle = i === 0 ? '#4CAF50' : '#FFEB3B';
+        ctx.fill();
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      });
+      ctx.restore();
+    }
+
+    // Render Rectangle/Shapes Creation preview
+    if (isDrawing && activeTool === 'SHP') {
+      ctx.save();
+      ctx.strokeStyle = '#FF9800';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 4]);
+      const w = currentCursorPos.x - dragStartPoint.x;
+      const h = currentCursorPos.y - dragStartPoint.y;
+      ctx.strokeRect(dragStartPoint.x, dragStartPoint.y, w, h);
+      ctx.restore();
+    }
+
+    // Render active bones list linkage overlays
+    bones.forEach((bone) => {
+      const startObj = objects[bone.startObjectId];
+      const endObj = objects[bone.endObjectId];
+      if (!startObj || !endObj) return;
+
+      const p1 = localToWorld({ x: bone.startLocalX, y: bone.startLocalY }, startObj.transform, startObj.pivots[0]);
+      const p2 = localToWorld({ x: bone.endLocalX, y: bone.endLocalY }, endObj.transform, endObj.pivots[0]);
+
+      const isElasticWarning = (elasticWarningId === bone.endObjectId);
+
+      // Render bone linkage line
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y);
+      ctx.lineTo(p2.x, p2.y);
+      ctx.lineWidth = isElasticWarning ? 5 : 4;
+      ctx.strokeStyle = isElasticWarning ? '#FF1744' : '#2196F3'; // Red if elastic constraint warnings are triggered!
+      ctx.stroke();
+
+      // Render joint connection dots
+      ctx.beginPath();
+      ctx.arc(p1.x, p1.y, 6, 0, Math.PI * 2);
+      ctx.arc(p2.x, p2.y, 6, 0, Math.PI * 2);
+      ctx.fillStyle = isElasticWarning ? '#FF1744' : '#1B5E20';
+      ctx.fill();
+
+      // Draw beautiful warning badge if stretched to limit!
+      if (isElasticWarning) {
+        ctx.beginPath();
+        ctx.arc((p1.x + p2.x) / 2, (p1.y + p2.y) / 2 - 20, 10, 0, Math.PI * 2);
+        ctx.fillStyle = '#FF1744';
+        ctx.fill();
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('!', (p1.x + p2.x) / 2, (p1.y + p2.y) / 2 - 20);
+      }
+      ctx.restore();
+    });
+
+    // Render active bone tool drawing / rubberband snapping preview
+    if (activeTool === 'BON' && boneStartPoint) {
+      ctx.save();
+      // Rubberband connection line
+      ctx.beginPath();
+      ctx.moveTo(boneStartPoint.x, boneStartPoint.y);
+      ctx.lineTo(currentCursorPos.x, currentCursorPos.y);
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = snappedPivot ? '#4CAF50' : '#FFEB3B'; // Snap green vs draft yellow!
+      ctx.stroke();
+
+      // Start Joint Anchor
+      ctx.beginPath();
+      ctx.arc(boneStartPoint.x, boneStartPoint.y, 8, 0, Math.PI * 2);
+      ctx.fillStyle = '#E53935';
+      ctx.fill();
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Magnetic Snapping Glow Flash!
+      if (snappedPivot) {
+        ctx.beginPath();
+        ctx.arc(snappedPivot.worldX, snappedPivot.worldY, 15, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(76, 175, 80, 0.25)';
+        ctx.fill();
+        ctx.strokeStyle = '#4CAF50';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 4]);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(snappedPivot.worldX, snappedPivot.worldY, 6, 0, Math.PI * 2);
+        ctx.fillStyle = '#4CAF50';
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    // Render current active brush line
+    if (isDrawing && strokePoints.length > 0) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(strokePoints[0].x, strokePoints[0].y);
+      for (let i = 1; i < strokePoints.length; i++) {
+        ctx.lineTo(strokePoints[i].x, strokePoints[i].y);
+      }
+      ctx.strokeStyle = '#E53935';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Render Knife slice trace line
+    if (knifePath.length > 0 && activeTool === 'KNF') {
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(knifePath[0].x, knifePath[0].y);
+      for (let i = 1; i < knifePath.length; i++) {
+        ctx.lineTo(knifePath[i].x, knifePath[i].y);
+      }
+      ctx.strokeStyle = '#2196F3';
+      ctx.setLineDash([4, 4]);
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+      ctx.restore();
+    }
+  }, [
+    objects,
+    selectedObjectId,
+    bones,
+    isDrawing,
+    strokePoints,
+    knifePath,
+    activeTool,
+    boneStartPoint,
+    currentCursorPos,
+    snappedPivot,
+    elasticWarningId
+  ]);
+
+  return (
+    <div ref={containerRef} className="flex-1 bg-white relative overflow-hidden select-none">
+      {/* Double canvas layout for background / overlays optimization */}
+      <canvas
+        ref={backCanvasRef}
+        width={1000}
+        height={700}
+        className="absolute inset-0 pointer-events-none"
+      />
+      <canvas
+        ref={frontCanvasRef}
+        width={1000}
+        height={700}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        className="absolute inset-0 cursor-crosshair touch-none"
+      />
+    </div>
+  );
+}

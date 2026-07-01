@@ -1,0 +1,6 @@
+{
+  "name": "AnimaStudio",
+  "description": "An advanced vector-based 2D puppet rigging and skeletal animation suite with Inverse Kinematics, Knife slicing, and automation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
