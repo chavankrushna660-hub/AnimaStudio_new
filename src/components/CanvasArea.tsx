@@ -11,6 +11,97 @@ import {
   rotatePoint
 } from '../utils/math';
 
+// Mesh Warp Bilinear Interpolation helper
+const getWarpedPoint = (p: Point, meshState: any, bounds: any) => {
+  if (!meshState || !meshState.active) return p;
+  const { densityX, densityY, points } = meshState;
+  
+  const tx = bounds.width > 0 ? (p.x - bounds.x) / bounds.width : 0;
+  const ty = bounds.height > 0 ? (p.y - bounds.y) / bounds.height : 0;
+  
+  // Find grid cell
+  const cellX = Math.max(0, Math.min(densityX - 2, Math.floor(tx * (densityX - 1))));
+  const cellY = Math.max(0, Math.min(densityY - 2, Math.floor(ty * (densityY - 1))));
+  
+  const idxTL = cellY * densityX + cellX;
+  const idxTR = cellY * densityX + (cellX + 1);
+  const idxBL = (cellY + 1) * densityX + cellX;
+  const idxBR = (cellY + 1) * densityX + (cellX + 1);
+  
+  const topLeft = points[idxTL];
+  const topRight = points[idxTR];
+  const bottomLeft = points[idxBL];
+  const bottomRight = points[idxBR];
+  
+  if (!topLeft || !topRight || !bottomLeft || !bottomRight) return p;
+  
+  const gridCellW = 1 / (densityX - 1);
+  const gridCellH = 1 / (densityY - 1);
+  const u = (tx - cellX * gridCellW) / gridCellW;
+  const v = (ty - cellY * gridCellH) / gridCellH;
+  
+  const cu = Math.max(0, Math.min(1, u));
+  const cv = Math.max(0, Math.min(1, v));
+  
+  const warpedX = topLeft.currentX * (1 - cu) * (1 - cv) +
+                  topRight.currentX * cu * (1 - cv) +
+                  bottomLeft.currentX * (1 - cu) * cv +
+                  bottomRight.currentX * cu * cv;
+                  
+  const warpedY = topLeft.currentY * (1 - cu) * (1 - cv) +
+                  topRight.currentY * cu * (1 - cv) +
+                  bottomLeft.currentY * (1 - cu) * cv +
+                  bottomRight.currentY * cu * cv;
+                  
+  return { x: warpedX, y: warpedY };
+};
+
+// Puppet Pin Warp Shepard's IDW helper
+const deformWithPuppetPins = (p: Point, pins: Pivot[]) => {
+  if (!pins || pins.length === 0) return p;
+  
+  const movedPins = pins.filter(pin => {
+    const curX = pin.currentLocalX !== undefined ? pin.currentLocalX : pin.localX;
+    const curY = pin.currentLocalY !== undefined ? pin.currentLocalY : pin.localY;
+    return Math.abs(curX - pin.localX) > 0.1 || Math.abs(curY - pin.localY) > 0.1;
+  });
+  
+  if (movedPins.length === 0) return p;
+  
+  let totalWeight = 0;
+  let deltaX = 0;
+  let deltaY = 0;
+  
+  for (const pin of pins) {
+    const d = distance(p, { x: pin.localX, y: pin.localY });
+    if (d < 1) {
+      const curX = pin.currentLocalX !== undefined ? pin.currentLocalX : pin.localX;
+      const curY = pin.currentLocalY !== undefined ? pin.currentLocalY : pin.localY;
+      return { x: curX, y: curY };
+    }
+  }
+  
+  for (const pin of pins) {
+    const d = distance(p, { x: pin.localX, y: pin.localY });
+    const curX = pin.currentLocalX !== undefined ? pin.currentLocalX : pin.localX;
+    const curY = pin.currentLocalY !== undefined ? pin.currentLocalY : pin.localY;
+    
+    const weight = 1 / (d * d);
+    totalWeight += weight;
+    deltaX += (curX - pin.localX) * weight;
+    deltaY += (curY - pin.localY) * weight;
+  }
+  
+  if (totalWeight > 0) {
+    return {
+      x: p.x + deltaX / totalWeight,
+      y: p.y + deltaY / totalWeight
+    };
+  }
+  
+  return p;
+};
+
 interface CanvasAreaProps {
   objects: { [id: string]: VectorObject };
   setObjects: React.Dispatch<React.SetStateAction<{ [id: string]: VectorObject }>>;
@@ -25,6 +116,8 @@ interface CanvasAreaProps {
   onionSkinEnabled: boolean;
   isPlaying: boolean;
   historyPush: () => void;
+  layers?: any[];
+  setLayers?: React.Dispatch<React.SetStateAction<any[]>>;
 }
 
 export default function CanvasArea({
@@ -41,17 +134,20 @@ export default function CanvasArea({
   onionSkinEnabled,
   isPlaying,
   historyPush,
+  layers = [],
+  setLayers,
 }: CanvasAreaProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const backCanvasRef = useRef<HTMLCanvasElement>(null);
   const frontCanvasRef = useRef<HTMLCanvasElement>(null);
+  const imagesCacheRef = useRef<{ [url: string]: HTMLImageElement }>({});
 
   // Drawing state
   const [isDrawing, setIsPlayingState] = useState(false);
   const [strokePoints, setStrokePoints] = useState<Point[]>([]);
   
   // Transform & drag gesture state
-  const [dragMode, setDragMode] = useState<'none' | 'move' | 'rotate' | 'scale' | 'pivot' | 'pin' | 'meshPoint'>('none');
+  const [dragMode, setDragMode] = useState<'none' | 'move' | 'rotate' | 'scale' | 'pivot' | 'pin' | 'meshPoint' | 'meshGridPoint' | 'puppetPin'>('none');
   const [dragStartPoint, setDragStartPoint] = useState<Point>({ x: 0, y: 0 });
   const [initialTransform, setInitialTransform] = useState<any>(null);
   const [activeHandleIndex, setActiveHandleIndex] = useState<number | null>(null);
@@ -474,6 +570,29 @@ export default function CanvasArea({
     if (activeTool === 'PIN' && selectedObjectId) {
       const obj = objects[selectedObjectId];
       if (obj) {
+        // First check if we clicked on an existing pin to drag it!
+        if (obj.pins && obj.pins.length > 0) {
+          let clickedPinIndex = -1;
+          let minPinDist = 14;
+          obj.pins.forEach((pin, idx) => {
+            const curX = pin.currentLocalX !== undefined ? pin.currentLocalX : pin.localX;
+            const curY = pin.currentLocalY !== undefined ? pin.currentLocalY : pin.localY;
+            const worldPin = localToWorld({ x: curX, y: curY }, obj.transform, obj.pivots[0]);
+            const d = distance(coords, worldPin);
+            if (d < minPinDist) {
+              minPinDist = d;
+              clickedPinIndex = idx;
+            }
+          });
+          if (clickedPinIndex !== -1) {
+            setDragMode('puppetPin');
+            setDraggedMeshPointIndex(clickedPinIndex);
+            setDragStartPoint(coords);
+            return;
+          }
+        }
+
+        // Otherwise, add a new puppet pin
         const local = worldToLocal(coords, obj.transform, obj.pivots[0]);
         const newPin: Pivot = {
           id: `pin_${Date.now()}`,
@@ -577,27 +696,49 @@ export default function CanvasArea({
     if (activeTool === 'MSH') {
       if (selectedObjectId && objects[selectedObjectId]) {
         const obj = objects[selectedObjectId];
-        let clickedPointIndex = -1;
-        let minPtDist = 14; // Pixels threshold in world space
-
-        obj.points.forEach((pt, idx) => {
-          const worldPt = localToWorld(pt, obj.transform, obj.pivots[0]);
-          const d = distance(coords, worldPt);
-          if (d < minPtDist) {
-            minPtDist = d;
-            clickedPointIndex = idx;
+        
+        // 1. If mesh wrap grid is active, prioritize dragging mesh grid control points!
+        if (obj.meshState && obj.meshState.active) {
+          let clickedMptIndex = -1;
+          let minMptDist = 14; // Pixels threshold in world space
+          obj.meshState.points.forEach((mpt, idx) => {
+            const worldPt = localToWorld({ x: mpt.currentX, y: mpt.currentY }, obj.transform, obj.pivots[0]);
+            const d = distance(coords, worldPt);
+            if (d < minMptDist) {
+              minMptDist = d;
+              clickedMptIndex = idx;
+            }
+          });
+          if (clickedMptIndex !== -1) {
+            setDragMode('meshGridPoint');
+            setDraggedMeshPointIndex(clickedMptIndex);
+            setDragStartPoint(coords);
+            return;
           }
-        });
+        } else {
+          // 2. Otherwise, check for standard drawing outline points dragging
+          let clickedPointIndex = -1;
+          let minPtDist = 14; // Pixels threshold in world space
 
-        if (clickedPointIndex !== -1) {
-          setDragMode('meshPoint');
-          setDraggedMeshPointIndex(clickedPointIndex);
-          setDragStartPoint(coords);
-          return;
+          obj.points.forEach((pt, idx) => {
+            const worldPt = localToWorld(pt, obj.transform, obj.pivots[0]);
+            const d = distance(coords, worldPt);
+            if (d < minPtDist) {
+              minPtDist = d;
+              clickedPointIndex = idx;
+            }
+          });
+
+          if (clickedPointIndex !== -1) {
+            setDragMode('meshPoint');
+            setDraggedMeshPointIndex(clickedPointIndex);
+            setDragStartPoint(coords);
+            return;
+          }
         }
       }
 
-      // If we didn't drag a mesh point, let's select an object
+      // If we didn't drag any mesh point, select drawing
       const clickedObj = performHitTest(coords);
       if (clickedObj) {
         setSelectedObjectId(clickedObj.id);
@@ -612,6 +753,28 @@ export default function CanvasArea({
       if (selectedObjectId) {
         const obj = objects[selectedObjectId];
         if (obj) {
+          // Check if we clicked on a puppet pin first!
+          if (obj.pins && obj.pins.length > 0) {
+            let clickedPinIdx = -1;
+            let minPinDist = 14;
+            obj.pins.forEach((pin, idx) => {
+              const curX = pin.currentLocalX !== undefined ? pin.currentLocalX : pin.localX;
+              const curY = pin.currentLocalY !== undefined ? pin.currentLocalY : pin.localY;
+              const worldPin = localToWorld({ x: curX, y: curY }, obj.transform, obj.pivots[0]);
+              const d = distance(coords, worldPin);
+              if (d < minPinDist) {
+                minPinDist = d;
+                clickedPinIdx = idx;
+              }
+            });
+            if (clickedPinIdx !== -1) {
+              setDragMode('puppetPin');
+              setDraggedMeshPointIndex(clickedPinIdx);
+              setDragStartPoint(coords);
+              return;
+            }
+          }
+
           const handles = getHandles(obj);
           const clickedHandle = handles.find(h => distance(coords, { x: h.worldX, y: h.worldY }) < 12);
           
@@ -655,6 +818,61 @@ export default function CanvasArea({
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const coords = getCanvasCoords(e);
     setCurrentCursorPos(coords);
+
+    if (dragMode === 'meshGridPoint' && selectedObjectId && draggedMeshPointIndex !== null) {
+      const obj = objects[selectedObjectId];
+      if (obj && obj.meshState && obj.meshState.active) {
+        const localPos = worldToLocal(coords, obj.transform, obj.pivots[0]);
+        setObjects(prev => {
+          if (!prev[selectedObjectId]) return prev;
+          const updatedMeshStatePoints = [...prev[selectedObjectId].meshState!.points];
+          if (updatedMeshStatePoints[draggedMeshPointIndex]) {
+            updatedMeshStatePoints[draggedMeshPointIndex] = {
+              ...updatedMeshStatePoints[draggedMeshPointIndex],
+              currentX: Number(localPos.x.toFixed(2)),
+              currentY: Number(localPos.y.toFixed(2))
+            };
+          }
+          return {
+            ...prev,
+            [selectedObjectId]: {
+              ...prev[selectedObjectId],
+              meshState: {
+                ...prev[selectedObjectId].meshState!,
+                points: updatedMeshStatePoints
+              }
+            }
+          };
+        });
+      }
+      return;
+    }
+
+    if (dragMode === 'puppetPin' && selectedObjectId && draggedMeshPointIndex !== null) {
+      const obj = objects[selectedObjectId];
+      if (obj) {
+        const localPos = worldToLocal(coords, obj.transform, obj.pivots[0]);
+        setObjects(prev => {
+          if (!prev[selectedObjectId]) return prev;
+          const updatedPins = [...(prev[selectedObjectId].pins || [])];
+          if (updatedPins[draggedMeshPointIndex]) {
+            updatedPins[draggedMeshPointIndex] = {
+              ...updatedPins[draggedMeshPointIndex],
+              currentLocalX: Number(localPos.x.toFixed(2)),
+              currentLocalY: Number(localPos.y.toFixed(2))
+            };
+          }
+          return {
+            ...prev,
+            [selectedObjectId]: {
+              ...prev[selectedObjectId],
+              pins: updatedPins
+            }
+          };
+        });
+      }
+      return;
+    }
 
     if (dragMode === 'meshPoint' && selectedObjectId && draggedMeshPointIndex !== null) {
       const obj = objects[selectedObjectId];
@@ -1031,7 +1249,7 @@ export default function CanvasArea({
       setElasticWarningId(null);
     }
 
-    if (dragMode === 'meshPoint') {
+    if (dragMode === 'meshPoint' || dragMode === 'meshGridPoint' || dragMode === 'puppetPin') {
       setDragMode('none');
       setDraggedMeshPointIndex(null);
       historyPush();
@@ -1126,31 +1344,188 @@ export default function CanvasArea({
     // Clear and Redraw
     ctx.clearRect(0, 0, frontCanvas.width, frontCanvas.height);
 
-    // Draw active layer drawings
-    Object.values(objects).forEach((obj) => {
+    // Sort layers by zIndex ascending
+    const sortedLayers = [...(layers || [])].sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
+    
+    // Sort all objects based on their layers zIndex
+    const sortedObjects = Object.values(objects).sort((a, b) => {
+      const layerA = sortedLayers.find(l => l.id === a.layerId);
+      const layerB = sortedLayers.find(l => l.id === b.layerId);
+      const zA = layerA ? (layerA.zIndex ?? 0) : 0;
+      const zB = layerB ? (layerB.zIndex ?? 0) : 0;
+      return zA - zB;
+    });
+
+    // Draw active layer drawings in sorted order
+    sortedObjects.forEach((obj) => {
       if (obj.isHidden) return;
+      
+      const layer = (layers || []).find(l => l.id === obj.layerId);
+      if (layer && layer.isHidden) return; // Skip if layer is hidden
+
       ctx.save();
+
+      // Calculate warped local points
+      const bounds = calculateBoundingBox(obj.points);
+      let localPoints = obj.points;
+      
+      if (obj.meshState && obj.meshState.active) {
+        localPoints = obj.points.map(p => getWarpedPoint(p, obj.meshState, bounds));
+      } else if (obj.pins && obj.pins.length > 0) {
+        localPoints = obj.points.map(p => deformWithPuppetPins(p, obj.pins));
+      }
 
       // Get pivot and project points to world space
       const pivot = obj.pivots[0] || { localX: 0, localY: 0 };
-      const worldPoints = obj.points.map(p => localToWorld(p, obj.transform, pivot));
+      const worldPoints = localPoints.map(p => localToWorld(p, obj.transform, pivot));
 
-      // Render vector paths
-      ctx.beginPath();
-      if (worldPoints.length > 0) {
-        ctx.moveTo(worldPoints[0].x, worldPoints[0].y);
-        for (let i = 1; i < worldPoints.length; i++) {
-          ctx.lineTo(worldPoints[i].x, worldPoints[i].y);
+      // Apply filter effects (depth blur, opacity)
+      let combinedAlpha = obj.opacity !== undefined ? obj.opacity : 1;
+      if (layer) {
+        combinedAlpha *= layer.opacity !== undefined ? layer.opacity : 1;
+        if (layer.blurAmount && layer.blurAmount > 0) {
+          ctx.filter = `blur(${layer.blurAmount}px)`;
+        } else {
+          ctx.filter = 'none';
+        }
+      } else {
+        ctx.filter = 'none';
+      }
+      ctx.globalAlpha = combinedAlpha;
+
+      // 1. Drop Shadow Effect
+      if (obj.shadow && obj.shadow.enabled) {
+        ctx.shadowColor = obj.shadow.color || 'rgba(0,0,0,0.4)';
+        ctx.shadowBlur = obj.shadow.blur ?? 10;
+        ctx.shadowOffsetX = obj.shadow.offsetX ?? 5;
+        ctx.shadowOffsetY = obj.shadow.offsetY ?? 5;
+      } else {
+        ctx.shadowColor = 'transparent';
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 0;
+      }
+
+      // Draw vector paths or image
+      if (obj.type === 'image' && obj.imageUrl) {
+        // Render image
+        let img = imagesCacheRef.current[obj.imageUrl];
+        if (!img) {
+          img = new Image();
+          img.src = obj.imageUrl;
+          img.onload = () => {
+            imagesCacheRef.current[obj.imageUrl!] = img;
+            setObjects(prev => ({ ...prev }));
+          };
+          imagesCacheRef.current[obj.imageUrl] = img;
+        }
+        
+        if (img.complete && img.naturalWidth > 0) {
+          ctx.save();
+          const localPivot = obj.pivots[0] || { localX: 0, localY: 0 };
+          const imgBounds = calculateBoundingBox(obj.points);
+          
+          // Apply transformation to context
+          ctx.translate(obj.transform.x, obj.transform.y);
+          ctx.rotate((obj.transform.rotation * Math.PI) / 180);
+          ctx.scale(obj.transform.scaleX, obj.transform.scaleY);
+          ctx.translate(-localPivot.localX, -localPivot.localY);
+          
+          ctx.drawImage(img, imgBounds.x, imgBounds.y, imgBounds.width, imgBounds.height);
+          ctx.restore();
+        }
+      } else {
+        // Render vector drawing
+        ctx.beginPath();
+        if (worldPoints.length > 0) {
+          ctx.moveTo(worldPoints[0].x, worldPoints[0].y);
+          for (let i = 1; i < worldPoints.length; i++) {
+            ctx.lineTo(worldPoints[i].x, worldPoints[i].y);
+          }
+        }
+        
+        ctx.lineWidth = obj.strokeWidth;
+        ctx.strokeStyle = obj.strokeColor;
+        ctx.stroke();
+
+        if (obj.fillColor && obj.fillColor !== 'transparent') {
+          ctx.fillStyle = obj.fillColor;
+          ctx.fill();
         }
       }
 
-      ctx.lineWidth = obj.strokeWidth;
-      ctx.strokeStyle = obj.strokeColor;
-      ctx.stroke();
+      // 2. Inner Shadow Effect
+      if (obj.innerShadow && obj.innerShadow.enabled && obj.type !== 'image') {
+        ctx.save();
+        
+        // Clip to current vector path
+        ctx.beginPath();
+        if (worldPoints.length > 0) {
+          ctx.moveTo(worldPoints[0].x, worldPoints[0].y);
+          for (let i = 1; i < worldPoints.length; i++) {
+            ctx.lineTo(worldPoints[i].x, worldPoints[i].y);
+          }
+        }
+        ctx.clip();
+        
+        ctx.shadowColor = obj.innerShadow.color || 'rgba(0,0,0,0.5)';
+        ctx.shadowBlur = obj.innerShadow.blur ?? 15;
+        
+        const angleRad = (((obj.innerShadow.angle ?? 120)) * Math.PI) / 180;
+        ctx.shadowOffsetX = Math.cos(angleRad) * (obj.innerShadow.distance ?? 8);
+        ctx.shadowOffsetY = Math.sin(angleRad) * (obj.innerShadow.distance ?? 8);
+        
+        ctx.globalCompositeOperation = 'source-atop';
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        
+        ctx.restore();
+      }
 
-      if (obj.fillColor && obj.fillColor !== 'transparent') {
-        ctx.fillStyle = obj.fillColor;
+      // 3. Color Overlay Effect
+      if (obj.overlay && obj.overlay.enabled && obj.type !== 'image') {
+        ctx.save();
+        
+        // Clip to current path
+        ctx.beginPath();
+        if (worldPoints.length > 0) {
+          ctx.moveTo(worldPoints[0].x, worldPoints[0].y);
+          for (let i = 1; i < worldPoints.length; i++) {
+            ctx.lineTo(worldPoints[i].x, worldPoints[i].y);
+          }
+        }
+        ctx.clip();
+        
+        ctx.globalCompositeOperation = (obj.overlay.blendMode as any) || 'source-atop';
+        ctx.fillStyle = obj.overlay.color || '#ff0055';
+        ctx.globalAlpha = obj.overlay.opacity ?? 0.5;
         ctx.fill();
+        
+        ctx.restore();
+      }
+
+      // 4. Rim Light Effect
+      if (obj.rimLight && obj.rimLight.enabled && obj.type !== 'image') {
+        ctx.save();
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.strokeStyle = obj.rimLight.color || '#ffffff';
+        ctx.lineWidth = obj.rimLight.thickness ?? 4;
+        ctx.shadowColor = obj.rimLight.color || '#ffffff';
+        ctx.shadowBlur = obj.rimLight.softness ?? 10;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 0;
+        
+        ctx.beginPath();
+        if (worldPoints.length > 0) {
+          ctx.moveTo(worldPoints[0].x, worldPoints[0].y);
+          for (let i = 1; i < worldPoints.length; i++) {
+            ctx.lineTo(worldPoints[i].x, worldPoints[i].y);
+          }
+        }
+        ctx.stroke();
+        
+        ctx.restore();
       }
 
       ctx.restore();
@@ -1227,40 +1602,118 @@ export default function CanvasArea({
     // Render active Geometry Mesh deform wireframe/handles
     if (activeTool === 'MSH' && selectedObjectId && objects[selectedObjectId]) {
       const obj = objects[selectedObjectId];
-      ctx.save();
-      // Calculate world positions for all points
-      const worldPts = obj.points.map(p => localToWorld(p, obj.transform, obj.pivots[0]));
-
-      // 1. Draw wireframe connecting the mesh points
-      if (worldPts.length > 1) {
-        ctx.beginPath();
-        ctx.moveTo(worldPts[0].x, worldPts[0].y);
-        for (let i = 1; i < worldPts.length; i++) {
-          ctx.lineTo(worldPts[i].x, worldPts[i].y);
+      
+      if (obj.meshState && obj.meshState.active) {
+        const { densityX, densityY, points, showGrid, showPoints } = obj.meshState;
+        ctx.save();
+        
+        // Convert all mesh points to world space
+        const worldMeshPoints = points.map(mpt => {
+          return localToWorld({ x: mpt.currentX, y: mpt.currentY }, obj.transform, obj.pivots[0]);
+        });
+        
+        // 1. Draw Mesh Grid lines
+        if (showGrid) {
+          ctx.beginPath();
+          ctx.strokeStyle = 'rgba(245, 158, 11, 0.45)';
+          ctx.lineWidth = 1.2;
+          
+          // Draw horizontal lines
+          for (let y = 0; y < densityY; y++) {
+            for (let x = 0; x < densityX - 1; x++) {
+              const p1 = worldMeshPoints[y * densityX + x];
+              const p2 = worldMeshPoints[y * densityX + (x + 1)];
+              ctx.moveTo(p1.x, p1.y);
+              ctx.lineTo(p2.x, p2.y);
+            }
+          }
+          
+          // Draw vertical lines
+          for (let x = 0; x < densityX; x++) {
+            for (let y = 0; y < densityY - 1; y++) {
+              const p1 = worldMeshPoints[y * densityX + x];
+              const p2 = worldMeshPoints[(y + 1) * densityX + x];
+              ctx.moveTo(p1.x, p1.y);
+              ctx.lineTo(p2.x, p2.y);
+            }
+          }
+          ctx.stroke();
         }
-        ctx.strokeStyle = 'rgba(245, 158, 11, 0.45)'; // Amber for mesh wireframe
-        ctx.lineWidth = 1.8;
-        ctx.setLineDash([2, 3]);
-        ctx.stroke();
+        
+        // 2. Draw Mesh Grid points
+        if (showPoints) {
+          worldMeshPoints.forEach((mpt, idx) => {
+            ctx.beginPath();
+            ctx.arc(mpt.x, mpt.y, 5, 0, Math.PI * 2);
+            ctx.fillStyle = (dragMode === 'meshGridPoint' && draggedMeshPointIndex === idx) ? '#F59E0B' : '#3B82F6';
+            ctx.fill();
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+          });
+        }
+        ctx.restore();
+      } else {
+        // Draw standard vector outline if no active mesh grid
+        ctx.save();
+        const worldPts = obj.points.map(p => localToWorld(p, obj.transform, obj.pivots[0]));
+        if (worldPts.length > 1) {
+          ctx.beginPath();
+          ctx.moveTo(worldPts[0].x, worldPts[0].y);
+          for (let i = 1; i < worldPts.length; i++) {
+            ctx.lineTo(worldPts[i].x, worldPts[i].y);
+          }
+          ctx.strokeStyle = 'rgba(245, 158, 11, 0.45)';
+          ctx.lineWidth = 1.8;
+          ctx.setLineDash([2, 3]);
+          ctx.stroke();
+        }
+        
+        worldPts.forEach((pt, i) => {
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, 6, 0, Math.PI * 2);
+          ctx.fillStyle = (dragMode === 'meshPoint' && draggedMeshPointIndex === i) ? '#F59E0B' : '#3B82F6';
+          ctx.fill();
+          ctx.strokeStyle = '#FFFFFF';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+
+          // Small inner point
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, 1.8, 0, Math.PI * 2);
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fill();
+        });
+        ctx.restore();
       }
+    }
 
-      // 2. Draw little control point handles
-      worldPts.forEach((pt, i) => {
-        ctx.beginPath();
-        ctx.arc(pt.x, pt.y, 6, 0, Math.PI * 2);
-        ctx.fillStyle = draggedMeshPointIndex === i ? '#F59E0B' : '#3B82F6'; // Amber if dragging, bright blue otherwise
-        ctx.fill();
-        ctx.strokeStyle = '#FFFFFF';
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-
-        // Small inner point
-        ctx.beginPath();
-        ctx.arc(pt.x, pt.y, 1.8, 0, Math.PI * 2);
-        ctx.fillStyle = '#FFFFFF';
-        ctx.fill();
-      });
-      ctx.restore();
+    // Render Puppet Pins overlay for selected object if present
+    if (selectedObjectId && objects[selectedObjectId]) {
+      const obj = objects[selectedObjectId];
+      if (obj.pins && obj.pins.length > 0) {
+        ctx.save();
+        obj.pins.forEach((pin, idx) => {
+          const curX = pin.currentLocalX !== undefined ? pin.currentLocalX : pin.localX;
+          const curY = pin.currentLocalY !== undefined ? pin.currentLocalY : pin.localY;
+          const worldPin = localToWorld({ x: curX, y: curY }, obj.transform, obj.pivots[0]);
+          
+          ctx.beginPath();
+          ctx.arc(worldPin.x, worldPin.y, 7, 0, Math.PI * 2);
+          ctx.fillStyle = (dragMode === 'puppetPin' && draggedMeshPointIndex === idx) ? '#F59E0B' : '#EF4444';
+          ctx.fill();
+          ctx.strokeStyle = '#FFFFFF';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+          
+          // Inner core dot
+          ctx.beginPath();
+          ctx.arc(worldPin.x, worldPin.y, 2.5, 0, Math.PI * 2);
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fill();
+        });
+        ctx.restore();
+      }
     }
 
     // Render active Pen path points & lines

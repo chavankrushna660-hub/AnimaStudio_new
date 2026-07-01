@@ -59,54 +59,62 @@ export default function App() {
   // Ref to track the currently loaded frame index to prevent race conditions & update loops
   const loadedFrameIndexRef = useRef<number>(0);
 
-  // Synchronize active objects back into the current frame's objects dictionary
+  // Synchronize active objects back and forth between active frame and objects dictionary
   useEffect(() => {
+    // 1. If we changed frame index, load objects from the target frame
     if (currentFrameIndex !== loadedFrameIndexRef.current) {
-      // Ignore sync updates while transitions/loading are in progress
-      return;
-    }
-    setFrames(prev => {
-      const updated = [...prev];
-      if (updated[currentFrameIndex]) {
-        if (JSON.stringify(updated[currentFrameIndex].objects) !== JSON.stringify(objects)) {
+      const targetFrame = frames[currentFrameIndex];
+      if (targetFrame) {
+        const frameObjects = targetFrame.objects || {};
+        if (Object.keys(frameObjects).length > 0) {
+          setObjects(prev => {
+            if (JSON.stringify(prev) !== JSON.stringify(frameObjects)) {
+              return JSON.parse(JSON.stringify(frameObjects));
+            }
+            return prev;
+          });
+        } else if (currentFrameIndex > 0) {
+          // Fallback: copy from previous frame if the current frame is empty
+          const prevFrame = frames[currentFrameIndex - 1];
+          if (prevFrame && prevFrame.objects && Object.keys(prevFrame.objects).length > 0) {
+            const copiedObjects = JSON.parse(JSON.stringify(prevFrame.objects));
+            setObjects(copiedObjects);
+            setFrames(prev => {
+              const updated = [...prev];
+              if (updated[currentFrameIndex]) {
+                updated[currentFrameIndex] = {
+                  ...updated[currentFrameIndex],
+                  objects: copiedObjects
+                };
+                return updated;
+              }
+              return prev;
+            });
+          } else {
+            setObjects(prev => Object.keys(prev).length > 0 ? {} : prev);
+          }
+        } else {
+          setObjects(prev => Object.keys(prev).length > 0 ? {} : prev);
+        }
+      }
+      loadedFrameIndexRef.current = currentFrameIndex;
+    } else {
+      // 2. Otherwise, we are on the same frame, so sync any changes in 'objects' back to 'frames'
+      setFrames(prev => {
+        if (!prev[currentFrameIndex]) return prev;
+        const currentFrameObjects = prev[currentFrameIndex].objects || {};
+        if (JSON.stringify(currentFrameObjects) !== JSON.stringify(objects)) {
+          const updated = [...prev];
           updated[currentFrameIndex] = {
             ...updated[currentFrameIndex],
             objects: JSON.parse(JSON.stringify(objects))
           };
           return updated;
         }
-      }
-      return prev;
-    });
-  }, [objects, currentFrameIndex]);
-
-  // Load objects from the selected frame when currentFrameIndex changes
-  useEffect(() => {
-    const targetFrame = frames[currentFrameIndex];
-    if (targetFrame) {
-      const frameObjects = targetFrame.objects || {};
-      if (Object.keys(frameObjects).length > 0) {
-        setObjects(prev => {
-          if (JSON.stringify(prev) !== JSON.stringify(frameObjects)) {
-            return JSON.parse(JSON.stringify(frameObjects));
-          }
-          return prev;
-        });
-      } else if (currentFrameIndex > 0) {
-        const prevFrame = frames[currentFrameIndex - 1];
-        if (prevFrame && prevFrame.objects && Object.keys(prevFrame.objects).length > 0) {
-          setObjects(prev => {
-            if (JSON.stringify(prev) !== JSON.stringify(prevFrame.objects)) {
-              return JSON.parse(JSON.stringify(prevFrame.objects));
-            }
-            return prev;
-          });
-        }
-      }
+        return prev;
+      });
     }
-    // Set the loaded index to sync with the active frame
-    loadedFrameIndexRef.current = currentFrameIndex;
-  }, [currentFrameIndex]);
+  }, [currentFrameIndex, objects]);
 
   // Export video recorder states
   const [isRecording, setIsRecording] = useState(false);
@@ -799,6 +807,7 @@ export default function App() {
           updateObject={updateObject}
           deleteObject={deleteObject}
           layers={layers}
+          setLayers={setLayers}
           activeLayerId={activeLayerId}
           setActiveLayerId={setActiveLayerId}
           open={leftOpen}
@@ -824,6 +833,8 @@ export default function App() {
           onionSkinEnabled={onionSkinEnabled}
           isPlaying={isPlaying}
           historyPush={historyPush}
+          layers={layers}
+          setLayers={setLayers}
         />
 
         {/* Right Collapsible Properties, Sliders, Smart Pinned Controls */}
@@ -843,6 +854,8 @@ export default function App() {
           setOpen={setRightOpen}
           smartPinnedIds={smartPinnedIds}
           toggleSmartPin={toggleSmartPin}
+          activeTool={activeTool}
+          setActiveTool={setActiveTool}
         />
       </div>
 

@@ -439,3 +439,48 @@ export function solveIK(
 
   return results;
 }
+
+export function bilinearInterpolate(
+  x: number,
+  y: number,
+  topLeft: { originalX: number; originalY: number; currentX: number; currentY: number },
+  topRight: { originalX: number; originalY: number; currentX: number; currentY: number },
+  bottomLeft: { originalX: number; originalY: number; currentX: number; currentY: number },
+  bottomRight: { originalX: number; originalY: number; currentX: number; currentY: number },
+  axis: 'x' | 'y' = 'x'
+): number {
+  const x1 = topLeft.originalX;
+  const y1 = topLeft.originalY;
+  const x2 = bottomRight.originalX;
+  const y2 = bottomRight.originalY;
+
+  // Avoid division by zero
+  const dx = (x2 - x1) || 1;
+  const dy = (y2 - y1) || 1;
+
+  // Normalized coordinates (0 to 1)
+  const tx = Math.max(0, Math.min(1, (x - x1) / dx));
+  const ty = Math.max(0, Math.min(1, (y - y1) / dy));
+
+  let val1: number, val2: number, val3: number, val4: number;
+  if (axis === 'x') {
+    val1 = topLeft.currentX;
+    val2 = topRight.currentX;
+    val3 = bottomLeft.currentX;
+    val4 = bottomRight.currentX;
+  } else {
+    val1 = topLeft.currentY;
+    val2 = topRight.currentY;
+    val3 = bottomLeft.currentY;
+    val4 = bottomRight.currentY;
+  }
+
+  // Bilinear interpolation
+  const interpolated =
+    val1 * (1 - tx) * (1 - ty) +
+    val2 * tx * (1 - ty) +
+    val3 * (1 - tx) * ty +
+    val4 * tx * ty;
+
+  return interpolated;
+}

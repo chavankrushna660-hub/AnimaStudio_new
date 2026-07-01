@@ -27,6 +27,7 @@ interface LeftPanelProps {
   updateObject: (id: string, updates: Partial<VectorObject>) => void;
   deleteObject: (id: string) => void;
   layers: Layer[];
+  setLayers: React.Dispatch<React.SetStateAction<Layer[]>>;
   activeLayerId: string;
   setActiveLayerId: (id: string) => void;
   open: boolean;
@@ -41,6 +42,7 @@ export default function LeftPanel({
   updateObject,
   deleteObject,
   layers,
+  setLayers,
   activeLayerId,
   setActiveLayerId,
   open,
@@ -141,6 +143,64 @@ export default function LeftPanel({
     if (selectedObjectId) {
       groupObjects([selectedObjectId]);
     }
+  };
+
+  // Advanced Layer operations
+  const handleAddLayer = () => {
+    const name = prompt("Enter new layer name:", `Layer ${layers.length + 1}`);
+    if (!name) return;
+    const id = `layer_${Date.now()}`;
+    const nextZ = layers.length > 0 ? Math.max(...layers.map(l => l.zIndex)) + 1 : 1;
+    const newLayer: Layer = {
+      id,
+      name,
+      zIndex: nextZ,
+      visible: true,
+      locked: false,
+      opacity: 1,
+      blendMode: 'normal',
+    };
+    (newLayer as any).blurAmount = 0;
+    setLayers(prev => [...prev, newLayer]);
+    setActiveLayerId(id);
+  };
+
+  const handleDeleteLayer = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (layers.length <= 1) {
+      alert("Must keep at least one layer!");
+      return;
+    }
+    setLayers(prev => prev.filter(l => l.id !== id));
+    if (activeLayerId === id) {
+      const remaining = layers.filter(l => l.id !== id);
+      setActiveLayerId(remaining[0].id);
+    }
+  };
+
+  const moveLayer = (index: number, dir: 'up' | 'down', e: React.MouseEvent) => {
+    e.stopPropagation();
+    const sorted = [...layers].sort((a, b) => b.zIndex - a.zIndex);
+    const targetIdx = sorted.findIndex(l => l.id === layers[index].id);
+    const swapIdx = dir === 'up' ? targetIdx - 1 : targetIdx + 1;
+    if (swapIdx < 0 || swapIdx >= sorted.length) return;
+
+    // Swap position in sorted array
+    const temp = sorted[targetIdx];
+    sorted[targetIdx] = sorted[swapIdx];
+    sorted[swapIdx] = temp;
+
+    // Update z-indexes accordingly
+    const updated = sorted.map((layer, idx) => ({
+      ...layer,
+      zIndex: sorted.length - idx
+    }));
+
+    setLayers(updated);
+  };
+
+  const updateLayerProp = (layerId: string, updates: Partial<Layer & { blurAmount: number }>) => {
+    setLayers(prev => prev.map(l => l.id === layerId ? { ...l, ...updates } as Layer : l));
   };
 
   // Render object item recursively for hierarchy representation
@@ -249,6 +309,7 @@ export default function LeftPanel({
 
   // Find root-level elements for initial rendering tree pass
   const rootObjects = Object.values(objects).filter(o => !o.parentId);
+  const sortedLayersList = [...layers].sort((a, b) => b.zIndex - a.zIndex);
 
   return (
     <div
@@ -308,28 +369,130 @@ export default function LeftPanel({
             </div>
 
             {/* Layer Panel Section */}
-            <div className="border-t border-neutral-800/60 pt-4 mt-4 space-y-2">
-              <div className="text-[10px] text-neutral-500 font-extrabold uppercase tracking-wider flex items-center gap-1">
-                <LayerIcon className="w-3.5 h-3.5 text-amber-500" />
-                Active Layers
+            <div className="border-t border-neutral-800/60 pt-4 mt-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="text-[10px] text-neutral-400 font-extrabold uppercase tracking-wider flex items-center gap-1">
+                  <LayerIcon className="w-3.5 h-3.5 text-amber-500" />
+                  Layers System
+                </div>
+                <button
+                  onClick={handleAddLayer}
+                  className="px-2 py-0.5 text-[10px] bg-neutral-800 border border-neutral-700 hover:bg-amber-500 hover:text-neutral-950 font-black rounded-lg transition-all"
+                >
+                  + ADD LAYER
+                </button>
               </div>
-              <div className="space-y-1.5">
-                {layers.map((layer) => {
+
+              <div className="space-y-2">
+                {sortedLayersList.map((layer, index) => {
                   const isActive = activeLayerId === layer.id;
+                  const blur = (layer as any).blurAmount ?? 0;
                   return (
                     <div
                       key={layer.id}
                       onClick={() => setActiveLayerId(layer.id)}
-                      className={`flex items-center justify-between p-2 rounded-xl border text-xs cursor-pointer transition-all ${
+                      className={`flex flex-col p-2.5 rounded-xl border text-xs transition-all cursor-pointer ${
                         isActive
-                          ? 'bg-amber-500/10 border-amber-400 text-amber-300 font-black'
-                          : 'bg-neutral-900 border-neutral-800 hover:border-neutral-700 hover:bg-neutral-800/60 text-neutral-400'
+                          ? 'bg-amber-500/5 border-amber-400/80 text-amber-300 font-bold'
+                          : 'bg-neutral-950 border-neutral-850 hover:border-neutral-800 text-neutral-400'
                       }`}
                     >
-                      <span className="truncate">{layer.name}</span>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-neutral-600 font-black">Z:{layer.zIndex}</span>
+                      <div className="flex items-center justify-between">
+                        <span className="truncate max-w-[120px] font-black">{layer.name}</span>
+                        <div className="flex items-center gap-1.5">
+                          {/* Visibility Toggle */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              updateLayerProp(layer.id, { visible: !layer.visible });
+                            }}
+                            className="p-1 rounded hover:bg-neutral-850 text-neutral-400 hover:text-white"
+                            title="Hide/Show Layer"
+                          >
+                            {layer.visible ? <Eye className="w-3 h-3 text-neutral-400" /> : <EyeOff className="w-3 h-3 text-rose-500" />}
+                          </button>
+
+                          {/* Lock Toggle */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              updateLayerProp(layer.id, { locked: !layer.locked });
+                            }}
+                            className="p-1 rounded hover:bg-neutral-850 text-neutral-400 hover:text-white"
+                            title="Lock Layer"
+                          >
+                            {layer.locked ? <Lock className="w-3 h-3 text-amber-500" /> : <Unlock className="w-3 h-3 text-neutral-600" />}
+                          </button>
+
+                          {/* Move Up/Down */}
+                          <button
+                            onClick={(e) => moveLayer(layers.findIndex(l => l.id === layer.id), 'up', e)}
+                            className="p-0.5 rounded hover:bg-neutral-800 text-[10px] text-neutral-500 hover:text-white"
+                            title="Move Up"
+                          >
+                            ▲
+                          </button>
+                          <button
+                            onClick={(e) => moveLayer(layers.findIndex(l => l.id === layer.id), 'down', e)}
+                            className="p-0.5 rounded hover:bg-neutral-800 text-[10px] text-neutral-500 hover:text-white"
+                            title="Move Down"
+                          >
+                            ▼
+                          </button>
+
+                          {/* Delete Layer */}
+                          <button
+                            onClick={(e) => handleDeleteLayer(layer.id, e)}
+                            className="p-1 rounded hover:bg-neutral-800 text-neutral-500 hover:text-rose-400"
+                            title="Delete Layer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
+
+                      {/* Opacity & Blur sliders */}
+                      {isActive && (
+                        <div className="mt-2.5 pt-2 border-t border-neutral-800/40 space-y-2 text-[10px]">
+                          {/* Opacity */}
+                          <div className="flex items-center justify-between">
+                            <span className="text-neutral-500 font-bold">OPACITY</span>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="range"
+                                min={0}
+                                max={1}
+                                step={0.05}
+                                value={layer.opacity}
+                                onChange={(e) => updateLayerProp(layer.id, { opacity: parseFloat(e.target.value) })}
+                                className="w-20 accent-amber-500 h-1 bg-neutral-800 rounded-lg"
+                              />
+                              <span className="text-amber-400 font-black w-6 text-right">
+                                {Math.round(layer.opacity * 100)}%
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Depth Blur */}
+                          <div className="flex items-center justify-between">
+                            <span className="text-neutral-500 font-bold">DEPTH BLUR</span>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="range"
+                                min={0}
+                                max={20}
+                                step={1}
+                                value={blur}
+                                onChange={(e) => updateLayerProp(layer.id, { blurAmount: parseInt(e.target.value) })}
+                                className="w-20 accent-amber-500 h-1 bg-neutral-800 rounded-lg"
+                              />
+                              <span className="text-amber-400 font-black w-6 text-right">
+                                {blur}px
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}

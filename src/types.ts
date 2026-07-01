@@ -26,6 +26,8 @@ export interface Pivot {
   localY: number;
   locked: boolean;
   isActive?: boolean;
+  currentLocalX?: number;
+  currentLocalY?: number;
 }
 
 export interface Bone {
@@ -45,6 +47,62 @@ export interface Bone {
   currentAngle?: number;
   color?: string;
   thickness?: number;
+}
+
+export interface MeshPoint {
+  id: string;
+  originalX: number;
+  originalY: number;
+  currentX: number;
+  currentY: number;
+  pinned: boolean;
+  pinType: 'fixed' | 'semi-fixed' | 'free' | null;
+}
+
+export interface MeshState {
+  active: boolean;
+  densityX: number;
+  densityY: number;
+  points: MeshPoint[];
+  originalPoints: MeshPoint[];
+  pointSize: number;
+  showGrid: boolean;
+  showPoints: boolean;
+  previewMode: boolean;
+}
+
+export interface ObjectShadow {
+  enabled: boolean;
+  blur: number;
+  offsetX: number;
+  offsetY: number;
+  color: string;
+  opacity: number;
+}
+
+export interface ObjectInnerShadow {
+  enabled: boolean;
+  angle: number;
+  distance: number;
+  size: number;
+  opacity: number;
+  color?: string;
+  blur?: number;
+}
+
+export interface ObjectRimLight {
+  enabled: boolean;
+  color: string;
+  thickness: number;
+  softness: number;
+  position: 'inner' | 'outer';
+}
+
+export interface ObjectOverlay {
+  enabled: boolean;
+  color: string;
+  opacity: number;
+  blendMode: 'normal' | 'multiply' | 'screen' | 'overlay';
 }
 
 export interface VectorObject {
@@ -70,6 +128,11 @@ export interface VectorObject {
   isLocked: boolean;
   isHidden: boolean;
   keepAttachedTo?: string | null; // Drawing ID to keep permanently attached
+  shadow?: ObjectShadow;
+  innerShadow?: ObjectInnerShadow;
+  rimLight?: ObjectRimLight;
+  overlay?: ObjectOverlay;
+  meshState?: MeshState;
 }
 
 export interface Layer {
