@@ -931,36 +931,29 @@ export default function CanvasArea({
       };
       
       const factor = dist / (lastPinchDistRef.current || 1);
+      const nextScale = Math.min(100, Math.max(0.1, zoomScale * factor));
       
-      setZoomScale(prevScale => {
-        const nextScale = Math.min(100, Math.max(0.1, prevScale * factor));
+      const canvas = frontCanvasRef.current;
+      if (canvas) {
+        const rect = canvas.getBoundingClientRect();
+        const screenMidX = mid.x - rect.left;
+        const screenMidY = mid.y - rect.top;
         
-        const canvas = frontCanvasRef.current;
-        if (canvas) {
-          const rect = canvas.getBoundingClientRect();
-          const screenMidX = mid.x - rect.left;
-          const screenMidY = mid.y - rect.top;
-          
-          setZoomOffset(prevOffset => {
-            const worldMidX = (screenMidX - prevOffset.x) / prevScale;
-            const worldMidY = (screenMidY - prevOffset.y) / prevScale;
-            
-            return {
-              x: screenMidX - worldMidX * nextScale,
-              y: screenMidY - worldMidY * nextScale
-            };
-          });
-        }
+        const worldMidX = (screenMidX - zoomOffset.x) / zoomScale;
+        const worldMidY = (screenMidY - zoomOffset.y) / zoomScale;
         
-        return nextScale;
-      });
-      
-      const panDx = mid.x - lastPinchMidRef.current.x;
-      const panDy = mid.y - lastPinchMidRef.current.y;
-      setZoomOffset(prev => ({
-        x: prev.x + panDx,
-        y: prev.y + panDy
-      }));
+        const nextOffsetX = screenMidX - worldMidX * nextScale;
+        const nextOffsetY = screenMidY - worldMidY * nextScale;
+        
+        const panDx = mid.x - lastPinchMidRef.current.x;
+        const panDy = mid.y - lastPinchMidRef.current.y;
+        
+        setZoomScale(nextScale);
+        setZoomOffset({
+          x: nextOffsetX + panDx,
+          y: nextOffsetY + panDy
+        });
+      }
       
       lastPinchDistRef.current = dist;
       lastPinchMidRef.current = mid;
