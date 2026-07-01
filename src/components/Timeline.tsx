@@ -10,7 +10,8 @@ import {
   FileText, 
   Settings, 
   Eye, 
-  EyeOff 
+  EyeOff,
+  GitPullRequest
 } from 'lucide-react';
 
 interface TimelineProps {
@@ -24,6 +25,9 @@ interface TimelineProps {
   pasteFrame: (idx: number) => void;
   onionSkinEnabled: boolean;
   setOnionSkinEnabled: (enabled: boolean) => void;
+  showBones: boolean;
+  setShowBones: (enabled: boolean) => void;
+  batchAddFrames: (count: number) => void;
   fps: number;
   setFps: (fps: number) => void;
   isPlaying: boolean;
@@ -41,6 +45,9 @@ export default function Timeline({
   pasteFrame,
   onionSkinEnabled,
   setOnionSkinEnabled,
+  showBones,
+  setShowBones,
+  batchAddFrames,
   fps,
   setFps,
   isPlaying,
@@ -51,6 +58,7 @@ export default function Timeline({
   const [onionConfigOpen, setOnionConfigOpen] = useState(false);
   const [onionPrev, setOnionPrev] = useState(1);
   const [onionNext, setOnionNext] = useState(0);
+  const [batchCount, setBatchCount] = useState<number>(20);
 
   const playbackTimerRef = useRef<any>(null);
 
@@ -212,6 +220,21 @@ export default function Timeline({
             </button>
           </div>
 
+          <div className="flex items-center gap-1.5 bg-neutral-900 border border-neutral-800/80 p-1 rounded-xl">
+            <button
+              onClick={() => setShowBones(!showBones)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition-colors ${
+                showBones 
+                  ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' 
+                  : 'text-neutral-500 hover:bg-neutral-800/60'
+              }`}
+              title="Show or hide rigged bones skeleton overlay on canvas"
+            >
+              <GitPullRequest className="w-3.5 h-3.5" />
+              {showBones ? 'HIDE BONES' : 'SHOW BONES'}
+            </button>
+          </div>
+
           {/* Quick Onion Overlay */}
           {onionConfigOpen && (
             <div className="absolute bottom-32 left-1/2 -translate-x-1/2 bg-neutral-900 border border-neutral-800 p-3.5 rounded-2xl shadow-2xl z-50 flex items-center gap-5 text-xs text-neutral-300 animate-fade-in">
@@ -321,6 +344,33 @@ export default function Timeline({
         >
           <Plus className="w-5 h-5" />
         </button>
+
+        {/* Batch Add Frames Section */}
+        <div className="flex items-center gap-1.5 bg-neutral-950 border border-neutral-800 p-2 rounded-xl shrink-0 h-16">
+          <div className="flex flex-col justify-center">
+            <span className="text-[8px] text-neutral-500 font-black uppercase tracking-wider mb-0.5">Batch Add</span>
+            <select
+              value={batchCount}
+              onChange={(e) => setBatchCount(Number(e.target.value))}
+              className="bg-neutral-900 border border-neutral-800 text-neutral-300 text-[10px] rounded px-1.5 py-0.5 outline-none focus:border-amber-500 font-bold"
+            >
+              <option value="10">10 Frames</option>
+              <option value="20">20 Frames</option>
+              <option value="30">30 Frames</option>
+              <option value="40">40 Frames</option>
+              <option value="50">50 Frames</option>
+              <option value="100">100 Frames</option>
+            </select>
+          </div>
+          <button
+            onClick={() => {
+              batchAddFrames(batchCount);
+            }}
+            className="h-8 px-3 rounded bg-amber-500 text-neutral-950 hover:bg-amber-400 font-black text-[10px] transition-all flex items-center justify-center self-end cursor-pointer"
+          >
+            OK
+          </button>
+        </div>
       </div>
     </div>
   );

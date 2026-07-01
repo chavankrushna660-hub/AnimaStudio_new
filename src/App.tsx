@@ -33,6 +33,7 @@ export default function App() {
   const [activeTool, setActiveTool] = useState<string>('SEL');
   const [bones, setBones] = useState<Bone[]>([]);
   const [onionSkinEnabled, setOnionSkinEnabled] = useState(true);
+  const [showBones, setShowBones] = useState(true);
   const [activeLayerId, setActiveLayerId] = useState<string>('layer_char');
 
   // Timeline State
@@ -511,6 +512,23 @@ export default function App() {
     setFrames(prev => [...prev, { index: prev.length, objects: {} }]);
   };
 
+  const batchAddFrames = (count: number) => {
+    historyPush();
+    setFrames(prev => {
+      const updated = [...prev];
+      const lastFrame = prev[prev.length - 1];
+      const lastFrameObjects = lastFrame ? lastFrame.objects || {} : {};
+      
+      for (let i = 0; i < count; i++) {
+        updated.push({
+          index: updated.length,
+          objects: JSON.parse(JSON.stringify(lastFrameObjects))
+        });
+      }
+      return updated;
+    });
+  };
+
   const deleteFrame = (index: number) => {
     if (frames.length <= 1) return;
     setFrames(prev => prev.filter((_, idx) => idx !== index));
@@ -544,12 +562,35 @@ export default function App() {
 
   // Video Export recorder
   const startRecording = () => {
-    const canvas = document.querySelector('canvas') as HTMLCanvasElement;
+    const canvas = (document.getElementById('front-vector-canvas') as HTMLCanvasElement) || (document.querySelector('canvas') as HTMLCanvasElement);
     if (!canvas) return;
 
     recordedChunksRef.current = [];
     const stream = canvas.captureStream(fps);
-    const options = { mimeType: 'video/webm;codecs=vp9' };
+    
+    // Check supported types for mp4 vs webm
+    let options: MediaRecorderOptions = { mimeType: 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"' };
+    let extension = 'mp4';
+    
+    if (typeof MediaRecorder !== 'undefined') {
+      if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+        options = { mimeType: 'video/mp4' };
+      }
+      if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+        options = { mimeType: 'video/webm;codecs=h264' };
+        extension = 'webm';
+      }
+      if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+        options = { mimeType: 'video/webm;codecs=vp9' };
+        extension = 'webm';
+      }
+      if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+        options = { mimeType: 'video/webm' };
+        extension = 'webm';
+      }
+    } else {
+      extension = 'webm';
+    }
 
     try {
       const mediaRecorder = new MediaRecorder(stream, options);
@@ -560,11 +601,11 @@ export default function App() {
       };
 
       mediaRecorder.onstop = () => {
-        const blob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
+        const blob = new Blob(recordedChunksRef.current, { type: options.mimeType || 'video/mp4' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `AnimaStudio_Export_${Date.now()}.webm`;
+        a.download = `AnimaStudio_Export_${Date.now()}.${extension}`;
         document.body.appendChild(a);
         a.click();
         URL.revokeObjectURL(url);
@@ -831,6 +872,7 @@ export default function App() {
           setBones={setBones}
           activeLayerId={activeLayerId}
           onionSkinEnabled={onionSkinEnabled}
+          showBones={showBones}
           isPlaying={isPlaying}
           historyPush={historyPush}
           layers={layers}
@@ -871,6 +913,9 @@ export default function App() {
         pasteFrame={pasteFrame}
         onionSkinEnabled={onionSkinEnabled}
         setOnionSkinEnabled={setOnionSkinEnabled}
+        showBones={showBones}
+        setShowBones={setShowBones}
+        batchAddFrames={batchAddFrames}
         fps={fps}
         setFps={setFps}
         isPlaying={isPlaying}

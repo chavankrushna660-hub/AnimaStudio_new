@@ -114,6 +114,7 @@ interface CanvasAreaProps {
   setBones: React.Dispatch<React.SetStateAction<Bone[]>>;
   activeLayerId: string;
   onionSkinEnabled: boolean;
+  showBones?: boolean;
   isPlaying: boolean;
   historyPush: () => void;
   layers?: any[];
@@ -132,6 +133,7 @@ export default function CanvasArea({
   setBones,
   activeLayerId,
   onionSkinEnabled,
+  showBones = true,
   isPlaying,
   historyPush,
   layers = [],
@@ -1341,8 +1343,9 @@ export default function CanvasArea({
     const ctx = frontCanvas.getContext('2d');
     if (!ctx) return;
 
-    // Clear and Redraw
-    ctx.clearRect(0, 0, frontCanvas.width, frontCanvas.height);
+    // Clear and Redraw with a solid white background so video capture doesn't record as black
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, frontCanvas.width, frontCanvas.height);
 
     // Sort layers by zIndex ascending
     const sortedLayers = [...(layers || [])].sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
@@ -1756,46 +1759,48 @@ export default function CanvasArea({
     }
 
     // Render active bones list linkage overlays
-    bones.forEach((bone) => {
-      const startObj = objects[bone.startObjectId];
-      const endObj = objects[bone.endObjectId];
-      if (!startObj || !endObj) return;
+    if (showBones || activeTool === 'BON') {
+      bones.forEach((bone) => {
+        const startObj = objects[bone.startObjectId];
+        const endObj = objects[bone.endObjectId];
+        if (!startObj || !endObj) return;
 
-      const p1 = localToWorld({ x: bone.startLocalX, y: bone.startLocalY }, startObj.transform, startObj.pivots[0]);
-      const p2 = localToWorld({ x: bone.endLocalX, y: bone.endLocalY }, endObj.transform, endObj.pivots[0]);
+        const p1 = localToWorld({ x: bone.startLocalX, y: bone.startLocalY }, startObj.transform, startObj.pivots[0]);
+        const p2 = localToWorld({ x: bone.endLocalX, y: bone.endLocalY }, endObj.transform, endObj.pivots[0]);
 
-      const isElasticWarning = (elasticWarningId === bone.endObjectId);
+        const isElasticWarning = (elasticWarningId === bone.endObjectId);
 
-      // Render bone linkage line
-      ctx.save();
-      ctx.beginPath();
-      ctx.moveTo(p1.x, p1.y);
-      ctx.lineTo(p2.x, p2.y);
-      ctx.lineWidth = isElasticWarning ? 5 : 4;
-      ctx.strokeStyle = isElasticWarning ? '#FF1744' : '#2196F3'; // Red if elastic constraint warnings are triggered!
-      ctx.stroke();
-
-      // Render joint connection dots
-      ctx.beginPath();
-      ctx.arc(p1.x, p1.y, 6, 0, Math.PI * 2);
-      ctx.arc(p2.x, p2.y, 6, 0, Math.PI * 2);
-      ctx.fillStyle = isElasticWarning ? '#FF1744' : '#1B5E20';
-      ctx.fill();
-
-      // Draw beautiful warning badge if stretched to limit!
-      if (isElasticWarning) {
+        // Render bone linkage line
+        ctx.save();
         ctx.beginPath();
-        ctx.arc((p1.x + p2.x) / 2, (p1.y + p2.y) / 2 - 20, 10, 0, Math.PI * 2);
-        ctx.fillStyle = '#FF1744';
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.lineWidth = isElasticWarning ? 5 : 4;
+        ctx.strokeStyle = isElasticWarning ? '#FF1744' : '#2196F3'; // Red if elastic constraint warnings are triggered!
+        ctx.stroke();
+
+        // Render joint connection dots
+        ctx.beginPath();
+        ctx.arc(p1.x, p1.y, 6, 0, Math.PI * 2);
+        ctx.arc(p2.x, p2.y, 6, 0, Math.PI * 2);
+        ctx.fillStyle = isElasticWarning ? '#FF1744' : '#1B5E20';
         ctx.fill();
-        ctx.fillStyle = '#FFFFFF';
-        ctx.font = 'bold 11px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('!', (p1.x + p2.x) / 2, (p1.y + p2.y) / 2 - 20);
-      }
-      ctx.restore();
-    });
+
+        // Draw beautiful warning badge if stretched to limit!
+        if (isElasticWarning) {
+          ctx.beginPath();
+          ctx.arc((p1.x + p2.x) / 2, (p1.y + p2.y) / 2 - 20, 10, 0, Math.PI * 2);
+          ctx.fillStyle = '#FF1744';
+          ctx.fill();
+          ctx.fillStyle = '#FFFFFF';
+          ctx.font = 'bold 11px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('!', (p1.x + p2.x) / 2, (p1.y + p2.y) / 2 - 20);
+        }
+        ctx.restore();
+      });
+    }
 
     // Render active bone tool drawing / rubberband snapping preview
     if (activeTool === 'BON' && boneStartPoint) {
@@ -1875,7 +1880,8 @@ export default function CanvasArea({
     boneStartPoint,
     currentCursorPos,
     snappedPivot,
-    elasticWarningId
+    elasticWarningId,
+    showBones
   ]);
 
   return (
@@ -1889,6 +1895,7 @@ export default function CanvasArea({
       />
       <canvas
         ref={frontCanvasRef}
+        id="front-vector-canvas"
         width={1000}
         height={700}
         onPointerDown={handlePointerDown}

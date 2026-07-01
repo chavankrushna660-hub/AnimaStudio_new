@@ -216,7 +216,13 @@ export default function LeftPanel({
           onDragStart={(e) => handleDragStart(obj.id, e)}
           onDragOver={handleDragOver}
           onDrop={(e) => handleDrop(obj.id, e)}
-          onClick={() => setSelectedObjectId(obj.id)}
+          onClick={() => {
+            if (selectedObjectId === obj.id) {
+              setSelectedObjectId(null);
+            } else {
+              setSelectedObjectId(obj.id);
+            }
+          }}
           style={{ paddingLeft: `${depth * 14 + 8}px` }}
           className={`flex items-center justify-between py-1.5 px-2 rounded-xl group/item transition-colors select-none cursor-pointer ${
             isSelected 
