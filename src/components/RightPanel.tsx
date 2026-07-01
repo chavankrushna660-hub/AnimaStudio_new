@@ -23,8 +23,8 @@ import {
   Link,
   Unlink
 } from 'lucide-react';
-import { VectorObject, Bone, Layer, Pivot } from '../types';
-import { distance, localToWorld, worldToLocal, calculateBoundingBox } from '../utils/math';
+import { VectorObject, Bone, Layer, Pivot, Transform } from '../types';
+import { distance, localToWorld, worldToLocal, calculateBoundingBox, isPointInPolygon } from '../utils/math';
 
 interface RightPanelProps {
   selectedObject: VectorObject | null;
@@ -43,6 +43,26 @@ interface RightPanelProps {
   activeTool: string;
   setActiveTool: (tool: string) => void;
 }
+
+const isChildInsideParent = (
+  child: VectorObject,
+  parent: VectorObject,
+  testTransform: Transform,
+  objects: { [id: string]: VectorObject }
+): boolean => {
+  if (!parent.points || parent.points.length < 3) return true;
+  
+  // Get parent world points
+  const parentPivot = parent.pivots[0] || { localX: 0, localY: 0 };
+  const parentWorldPoints = parent.points.map(p => localToWorld(p, parent.transform, parentPivot));
+
+  // Get child world points with testTransform
+  const childPivot = child.pivots[0] || { localX: 0, localY: 0 };
+  const childWorldPoints = child.points.map(p => localToWorld(p, testTransform, childPivot));
+
+  // Check if every child world point is inside the parent polygon
+  return childWorldPoints.every(pt => isPointInPolygon(pt, parentWorldPoints));
+};
 
 export default function RightPanel({
   selectedObject,
@@ -342,6 +362,19 @@ export default function RightPanel({
     // Apply to selected drawing
     const val = (selectedObject.transform as any)[property] || 0;
     const nextVal = Number((val + amount).toFixed(2));
+
+    // Enforce parent closed edges constraint if rigged and parent has closed edges
+    if ((property === 'x' || property === 'y') && selectedObject.parentId && objects[selectedObject.parentId]) {
+      const parent = objects[selectedObject.parentId];
+      const isParentClosed = parent.type === 'shape' && parent.shapeType !== 'line';
+      if (isParentClosed) {
+        const testTransform = { ...selectedObject.transform, [property]: nextVal };
+        if (!isChildInsideParent(selectedObject, parent, testTransform, objects)) {
+          return; // reject move
+        }
+      }
+    }
+
     const transformUpdate = { ...selectedObject.transform, [property]: nextVal };
     updateObject(selectedObject.id, { transform: transformUpdate });
 
@@ -374,6 +407,18 @@ export default function RightPanel({
 
   const handleSliderChange = (property: string, value: number) => {
     if (!selectedObject) return;
+
+    // Enforce parent closed edges constraint if rigged and parent has closed edges
+    if ((property === 'x' || property === 'y') && selectedObject.parentId && objects[selectedObject.parentId]) {
+      const parent = objects[selectedObject.parentId];
+      const isParentClosed = parent.type === 'shape' && parent.shapeType !== 'line';
+      if (isParentClosed) {
+        const testTransform = { ...selectedObject.transform, [property]: value };
+        if (!isChildInsideParent(selectedObject, parent, testTransform, objects)) {
+          return; // reject move
+        }
+      }
+    }
 
     const transformUpdate = { ...selectedObject.transform, [property]: value };
     updateObject(selectedObject.id, { transform: transformUpdate });
@@ -1274,6 +1319,136 @@ export default function RightPanel({
                     </button>
                   </div>
                 </div>
+
+                {/* Smooth X, Y Sliders (always visible, disabled if not independent or closed rigged) */}
+                {selectedObject && (() => {
+                  const isRigged = !!selectedObject.parentId || bones.some(b => b.startObjectId === selectedObject.id || b.endObjectId === selectedObject.id);
+                  const hasClosedEdgesSelf = selectedObject.type === 'shape' && selectedObject.shapeType !== 'line';
+                  const hasClosedEdgesParent = !!(selectedObject.parentId && objects[selectedObject.parentId] && objects[selectedObject.parentId].type === 'shape' && objects[selectedObject.parentId].shapeType !== 'line');
+                  const isSmoothMoveEnabled = !isRigged || hasClosedEdgesSelf || hasClosedEdgesParent;
+
+                  return (
+                    <div className={`space-y-4 bg-amber-500/5 p-4 rounded-2xl border transition-all duration-300 shadow-lg shadow-black/20 ${
+                      isSmoothMoveEnabled ? 'border-amber-400/20' : 'border-neutral-800 opacity-60'
+                    }`}>
+                      <div className="text-[10px] text-amber-400 font-black uppercase tracking-wider flex items-center justify-between pb-2 border-b border-amber-500/10">
+                        <div className="flex items-center gap-1.5">
+                          <Move className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
+                          <span>SMOOTH POSITION</span>
+                        </div>
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded font-black ${
+                          !isRigged 
+                            ? 'bg-emerald-500/20 text-emerald-400' 
+                            : isSmoothMoveEnabled 
+                              ? 'bg-amber-500/20 text-amber-400 font-black' 
+                              : 'bg-neutral-800 text-neutral-500 font-bold'
+                        }`}>
+                          {!isRigged 
+                            ? 'INDEPENDENT' 
+                            : isSmoothMoveEnabled 
+                              ? 'RIGGED (CLOSED EDGES)' 
+                              : 'DISABLED FOR RIGGED'}
+                        </span>
+                      </div>
+
+                      {/* Slider: Translate X */}
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-neutral-400">Smooth Translate X</span>
+                          <span className="text-white font-bold">{selectedObject.transform.x.toFixed(1)}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="-500"
+                          max="1500"
+                          step="0.5"
+                          disabled={!isSmoothMoveEnabled}
+                          value={selectedObject.transform.x}
+                          onChange={(e) => handleSliderChange('x', Number(e.target.value))}
+                          className="w-full accent-amber-500 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                        />
+                        <div className="flex items-center justify-between gap-1.5 pt-0.5">
+                          <button
+                            disabled={!isSmoothMoveEnabled}
+                            onClick={() => handleNudge('x', -10)}
+                            className="flex-1 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-40 disabled:pointer-events-none"
+                          >
+                            -10px
+                          </button>
+                          <button
+                            disabled={!isSmoothMoveEnabled}
+                            onClick={() => handleNudge('x', -1)}
+                            className="flex-1 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-40 disabled:pointer-events-none"
+                          >
+                            -1px
+                          </button>
+                          <button
+                            disabled={!isSmoothMoveEnabled}
+                            onClick={() => handleNudge('x', 1)}
+                            className="flex-1 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-40 disabled:pointer-events-none"
+                          >
+                            +1px
+                          </button>
+                          <button
+                            disabled={!isSmoothMoveEnabled}
+                            onClick={() => handleNudge('x', 10)}
+                            className="flex-1 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-40 disabled:pointer-events-none"
+                          >
+                            +10px
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Slider: Translate Y */}
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-neutral-400">Smooth Translate Y</span>
+                          <span className="text-white font-bold">{selectedObject.transform.y.toFixed(1)}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="-500"
+                          max="1500"
+                          step="0.5"
+                          disabled={!isSmoothMoveEnabled}
+                          value={selectedObject.transform.y}
+                          onChange={(e) => handleSliderChange('y', Number(e.target.value))}
+                          className="w-full accent-amber-500 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                        />
+                        <div className="flex items-center justify-between gap-1.5 pt-0.5">
+                          <button
+                            disabled={!isSmoothMoveEnabled}
+                            onClick={() => handleNudge('y', -10)}
+                            className="flex-1 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-40 disabled:pointer-events-none"
+                          >
+                            -10px
+                          </button>
+                          <button
+                            disabled={!isSmoothMoveEnabled}
+                            onClick={() => handleNudge('y', -1)}
+                            className="flex-1 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-40 disabled:pointer-events-none"
+                          >
+                            -1px
+                          </button>
+                          <button
+                            disabled={!isSmoothMoveEnabled}
+                            onClick={() => handleNudge('y', 1)}
+                            className="flex-1 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-40 disabled:pointer-events-none"
+                          >
+                            +1px
+                          </button>
+                          <button
+                            disabled={!isSmoothMoveEnabled}
+                            onClick={() => handleNudge('y', 10)}
+                            className="flex-1 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-40 disabled:pointer-events-none"
+                          >
+                            +10px
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Transform Sliders & Click Buttons */}
                 <div className="space-y-4">

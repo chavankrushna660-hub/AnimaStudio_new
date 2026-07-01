@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Point, VectorObject, Bone, Pivot, Frame } from '../types';
+import { Point, VectorObject, Bone, Pivot, Frame, Transform } from '../types';
 import { 
   distance, 
   pointToPolylineDistance, 
@@ -100,6 +100,33 @@ const deformWithPuppetPins = (p: Point, pins: Pivot[]) => {
   }
   
   return p;
+};
+
+const isChildInsideParent = (
+  child: VectorObject,
+  parent: VectorObject,
+  testTransform: Transform,
+  objects: { [id: string]: VectorObject }
+): boolean => {
+  if (!parent.points || parent.points.length < 3) return true;
+  
+  // Get parent world points
+  const parentPivot = parent.pivots[0] || { localX: 0, localY: 0 };
+  const parentWorldPoints = parent.points.map(p => localToWorld(p, parent.transform, parentPivot));
+
+  // Get child world points with testTransform
+  const childPivot = child.pivots[0] || { localX: 0, localY: 0 };
+  let localPoints = child.points;
+  if (child.meshState && child.meshState.active) {
+    const bounds = calculateBoundingBox(child.points);
+    localPoints = child.points.map(p => getWarpedPoint(p, child.meshState, bounds));
+  } else if (child.pins && child.pins.length > 0) {
+    localPoints = child.points.map(p => deformWithPuppetPins(p, child.pins));
+  }
+  const childWorldPoints = localPoints.map(p => localToWorld(p, testTransform, childPivot));
+
+  // Check if every child world point is inside the parent polygon
+  return childWorldPoints.every(pt => isPointInPolygon(pt, parentWorldPoints));
 };
 
 interface CanvasAreaProps {
@@ -959,6 +986,21 @@ export default function CanvasArea({
           } else {
             setElasticWarningId(null);
           }
+
+          // Closed edge constraint for rigged child drawings
+          const isParentClosed = parent.type === 'shape' && parent.shapeType !== 'line';
+          if (isParentClosed) {
+            // Test X movement independently (sliding collision response)
+            const testTransformX = { ...obj.transform, x: nextX, y: obj.transform.y };
+            if (!isChildInsideParent(obj, parent, testTransformX, objects)) {
+              nextX = obj.transform.x;
+            }
+            // Test Y movement independently (sliding collision response)
+            const testTransformY = { ...obj.transform, x: nextX, y: nextY };
+            if (!isChildInsideParent(obj, parent, testTransformY, objects)) {
+              nextY = obj.transform.y;
+            }
+          }
         } else {
           setElasticWarningId(null);
         }
@@ -993,7 +1035,18 @@ export default function CanvasArea({
         const deltaRad = angleCurrent - angleStart;
         const deltaDeg = (deltaRad * 180) / Math.PI;
 
-        const nextRotation = Number((initialTransform.rotation + deltaDeg).toFixed(2));
+        let nextRotation = Number((initialTransform.rotation + deltaDeg).toFixed(2));
+
+        if (obj.parentId && objects[obj.parentId]) {
+          const parent = objects[obj.parentId];
+          const isParentClosed = parent.type === 'shape' && parent.shapeType !== 'line';
+          if (isParentClosed) {
+            const testTransform = { ...obj.transform, rotation: nextRotation };
+            if (!isChildInsideParent(obj, parent, testTransform, objects)) {
+              nextRotation = obj.transform.rotation; // block rotation outside parent
+            }
+          }
+        }
         const deltaRot = nextRotation - obj.transform.rotation;
 
         setObjects(prev => {
@@ -1035,6 +1088,18 @@ export default function CanvasArea({
             scaleX = initialTransform.scaleX;
           } else if (idx === 3 || idx === 7) {
             scaleY = initialTransform.scaleY;
+          }
+
+          if (obj.parentId && objects[obj.parentId]) {
+            const parent = objects[obj.parentId];
+            const isParentClosed = parent.type === 'shape' && parent.shapeType !== 'line';
+            if (isParentClosed) {
+              const testTransform = { ...obj.transform, scaleX, scaleY };
+              if (!isChildInsideParent(obj, parent, testTransform, objects)) {
+                scaleX = obj.transform.scaleX;
+                scaleY = obj.transform.scaleY;
+              }
+            }
           }
 
           updated[selectedObjectId] = {
