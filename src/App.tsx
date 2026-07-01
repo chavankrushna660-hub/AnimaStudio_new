@@ -10,7 +10,8 @@ import {
   Plus, 
   Settings, 
   Sparkles,
-  GitPullRequest
+  GitPullRequest,
+  Trash2
 } from 'lucide-react';
 import Toolbar from './components/Toolbar';
 import LeftPanel from './components/LeftPanel';
@@ -18,6 +19,7 @@ import RightPanel from './components/RightPanel';
 import CanvasArea from './components/CanvasArea';
 import Timeline from './components/Timeline';
 import { VectorObject, Bone, Layer, Frame } from './types';
+import { localToWorld, rotatePoint } from './utils/math';
 
 export default function App() {
   // Topbar Collapse States
@@ -54,8 +56,15 @@ export default function App() {
   // Smart controls pinned list
   const [smartPinnedIds, setSmartPinnedIds] = useState<string[]>([]);
 
+  // Ref to track the currently loaded frame index to prevent race conditions & update loops
+  const loadedFrameIndexRef = useRef<number>(0);
+
   // Synchronize active objects back into the current frame's objects dictionary
   useEffect(() => {
+    if (currentFrameIndex !== loadedFrameIndexRef.current) {
+      // Ignore sync updates while transitions/loading are in progress
+      return;
+    }
     setFrames(prev => {
       const updated = [...prev];
       if (updated[currentFrameIndex]) {
@@ -77,14 +86,26 @@ export default function App() {
     if (targetFrame) {
       const frameObjects = targetFrame.objects || {};
       if (Object.keys(frameObjects).length > 0) {
-        setObjects(JSON.parse(JSON.stringify(frameObjects)));
+        setObjects(prev => {
+          if (JSON.stringify(prev) !== JSON.stringify(frameObjects)) {
+            return JSON.parse(JSON.stringify(frameObjects));
+          }
+          return prev;
+        });
       } else if (currentFrameIndex > 0) {
         const prevFrame = frames[currentFrameIndex - 1];
         if (prevFrame && prevFrame.objects && Object.keys(prevFrame.objects).length > 0) {
-          setObjects(JSON.parse(JSON.stringify(prevFrame.objects)));
+          setObjects(prev => {
+            if (JSON.stringify(prev) !== JSON.stringify(prevFrame.objects)) {
+              return JSON.parse(JSON.stringify(prevFrame.objects));
+            }
+            return prev;
+          });
         }
       }
     }
+    // Set the loaded index to sync with the active frame
+    loadedFrameIndexRef.current = currentFrameIndex;
   }, [currentFrameIndex]);
 
   // Export video recorder states
@@ -100,6 +121,136 @@ export default function App() {
     };
     setUndoStack(prev => [...prev.slice(-15), stateSnapshot]); // Limit memory stack to 15 actions
     setRedoStack([]);
+  };
+
+  // Powerful transform-propagating update helper
+  const updateObject = (id: string, updates: Partial<VectorObject>) => {
+    setObjects(prev => {
+      const updated = { ...prev };
+      const obj = updated[id];
+      if (!obj) return prev;
+
+      const updatedObj = { ...obj, ...updates };
+      updated[id] = updatedObj;
+
+      // If transform changed, propagate down the parent-child hierarchy!
+      if (updates.transform) {
+        const origT = obj.transform;
+        const newT = updates.transform;
+
+        const dX = (newT.x !== undefined ? newT.x : origT.x) - origT.x;
+        const dY = (newT.y !== undefined ? newT.y : origT.y) - origT.y;
+        const dRot = ((newT.rotation !== undefined ? newT.rotation : origT.rotation) ?? 0) - (origT.rotation ?? 0);
+        
+        const sXRatio = origT.scaleX !== 0 ? (newT.scaleX !== undefined ? newT.scaleX : origT.scaleX ?? 1) / origT.scaleX : 1;
+        const sYRatio = origT.scaleY !== 0 ? (newT.scaleY !== undefined ? newT.scaleY : origT.scaleY ?? 1) / origT.scaleY : 1;
+
+        // Propagate recursively
+        const propagate = (parentId: string, deltaX: number, deltaY: number, deltaRot: number, scaleXRatio: number, scaleYRatio: number) => {
+          // Get direct child IDs
+          const childIds = Object.keys(updated).filter(k => updated[k].parentId === parentId);
+
+          for (const childId of childIds) {
+            const child = updated[childId];
+            if (!child) continue;
+
+            const childOrigT = { ...child.transform };
+            const childNewT = { ...child.transform };
+
+            // Rotate child position around parent's pivot
+            if (deltaRot !== 0) {
+              const parentObj = updated[parentId];
+              const pPivot = parentObj?.pivots?.[0] || { localX: 0, localY: 0 };
+              const parentJointWorld = localToWorld(
+                { x: pPivot.localX, y: pPivot.localY },
+                parentObj.transform,
+                pPivot
+              );
+              const childWorldPos = { x: childNewT.x, y: childNewT.y };
+              const rotatedChildWorldPos = rotatePoint(childWorldPos, deltaRot, parentJointWorld);
+              childNewT.x = Number(rotatedChildWorldPos.x.toFixed(2));
+              childNewT.y = Number(rotatedChildWorldPos.y.toFixed(2));
+              childNewT.rotation = Number(((childNewT.rotation ?? 0) + deltaRot).toFixed(2));
+            } else {
+              // Just translate
+              childNewT.x = Number((childNewT.x + deltaX).toFixed(2));
+              childNewT.y = Number((childNewT.y + deltaY).toFixed(2));
+            }
+
+            // Scale child's offset and scale factors
+            if (scaleXRatio !== 1 || scaleYRatio !== 1) {
+              const parentObj = updated[parentId];
+              const pPivot = parentObj?.pivots?.[0] || { localX: 0, localY: 0 };
+              const parentJointWorld = localToWorld(
+                { x: pPivot.localX, y: pPivot.localY },
+                parentObj.transform,
+                pPivot
+              );
+              const dx_c = childNewT.x - parentJointWorld.x;
+              const dy_c = childNewT.y - parentJointWorld.y;
+              childNewT.x = Number((parentJointWorld.x + dx_c * scaleXRatio).toFixed(2));
+              childNewT.y = Number((parentJointWorld.y + dy_c * scaleYRatio).toFixed(2));
+              childNewT.scaleX = Number(((childNewT.scaleX ?? 1) * scaleXRatio).toFixed(2));
+              childNewT.scaleY = Number(((childNewT.scaleY ?? 1) * scaleYRatio).toFixed(2));
+            }
+
+            // Propagate Skew, RotateX, RotateY, Perspective if present
+            if (newT.skewX !== undefined) {
+              const dSkewX = (newT.skewX ?? 0) - (origT.skewX ?? 0);
+              childNewT.skewX = Number(((childNewT.skewX ?? 0) + dSkewX).toFixed(2));
+            }
+            if (newT.skewY !== undefined) {
+              const dSkewY = (newT.skewY ?? 0) - (origT.skewY ?? 0);
+              childNewT.skewY = Number(((childNewT.skewY ?? 0) + dSkewY).toFixed(2));
+            }
+            if (newT.rotateX !== undefined) {
+              const dRotX = (newT.rotateX ?? 0) - (origT.origX ?? origT.rotateX ?? 0);
+              childNewT.rotateX = Number(((childNewT.rotateX ?? 0) + dRotX).toFixed(2));
+            }
+            if (newT.rotateY !== undefined) {
+              const dRotY = (newT.rotateY ?? 0) - (origT.origY ?? origT.rotateY ?? 0);
+              childNewT.rotateY = Number(((childNewT.rotateY ?? 0) + dRotY).toFixed(2));
+            }
+            if (newT.perspective !== undefined) {
+              const dPersp = (newT.perspective ?? 0) - (origT.perspective ?? 0);
+              childNewT.perspective = Number(((childNewT.perspective ?? 0) + dPersp).toFixed(2));
+            }
+
+            // Snapping rigid bones to guarantee zero detachment
+            const parentObj = updated[parentId];
+            const associatedBone = bones.find(b => b.startObjectId === parentId && b.endObjectId === childId);
+            if (associatedBone && !associatedBone.allowDetach) {
+              const pJoint = localToWorld({ x: associatedBone.startLocalX, y: associatedBone.startLocalY }, parentObj.transform, parentObj.pivots?.[0]);
+              const cJoint = localToWorld({ x: associatedBone.endLocalX, y: associatedBone.endLocalY }, childNewT, child.pivots?.[0]);
+              
+              const dx_snap = pJoint.x - cJoint.x;
+              const dy_snap = pJoint.y - cJoint.y;
+
+              childNewT.x = Number((childNewT.x + dx_snap).toFixed(2));
+              childNewT.y = Number((childNewT.y + dy_snap).toFixed(2));
+            }
+
+            updated[childId] = {
+              ...child,
+              transform: childNewT
+            };
+
+            // Recursive propagation down the chain
+            const nextDX = childNewT.x - childOrigT.x;
+            const nextDY = childNewT.y - childOrigT.y;
+            const nextDRot = (childNewT.rotation ?? 0) - (childOrigT.rotation ?? 0);
+            const nextSXRatio = childOrigT.scaleX !== 0 ? (childNewT.scaleX ?? 1) / childOrigT.scaleX : 1;
+            const nextSYRatio = childOrigT.scaleY !== 0 ? (childNewT.scaleY ?? 1) / childOrigT.scaleY : 1;
+
+            propagate(childId, nextDX, nextDY, nextDRot, nextSXRatio, nextSYRatio);
+          }
+        };
+
+        propagate(id, dX, dY, dRot, sXRatio, sYRatio);
+      }
+
+      return updated;
+    });
   };
 
   const handleUndo = () => {
@@ -324,6 +475,29 @@ export default function App() {
     setSelectedObjectId(torsoId);
   };
 
+  // Object and Canvas operations
+  const deleteObject = (id: string) => {
+    historyPush();
+    setObjects(prev => {
+      const updated = { ...prev };
+      delete updated[id];
+      return updated;
+    });
+    setBones(prev => prev.filter(b => b.startObjectId !== id && b.endObjectId !== id));
+    if (selectedObjectId === id) {
+      setSelectedObjectId(null);
+    }
+  };
+
+  const clearCanvas = () => {
+    historyPush();
+    setObjects({});
+    setBones([]);
+    setSelectedObjectId(null);
+    setFrames([{ index: 0, objects: {} }]);
+    setCurrentFrameIndex(0);
+  };
+
   // Timeline operations
   const addFrame = () => {
     setFrames(prev => [...prev, { index: prev.length, objects: {} }]);
@@ -539,6 +713,15 @@ export default function App() {
             <Sparkles className="w-3.5 h-3.5 fill-current" />
             RIG SAMPLE CHARACTER
           </button>
+
+          <button
+            onClick={clearCanvas}
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-rose-500/10 hover:bg-rose-600 border border-rose-500/20 hover:border-rose-500 text-rose-400 hover:text-white font-black text-xs active:scale-95 transition-all cursor-pointer"
+            title="Clear entire canvas, drawings, bones and timelines"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            CLEAR CANVAS
+          </button>
         </div>
 
         {/* Right Actions: Import, Export, Record */}
@@ -613,21 +796,8 @@ export default function App() {
           objects={objects}
           selectedObjectId={selectedObjectId}
           setSelectedObjectId={setSelectedObjectId}
-          updateObject={(id, updates) => {
-            setObjects(prev => ({
-              ...prev,
-              [id]: { ...prev[id], ...updates }
-            }));
-          }}
-          deleteObject={(id) => {
-            historyPush();
-            setObjects(prev => {
-              const updated = { ...prev };
-              delete updated[id];
-              return updated;
-            });
-            setSelectedObjectId(null);
-          }}
+          updateObject={updateObject}
+          deleteObject={deleteObject}
           layers={layers}
           activeLayerId={activeLayerId}
           setActiveLayerId={setActiveLayerId}
@@ -659,12 +829,9 @@ export default function App() {
         {/* Right Collapsible Properties, Sliders, Smart Pinned Controls */}
         <RightPanel
           selectedObject={selectedObjectId ? objects[selectedObjectId] : null}
-          updateObject={(id, updates) => {
-            setObjects(prev => ({
-              ...prev,
-              [id]: { ...prev[id], ...updates }
-            }));
-          }}
+          setSelectedObjectId={setSelectedObjectId}
+          updateObject={updateObject}
+          deleteObject={deleteObject}
           objects={objects}
           bones={bones}
           addBone={(bone) => setBones(prev => [...prev, bone])}

@@ -140,6 +140,53 @@ export default function Timeline({
           </button>
         </div>
 
+        {/* Frame Actions (Copy, Paste, Duplicate, Delete) */}
+        <div className="flex items-center gap-1.5 bg-neutral-900 border border-neutral-800/80 p-1.5 rounded-xl">
+          <span className="text-[10px] text-neutral-500 font-black tracking-wider uppercase px-1.5">FRAME #{currentFrameIndex + 1}</span>
+          <div className="w-[1px] h-4 bg-neutral-800 mx-1"></div>
+          <button
+            type="button"
+            onClick={() => handleCopy(currentFrameIndex)}
+            className="p-1.5 rounded-lg hover:bg-neutral-800 text-neutral-400 hover:text-white transition-all text-xs flex items-center gap-1 cursor-pointer"
+            title="Copy current frame nodes"
+          >
+            <Copy className="w-3.5 h-3.5" />
+            <span className="text-[11px] font-bold">Copy</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => handlePaste(currentFrameIndex)}
+            disabled={copiedFrameIndex === null}
+            className={`p-1.5 rounded-lg hover:bg-neutral-800 text-neutral-400 hover:text-white transition-all text-xs flex items-center gap-1 cursor-pointer ${
+              copiedFrameIndex === null ? 'opacity-30 cursor-not-allowed' : ''
+            }`}
+            title="Paste copied nodes into current frame"
+          >
+            <FileText className="w-3.5 h-3.5" />
+            <span className="text-[11px] font-bold">Paste</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => duplicateFrame(currentFrameIndex)}
+            className="p-1.5 rounded-lg hover:bg-neutral-800 text-amber-400 hover:text-amber-300 transition-all text-xs flex items-center gap-1 cursor-pointer"
+            title="Duplicate current frame"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span className="text-[11px] font-bold">Duplicate</span>
+          </button>
+          {frames.length > 1 && (
+            <button
+              type="button"
+              onClick={() => deleteFrame(currentFrameIndex)}
+              className="p-1.5 rounded-lg hover:bg-neutral-800 text-rose-500 hover:text-rose-400 transition-all text-xs flex items-center gap-1 cursor-pointer"
+              title="Delete current frame"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span className="text-[11px] font-bold">Delete</span>
+            </button>
+          )}
+        </div>
+
         {/* Center: Onion Skinning & Advanced Controls */}
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5 bg-neutral-900 border border-neutral-800/80 p-1 rounded-xl">
@@ -258,57 +305,8 @@ export default function Timeline({
                 )}
               </div>
 
-              {/* Actions Overlays */}
-              <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity absolute inset-0 bg-neutral-950/90 rounded-xl px-1">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleCopy(index);
-                  }}
-                  className="p-1 rounded hover:bg-neutral-800 text-neutral-400 hover:text-white"
-                  title="Copy frame data"
-                >
-                  <Copy className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handlePaste(index);
-                  }}
-                  disabled={copiedFrameIndex === null}
-                  className={`p-1 rounded hover:bg-neutral-800 text-neutral-400 hover:text-white ${
-                    copiedFrameIndex === null ? 'opacity-30 cursor-not-allowed' : ''
-                  }`}
-                  title="Paste frame data"
-                >
-                  <FileText className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    duplicateFrame(index);
-                  }}
-                  className="p-1 rounded hover:bg-neutral-800 text-neutral-400 hover:text-white"
-                  title="Duplicate frame"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                </button>
-                {frames.length > 1 && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      deleteFrame(index);
-                    }}
-                    className="p-1 rounded hover:bg-neutral-800 text-rose-500 hover:text-rose-400"
-                    title="Delete frame"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
-
               {/* Indicator info when not hovered */}
-              <span className="text-[10px] text-neutral-600 block text-right select-none font-bold">
+              <span className="text-[10px] text-neutral-500 block text-right select-none font-bold">
                 {frame.objects ? Object.keys(frame.objects).length : 0} nodes
               </span>
             </div>

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { 
   ChevronRight, 
   ChevronLeft,
+  ChevronDown,
   Settings, 
   Trash2, 
   Plus, 
@@ -16,14 +17,20 @@ import {
   Workflow,
   Sparkles,
   GitMerge,
-  Maximize2
+  Maximize2,
+  Folder,
+  FolderPlus,
+  Link,
+  Unlink
 } from 'lucide-react';
 import { VectorObject, Bone, Layer, Pivot } from '../types';
-import { distance, localToWorld, calculateBoundingBox } from '../utils/math';
+import { distance, localToWorld, worldToLocal, calculateBoundingBox } from '../utils/math';
 
 interface RightPanelProps {
   selectedObject: VectorObject | null;
+  setSelectedObjectId: (id: string | null) => void;
   updateObject: (id: string, updates: Partial<VectorObject>) => void;
+  deleteObject: (id: string) => void;
   objects: { [id: string]: VectorObject };
   bones: Bone[];
   addBone: (bone: Bone) => void;
@@ -37,7 +44,9 @@ interface RightPanelProps {
 
 export default function RightPanel({
   selectedObject,
+  setSelectedObjectId,
   updateObject,
+  deleteObject,
   objects,
   bones,
   addBone,
@@ -55,6 +64,122 @@ export default function RightPanel({
   const [oppositeSection1, setOppositeSection1] = useState<string[]>([]);
   const [oppositeSection2, setOppositeSection2] = useState<string[]>([]);
   const [oppositeMode, setOppositeMode] = useState<'rotation' | 'moveX' | 'moveY'>('rotation');
+
+  // Hierarchy Management & Auto-Rigging
+  const [expandedNodes, setExpandedNodes] = useState<{ [id: string]: boolean }>({});
+  const [activeMenuObjectId, setActiveMenuObjectId] = useState<string | null>(null);
+  const [activeMenuType, setActiveMenuType] = useState<'options' | 'addChild' | 'addSibling' | null>(null);
+
+  const relateChildToParent = (parentId: string, childId: string) => {
+    if (parentId === childId) return;
+    const parentObj = objects[parentId];
+    const childObj = objects[childId];
+    if (!parentObj || !childObj) return;
+
+    // Detect Circular reference
+    let current: VectorObject | null = parentObj;
+    while (current) {
+      if (current.id === childId) {
+        alert(`Circular dependency detected! ${childObj.name} is already an ancestor of ${parentObj.name}.`);
+        return;
+      }
+      current = current.parentId ? objects[current.parentId] : null;
+    }
+
+    // Auto-create pivots if missing for parent
+    let parentPivot = parentObj.pivots?.[0];
+    if (!parentPivot) {
+      const pBox = calculateBoundingBox(parentObj.points);
+      const pLocalX = pBox.x + pBox.width / 2;
+      const pLocalY = pBox.y + pBox.height / 2;
+      parentPivot = {
+        id: `pvt_${Date.now()}_p`,
+        name: `Pivot_1`,
+        localX: Number(pLocalX.toFixed(2)),
+        localY: Number(pLocalY.toFixed(2)),
+        locked: false
+      };
+      updateObject(parentObj.id, { pivots: [parentPivot] });
+    }
+
+    let childPivot = childObj.pivots?.[0];
+    if (!childPivot) {
+      const cBox = calculateBoundingBox(childObj.points);
+      const cLocalX = cBox.x + cBox.width / 2;
+      const cLocalY = cBox.y + cBox.height / 2;
+      childPivot = {
+        id: `pvt_${Date.now()}_c`,
+        name: `Pivot_1`,
+        localX: Number(cLocalX.toFixed(2)),
+        localY: Number(cLocalY.toFixed(2)),
+        locked: false
+      };
+      updateObject(childObj.id, { pivots: [childPivot] });
+    }
+
+    // Relate child to parent in state
+    updateObject(childObj.id, { parentId: parentObj.id });
+
+    // Also update parent's childrenIds to include childId
+    const currentChildren = parentObj.childrenIds || [];
+    if (!currentChildren.includes(childId)) {
+      updateObject(parentObj.id, { childrenIds: [...currentChildren, childId] });
+    }
+
+    // Check if there is already a bone between them. If not, create one!
+    const boneExists = bones.some(b => 
+      (b.startObjectId === parentObj.id && b.endObjectId === childObj.id) ||
+      (b.startObjectId === childObj.id && b.endObjectId === parentObj.id)
+    );
+
+    if (!boneExists) {
+      // Determine lock joint connection points
+      const startWorld = localToWorld({ x: parentPivot.localX, y: parentPivot.localY }, parentObj.transform, parentPivot);
+      const childLocalJoint = worldToLocal(startWorld, childObj.transform, childPivot);
+
+      const newBone: Bone = {
+        id: `bone_${Date.now()}`,
+        name: `${parentObj.name}_to_${childObj.name}`,
+        startObjectId: parentObj.id,
+        endObjectId: childObj.id,
+        startLocalX: parentPivot.localX,
+        startLocalY: parentPivot.localY,
+        endLocalX: Number(childLocalJoint.x.toFixed(2)),
+        endLocalY: Number(childLocalJoint.y.toFixed(2)),
+        lockedDistance: 0, // perfect joint lock at 0 distance in world space
+        allowDetach: false,
+        minAngle: -180,
+        maxAngle: 180,
+        enableConstraints: true,
+      };
+
+      addBone(newBone);
+    }
+  };
+
+  const handleRemoveFromParent = (childId: string) => {
+    const child = objects[childId];
+    if (!child) return;
+    const pId = child.parentId;
+    
+    // Update child
+    updateObject(childId, { parentId: null });
+
+    // Update parent's childrenIds list
+    if (pId && objects[pId]) {
+      const parent = objects[pId];
+      updateObject(pId, {
+        childrenIds: (parent.childrenIds || []).filter(id => id !== childId)
+      });
+    }
+
+    // Delete associated bones
+    const bonesToDelete = bones.filter(b => 
+      (b.startObjectId === pId && b.endObjectId === childId) ||
+      (b.startObjectId === childId && b.endObjectId === pId)
+    );
+    bonesToDelete.forEach(b => deleteBone(b.id));
+  };
 
   // Direct connection creation state
   const [connDrawingA, setConnDrawingA] = useState<string>('');
@@ -236,6 +361,237 @@ export default function RightPanel({
     ? bones.filter(b => b.startObjectId === selectedObject.id || b.endObjectId === selectedObject.id)
     : [];
 
+  // Recursive Tree Node Renderer for VS Code style directory parenting tree
+  const renderTreeNode = (obj: VectorObject, depth: number): React.ReactNode => {
+    const hasChildren = obj.childrenIds && obj.childrenIds.length > 0;
+    const isExpanded = expandedNodes[obj.id] !== false; // expanded by default
+    const isSelected = selectedObject?.id === obj.id;
+
+    // Recursive search for direct child objects
+    const childObjects = Object.values(objects).filter(o => o.parentId === obj.id);
+
+    return (
+      <div key={obj.id} className="space-y-1">
+        {/* Node Label Row */}
+        <div 
+          className={`group flex items-center justify-between py-1.5 px-2 rounded-xl transition-all cursor-pointer ${
+            isSelected 
+              ? 'bg-amber-500/20 text-white border border-amber-500/20 font-bold shadow shadow-amber-500/5' 
+              : 'hover:bg-neutral-800/40 text-neutral-350'
+          }`}
+          style={{ paddingLeft: `${Math.max(8, depth * 12)}px` }}
+          onClick={(e) => {
+            e.stopPropagation();
+            setSelectedObjectId(obj.id);
+          }}
+        >
+          <div className="flex items-center gap-1.5 min-w-0">
+            {/* Collapse / Expand Toggle for folder nodes */}
+            {childObjects.length > 0 ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setExpandedNodes(prev => ({ ...prev, [obj.id]: !isExpanded }));
+                }}
+                className="p-0.5 rounded hover:bg-neutral-800 text-neutral-500 hover:text-neutral-300 transition-all flex items-center justify-center"
+              >
+                {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+              </button>
+            ) : (
+              <span className="w-4 h-4" /> // spacing indent
+            )}
+
+            {/* Icon */}
+            <Folder className={`w-3.5 h-3.5 shrink-0 ${isSelected ? 'text-amber-400' : 'text-neutral-500'}`} />
+
+            {/* Object Name */}
+            <span className="truncate text-xs font-bold leading-none tracking-tight">{obj.name}</span>
+          </div>
+
+          {/* Actions Hover Rail */}
+          <div className="flex items-center gap-1 shrink-0 opacity-40 group-hover:opacity-100 transition-opacity">
+            {/* Add Child / Sibling Action */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setActiveMenuObjectId(obj.id);
+                setActiveMenuType('options');
+              }}
+              className="p-1 rounded bg-neutral-800/80 hover:bg-amber-500 hover:text-neutral-950 text-neutral-400 transition-all flex items-center justify-center"
+              title="Add Child / Sibling"
+            >
+              <Plus className="w-3 h-3" />
+            </button>
+
+            {/* Break Relationship Action (if not a root parent) */}
+            {obj.parentId && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleRemoveFromParent(obj.id);
+                }}
+                className="p-1 rounded bg-neutral-800/80 hover:bg-rose-500/20 hover:text-rose-400 text-neutral-500 transition-all flex items-center justify-center"
+                title="Detach from parent"
+              >
+                <Unlink className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Inline Actions Selector Dropdown Overlay */}
+        {activeMenuObjectId === obj.id && (
+          <div 
+            className="p-2.5 bg-neutral-950/95 border border-neutral-800/95 rounded-xl space-y-2 text-xs"
+            style={{ marginLeft: `${Math.max(12, (depth + 1) * 12)}px` }}
+          >
+            {activeMenuType === 'options' && (
+              <div className="flex flex-col gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setActiveMenuType('addChild')}
+                  className="w-full text-left py-1.5 px-2 bg-neutral-900 hover:bg-amber-500/10 text-amber-400 hover:text-amber-300 font-bold rounded-lg transition-all flex items-center gap-1"
+                >
+                  <Plus className="w-3.5 h-3.5 text-amber-500" />
+                  Add Child Drawing
+                </button>
+                {obj.parentId && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveMenuType('addSibling')}
+                    className="w-full text-left py-1.5 px-2 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 hover:text-neutral-200 font-bold rounded-lg transition-all flex items-center gap-1"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-neutral-400" />
+                    Add Sibling Drawing
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveMenuObjectId(null);
+                    setActiveMenuType(null);
+                  }}
+                  className="w-full text-center py-1.5 text-neutral-500 hover:text-neutral-400 font-bold rounded-lg hover:bg-neutral-900/60 transition-all"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+
+            {activeMenuType === 'addChild' && (
+              <div className="space-y-1.5">
+                <span className="text-[10px] text-neutral-400 block font-bold uppercase tracking-wide">Add Child to {obj.name}</span>
+                <div className="flex gap-1.5">
+                  <select
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        relateChildToParent(obj.id, e.target.value);
+                        setActiveMenuObjectId(null);
+                        setActiveMenuType(null);
+                      }
+                    }}
+                    className="flex-1 bg-neutral-950 border border-neutral-800 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-amber-500 font-bold"
+                    defaultValue=""
+                  >
+                    <option value="" disabled>-- Choose Drawing --</option>
+                    {Object.values(objects)
+                      .filter(o => {
+                        // Cannot be itself
+                        if (o.id === obj.id) return false;
+                        // Cannot be its parent already
+                        if (o.id === obj.parentId) return false;
+                        // Avoid circular reference
+                        let temp: VectorObject | null = obj;
+                        while (temp) {
+                          if (temp.id === o.id) return false;
+                          temp = temp.parentId ? objects[temp.parentId] : null;
+                        }
+                        return true;
+                      })
+                      .map(o => (
+                        <option key={o.id} value={o.id}>{o.name}</option>
+                      ))
+                    }
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveMenuObjectId(null);
+                      setActiveMenuType(null);
+                    }}
+                    className="px-2.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 font-bold rounded-lg transition-all"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {activeMenuType === 'addSibling' && (
+              <div className="space-y-1.5">
+                <span className="text-[10px] text-neutral-400 block font-bold uppercase tracking-wide">Add Sibling to {obj.name}</span>
+                <div className="flex gap-1.5">
+                  <select
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        if (obj.parentId) {
+                          relateChildToParent(obj.parentId, e.target.value);
+                        }
+                        setActiveMenuObjectId(null);
+                        setActiveMenuType(null);
+                      }
+                    }}
+                    className="flex-1 bg-neutral-950 border border-neutral-800 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-amber-500 font-bold"
+                    defaultValue=""
+                  >
+                    <option value="" disabled>-- Choose Drawing --</option>
+                    {Object.values(objects)
+                      .filter(o => {
+                        if (o.id === obj.id) return false;
+                        if (obj.parentId) {
+                          if (o.id === obj.parentId) return false;
+                          let temp: VectorObject | null = objects[obj.parentId];
+                          while (temp) {
+                            if (temp.id === o.id) return false;
+                            temp = temp.parentId ? objects[temp.parentId] : null;
+                          }
+                        }
+                        return true;
+                      })
+                      .map(o => (
+                        <option key={o.id} value={o.id}>{o.name}</option>
+                      ))
+                    }
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveMenuObjectId(null);
+                      setActiveMenuType(null);
+                    }}
+                    className="px-2.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 font-bold rounded-lg transition-all"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Recursive rendering of children node rows */}
+        {hasChildren && isExpanded && (
+          <div className="space-y-1">
+            {childObjects.map(childObj => renderTreeNode(childObj, depth + 1))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div
       className={`relative h-full transition-all duration-200 shrink-0 z-30 ${
@@ -272,10 +628,24 @@ export default function RightPanel({
               <>
                 {/* Object Metadata & Style */}
                 <div className="space-y-3 bg-neutral-950/40 p-3.5 rounded-2xl border border-neutral-800/50">
-                  <div className="text-[10px] text-amber-400 font-black uppercase tracking-wider block font-black">
-                    Style & Metadata
+                  <div className="flex items-center justify-between border-b border-neutral-800/40 pb-2">
+                    <div className="text-[10px] text-amber-400 font-black uppercase tracking-wider font-black">
+                      Style & Metadata
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        deleteObject(selectedObject.id);
+                        setSelectedObjectId(null);
+                      }}
+                      className="flex items-center gap-1.5 px-2 py-1 rounded bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white transition-all text-[10px] font-black cursor-pointer"
+                      title="Delete selected drawing completely"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      DELETE
+                    </button>
                   </div>
-                  <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center justify-between gap-3 pt-1">
                     <span className="text-xs text-neutral-400">Object Name</span>
                     <input
                       type="text"
@@ -759,6 +1129,82 @@ export default function RightPanel({
                 )}
               </>
             )}
+
+            {/* Child-Parent System Tree Panel */}
+            <div className="space-y-4 bg-neutral-950/40 p-4 rounded-2xl border border-neutral-800/50 mt-4">
+              <div className="flex items-center justify-between text-[10px] text-amber-400 font-black uppercase tracking-wider font-black border-b border-neutral-800/40 pb-2.5">
+                <span className="flex items-center gap-1.5">
+                  <Workflow className="w-3.5 h-3.5 text-amber-500" />
+                  Child-Parent System
+                </span>
+                
+                {/* Add Root Parent Drawing Button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveMenuObjectId('root_add');
+                    setActiveMenuType('options');
+                  }}
+                  className="p-1 rounded bg-amber-500/10 hover:bg-amber-500 hover:text-neutral-950 text-amber-400 transition-all flex items-center justify-center cursor-pointer"
+                  title="Add Parent/Root Drawing"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {/* Add Root Selector Dropdown */}
+              {activeMenuObjectId === 'root_add' && (
+                <div className="p-2.5 bg-neutral-900 border border-neutral-800 rounded-xl space-y-2 text-xs">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] text-neutral-400 block font-bold uppercase tracking-wide">Select Root Parent Drawing:</label>
+                    <div className="flex gap-1.5">
+                      <select
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            updateObject(e.target.value, { parentId: null });
+                            setActiveMenuObjectId(null);
+                            setActiveMenuType(null);
+                          }
+                        }}
+                        className="flex-1 bg-neutral-950 border border-neutral-800 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-amber-500 font-bold"
+                        defaultValue=""
+                      >
+                        <option value="" disabled>-- Select Drawing --</option>
+                        {Object.values(objects)
+                          .filter(o => o.parentId !== null)
+                          .map(o => (
+                            <option key={o.id} value={o.id}>{o.name}</option>
+                          ))
+                        }
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveMenuObjectId(null);
+                          setActiveMenuType(null);
+                        }}
+                        className="px-2.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 font-bold rounded-lg transition-all"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Collapsible VS Code Nestable Tree */}
+              <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+                {Object.values(objects).filter(o => o.parentId === null).length === 0 ? (
+                  <div className="text-center py-6 text-[10px] text-neutral-600 font-bold italic">
+                    No parent drawings configured yet. Click '+' to start.
+                  </div>
+                ) : (
+                  Object.values(objects)
+                    .filter(o => o.parentId === null)
+                    .map(rootObj => renderTreeNode(rootObj, 0))
+                )}
+              </div>
+            </div>
 
             {/* Direct Rigging & Connection Creator Section */}
             <div className="space-y-4 bg-neutral-950/40 p-4 rounded-2xl border border-neutral-800/50 mt-4">
