@@ -118,6 +118,7 @@ export interface VectorObject {
   transform: Transform;
   pivots: Pivot[];
   pins?: Pivot[]; // Puppet pins for deformation
+  subPaths?: Point[][]; // Sub-paths for multi-step detailed drawings
   parentId: string | null;
   childrenIds: string[];
   layerId: string;

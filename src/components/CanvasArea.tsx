@@ -1,4 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
+import { RotateCcw } from 'lucide-react';
 import { Point, VectorObject, Bone, Pivot, Frame, Transform } from '../types';
 import { 
   distance, 
@@ -200,15 +201,37 @@ export default function CanvasArea({
   const [elasticWarningId, setElasticWarningId] = useState<string | null>(null);
   const [currentCursorPos, setCurrentCursorPos] = useState<Point>({ x: 0, y: 0 });
 
-  // Get coordinates relative to canvas bounding box
+  // Zoom & Pan Canvas states (100x zoom capability)
+  const [zoomScale, setZoomScale] = useState<number>(1);
+  const [zoomOffset, setZoomOffset] = useState<Point>({ x: 0, y: 0 });
+
+  // Touch screen multi-touch pinch gesture tracking refs
+  const activePointersRef = useRef<{ [id: number]: Point }>({});
+  const lastPinchDistRef = useRef<number>(0);
+  const lastPinchMidRef = useRef<Point>({ x: 0, y: 0 });
+
+  // Get coordinates relative to canvas bounding box with zoom/pan applied
   const getCanvasCoords = (e: React.PointerEvent<HTMLCanvasElement>): Point => {
     const canvas = frontCanvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
+    const screenX = e.clientX - rect.left;
+    const screenY = e.clientY - rect.top;
     return {
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top,
+      x: (screenX - zoomOffset.x) / zoomScale,
+      y: (screenY - zoomOffset.y) / zoomScale,
     };
+  };
+
+  // Get all points of an object (including its subPaths)
+  const getAllObjectPoints = (obj: VectorObject): Point[] => {
+    let all = [...obj.points];
+    if (obj.subPaths && obj.subPaths.length > 0) {
+      obj.subPaths.forEach(sub => {
+        all = all.concat(sub);
+      });
+    }
+    return all;
   };
 
   // Get all pivots from all active objects with their world coordinates
@@ -228,26 +251,40 @@ export default function CanvasArea({
     return list;
   };
 
-  // Perform hit testing on any drawing path
+  // Perform hit testing on any drawing path (including subPaths of merged drawings)
   const performHitTest = (coords: Point): VectorObject | null => {
     const activeObjects = Object.values(objects).filter(o => !o.isHidden);
     // Prioritize smaller objects or front objects (by rendering layer / creation time)
     const reversed = [...activeObjects].reverse();
     for (const obj of reversed) {
-      // Hit test points
-      const worldPoints = obj.points.map(p => localToWorld(p, obj.transform, obj.pivots[0]));
+      const pivot = obj.pivots[0] || { localX: 0, localY: 0 };
       
-      // If filled shape, do point-in-polygon check
+      // Hit test main points
+      const worldPoints = obj.points.map(p => localToWorld(p, obj.transform, pivot));
       if (obj.fillColor && obj.fillColor !== 'transparent') {
         if (isPointInPolygon(coords, worldPoints)) {
           return obj;
         }
       }
-
-      // Check distance to outline (minimum 15px radius)
       const dist = pointToPolylineDistance(coords, worldPoints);
       if (dist < 18) {
         return obj;
+      }
+
+      // Hit test sub-paths of merged drawings
+      if (obj.subPaths && obj.subPaths.length > 0) {
+        for (const sub of obj.subPaths) {
+          const worldSubPoints = sub.map(p => localToWorld(p, obj.transform, pivot));
+          if (obj.fillColor && obj.fillColor !== 'transparent') {
+            if (isPointInPolygon(coords, worldSubPoints)) {
+              return obj;
+            }
+          }
+          const subDist = pointToPolylineDistance(coords, worldSubPoints);
+          if (subDist < 18) {
+            return obj;
+          }
+        }
       }
     }
     return null;
@@ -377,7 +414,7 @@ export default function CanvasArea({
 
   // Generate 10 interactive handles for scaling, rotation, and pivot anchoring
   const getHandles = (obj: VectorObject) => {
-    const box = calculateBoundingBox(obj.points);
+    const box = calculateBoundingBox(getAllObjectPoints(obj));
     const pivot = (obj.pivots[0] || { id: 'default', name: 'default', localX: 0, localY: 0, locked: false }) as Pivot;
     
     const localHandles = [
@@ -438,6 +475,25 @@ export default function CanvasArea({
 
   // Pointer Down event handler
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    // Record active pointer
+    activePointersRef.current[e.pointerId] = { x: e.clientX, y: e.clientY };
+    const pointerIds = Object.keys(activePointersRef.current);
+    
+    if (pointerIds.length === 2) {
+      const p1 = activePointersRef.current[Number(pointerIds[0])];
+      const p2 = activePointersRef.current[Number(pointerIds[1])];
+      
+      const dist = distance(p1, p2);
+      lastPinchDistRef.current = dist;
+      lastPinchMidRef.current = {
+        x: (p1.x + p2.x) / 2,
+        y: (p1.y + p2.y) / 2
+      };
+      
+      setDragMode('zoom');
+      return;
+    }
+
     const coords = getCanvasCoords(e);
     setCurrentCursorPos(coords);
 
@@ -831,6 +887,17 @@ export default function CanvasArea({
         setDragMode('move');
         setDragStartPoint(coords);
         setInitialTransform({ ...clickedObj.transform });
+      } else {
+        // Panning when clicking empty space
+        setDragMode('pan');
+        const canvas = frontCanvasRef.current;
+        if (canvas) {
+          const rect = canvas.getBoundingClientRect();
+          setDragStartPoint({
+            x: e.clientX - rect.left,
+            y: e.clientY - rect.top
+          });
+        }
       }
       return;
     }
@@ -845,6 +912,84 @@ export default function CanvasArea({
 
   // Pointer Move event handler
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    // Update active pointer tracking coordinate
+    if (activePointersRef.current[e.pointerId]) {
+      activePointersRef.current[e.pointerId] = { x: e.clientX, y: e.clientY };
+    }
+
+    const pointerIds = Object.keys(activePointersRef.current);
+
+    // Multi-touch Zoom (Pinch) Mode
+    if (pointerIds.length === 2 && dragMode === 'zoom') {
+      const p1 = activePointersRef.current[Number(pointerIds[0])];
+      const p2 = activePointersRef.current[Number(pointerIds[1])];
+      
+      const dist = distance(p1, p2);
+      const mid = {
+        x: (p1.x + p2.x) / 2,
+        y: (p1.y + p2.y) / 2
+      };
+      
+      const factor = dist / (lastPinchDistRef.current || 1);
+      
+      setZoomScale(prevScale => {
+        const nextScale = Math.min(100, Math.max(0.1, prevScale * factor));
+        
+        const canvas = frontCanvasRef.current;
+        if (canvas) {
+          const rect = canvas.getBoundingClientRect();
+          const screenMidX = mid.x - rect.left;
+          const screenMidY = mid.y - rect.top;
+          
+          setZoomOffset(prevOffset => {
+            const worldMidX = (screenMidX - prevOffset.x) / prevScale;
+            const worldMidY = (screenMidY - prevOffset.y) / prevScale;
+            
+            return {
+              x: screenMidX - worldMidX * nextScale,
+              y: screenMidY - worldMidY * nextScale
+            };
+          });
+        }
+        
+        return nextScale;
+      });
+      
+      const panDx = mid.x - lastPinchMidRef.current.x;
+      const panDy = mid.y - lastPinchMidRef.current.y;
+      setZoomOffset(prev => ({
+        x: prev.x + panDx,
+        y: prev.y + panDy
+      }));
+      
+      lastPinchDistRef.current = dist;
+      lastPinchMidRef.current = mid;
+      return;
+    }
+
+    // Single-finger Pan Mode
+    if (dragMode === 'pan') {
+      const canvas = frontCanvasRef.current;
+      if (canvas) {
+        const rect = canvas.getBoundingClientRect();
+        const currentScreenX = e.clientX - rect.left;
+        const currentScreenY = e.clientY - rect.top;
+        const dx = currentScreenX - dragStartPoint.x;
+        const dy = currentScreenY - dragStartPoint.y;
+        
+        setZoomOffset(prev => ({
+          x: prev.x + dx,
+          y: prev.y + dy
+        }));
+        
+        setDragStartPoint({
+          x: currentScreenX,
+          y: currentScreenY
+        });
+      }
+      return;
+    }
+
     const coords = getCanvasCoords(e);
     setCurrentCursorPos(coords);
 
@@ -1149,7 +1294,18 @@ export default function CanvasArea({
   };
 
   // Pointer Up event handler
-  const handlePointerUp = () => {
+  const handlePointerUp = (e?: React.PointerEvent<HTMLCanvasElement>) => {
+    if (e && e.pointerId !== undefined) {
+      delete activePointersRef.current[e.pointerId];
+    } else {
+      activePointersRef.current = {};
+    }
+
+    if (dragMode === 'zoom' || dragMode === 'pan') {
+      setDragMode('none');
+      return;
+    }
+
     if (isDrawing && activeTool === 'BRS' && strokePoints.length > 1) {
       const newId = `obj_${Date.now()}`;
       const name = `Stroke_${Object.keys(objects).length + 1}`;
@@ -1412,6 +1568,11 @@ export default function CanvasArea({
     ctx.fillStyle = '#FFFFFF';
     ctx.fillRect(0, 0, frontCanvas.width, frontCanvas.height);
 
+    // Apply viewport zoom and pan offset transformation
+    ctx.save();
+    ctx.translate(zoomOffset.x, zoomOffset.y);
+    ctx.scale(zoomScale, zoomScale);
+
     // Sort layers by zIndex ascending
     const sortedLayers = [...(layers || [])].sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
     
@@ -1446,6 +1607,35 @@ export default function CanvasArea({
       // Get pivot and project points to world space
       const pivot = obj.pivots[0] || { localX: 0, localY: 0 };
       const worldPoints = localPoints.map(p => localToWorld(p, obj.transform, pivot));
+
+      // Draw all paths (main points + subPaths of merged drawings)
+      const drawAllPaths = () => {
+        ctx.beginPath();
+        if (worldPoints.length > 0) {
+          ctx.moveTo(worldPoints[0].x, worldPoints[0].y);
+          for (let i = 1; i < worldPoints.length; i++) {
+            ctx.lineTo(worldPoints[i].x, worldPoints[i].y);
+          }
+        }
+        if (obj.subPaths && obj.subPaths.length > 0) {
+          obj.subPaths.forEach(sub => {
+            let localSubPoints = sub;
+            if (obj.meshState && obj.meshState.active) {
+              const subBounds = calculateBoundingBox(sub);
+              localSubPoints = sub.map(p => getWarpedPoint(p, obj.meshState, subBounds));
+            } else if (obj.pins && obj.pins.length > 0) {
+              localSubPoints = sub.map(p => deformWithPuppetPins(p, obj.pins));
+            }
+            const worldSubPoints = localSubPoints.map(p => localToWorld(p, obj.transform, pivot));
+            if (worldSubPoints.length > 0) {
+              ctx.moveTo(worldSubPoints[0].x, worldSubPoints[0].y);
+              for (let i = 1; i < worldSubPoints.length; i++) {
+                ctx.lineTo(worldSubPoints[i].x, worldSubPoints[i].y);
+              }
+            }
+          });
+        }
+      };
 
       // Apply filter effects (depth blur, opacity)
       let combinedAlpha = obj.opacity !== undefined ? obj.opacity : 1;
@@ -1504,13 +1694,7 @@ export default function CanvasArea({
         }
       } else {
         // Render vector drawing
-        ctx.beginPath();
-        if (worldPoints.length > 0) {
-          ctx.moveTo(worldPoints[0].x, worldPoints[0].y);
-          for (let i = 1; i < worldPoints.length; i++) {
-            ctx.lineTo(worldPoints[i].x, worldPoints[i].y);
-          }
-        }
+        drawAllPaths();
         
         ctx.lineWidth = obj.strokeWidth;
         ctx.strokeStyle = obj.strokeColor;
@@ -1527,13 +1711,7 @@ export default function CanvasArea({
         ctx.save();
         
         // Clip to current vector path
-        ctx.beginPath();
-        if (worldPoints.length > 0) {
-          ctx.moveTo(worldPoints[0].x, worldPoints[0].y);
-          for (let i = 1; i < worldPoints.length; i++) {
-            ctx.lineTo(worldPoints[i].x, worldPoints[i].y);
-          }
-        }
+        drawAllPaths();
         ctx.clip();
         
         ctx.shadowColor = obj.innerShadow.color || 'rgba(0,0,0,0.5)';
@@ -1556,13 +1734,7 @@ export default function CanvasArea({
         ctx.save();
         
         // Clip to current path
-        ctx.beginPath();
-        if (worldPoints.length > 0) {
-          ctx.moveTo(worldPoints[0].x, worldPoints[0].y);
-          for (let i = 1; i < worldPoints.length; i++) {
-            ctx.lineTo(worldPoints[i].x, worldPoints[i].y);
-          }
-        }
+        drawAllPaths();
         ctx.clip();
         
         ctx.globalCompositeOperation = (obj.overlay.blendMode as any) || 'source-atop';
@@ -1584,13 +1756,7 @@ export default function CanvasArea({
         ctx.shadowOffsetX = 0;
         ctx.shadowOffsetY = 0;
         
-        ctx.beginPath();
-        if (worldPoints.length > 0) {
-          ctx.moveTo(worldPoints[0].x, worldPoints[0].y);
-          for (let i = 1; i < worldPoints.length; i++) {
-            ctx.lineTo(worldPoints[i].x, worldPoints[i].y);
-          }
-        }
+        drawAllPaths();
         ctx.stroke();
         
         ctx.restore();
@@ -1602,7 +1768,7 @@ export default function CanvasArea({
     // Draw select overlay bounding boxes & 10+ handles
     if (selectedObjectId && objects[selectedObjectId]) {
       const obj = objects[selectedObjectId];
-      const box = calculateBoundingBox(obj.points);
+      const box = calculateBoundingBox(getAllObjectPoints(obj));
       const pivot = obj.pivots[0] || { localX: 0, localY: 0 };
       
       const tl = localToWorld({ x: box.x, y: box.y }, obj.transform, pivot);
@@ -1934,6 +2100,9 @@ export default function CanvasArea({
       ctx.stroke();
       ctx.restore();
     }
+
+    // Restore top-level viewport zoom/pan transformation
+    ctx.restore();
   }, [
     objects,
     selectedObjectId,
@@ -1946,7 +2115,9 @@ export default function CanvasArea({
     currentCursorPos,
     snappedPivot,
     elasticWarningId,
-    showBones
+    showBones,
+    zoomScale,
+    zoomOffset
   ]);
 
   return (
@@ -1966,8 +2137,29 @@ export default function CanvasArea({
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        onPointerLeave={handlePointerUp}
         className="absolute inset-0 cursor-crosshair touch-none"
       />
+
+      {/* Floating Canvas controls HUD */}
+      <div id="canvas-zoom-hud" className="absolute bottom-4 right-4 flex items-center gap-2 bg-white/95 backdrop-blur-md px-3 py-1.5 rounded-full border border-gray-200 shadow-md pointer-events-auto z-50">
+        <span className="font-mono text-xs font-semibold text-gray-700 select-none">
+          {Math.round(zoomScale * 100)}%
+        </span>
+        <div className="h-3 w-[1px] bg-gray-200" />
+        <button
+          id="btn-reset-zoom"
+          onClick={() => {
+            setZoomScale(1);
+            setZoomOffset({ x: 0, y: 0 });
+          }}
+          className="p-1 rounded-full hover:bg-gray-100 text-gray-500 hover:text-gray-900 transition-colors flex items-center justify-center cursor-pointer"
+          title="Reset Canvas Zoom & Pan (100%)"
+        >
+          <RotateCcw className="h-3.5 w-3.5" />
+        </button>
+      </div>
     </div>
   );
 }

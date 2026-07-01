@@ -94,6 +94,64 @@ export default function RightPanel({
   const [activeMenuObjectId, setActiveMenuObjectId] = useState<string | null>(null);
   const [activeMenuType, setActiveMenuType] = useState<'options' | 'addChild' | 'addSibling' | null>(null);
 
+  // Merge pieces state (Make Single Drawing)
+  const [mergePieces, setMergePieces] = useState<string[]>([]);
+  const [isMergeDropdownOpen, setIsMergeDropdownOpen] = useState(false);
+
+  React.useEffect(() => {
+    setMergePieces([]);
+    setIsMergeDropdownOpen(false);
+  }, [selectedObject?.id]);
+
+  const handleMakeSingle = () => {
+    if (!selectedObject || mergePieces.length === 0) return;
+
+    const primary = selectedObject;
+    const primaryPivot = primary.pivots[0] || { localX: 0, localY: 0 };
+    let newSubPaths = [...(primary.subPaths || [])];
+
+    mergePieces.forEach(secondaryId => {
+      const secondary = objects[secondaryId];
+      if (!secondary) return;
+
+      const secondaryPivot = secondary.pivots[0] || { localX: 0, localY: 0 };
+
+      // Convert main points
+      const convertedMainPath = secondary.points.map(p => {
+        const worldPt = localToWorld(p, secondary.transform, secondaryPivot);
+        return worldToLocal(worldPt, primary.transform, primaryPivot);
+      });
+      if (convertedMainPath.length > 0) {
+        newSubPaths.push(convertedMainPath);
+      }
+
+      // Convert subpaths
+      if (secondary.subPaths && secondary.subPaths.length > 0) {
+        secondary.subPaths.forEach(sub => {
+          const convertedSubPath = sub.map(p => {
+            const worldPt = localToWorld(p, secondary.transform, secondaryPivot);
+            return worldToLocal(worldPt, primary.transform, primaryPivot);
+          });
+          if (convertedSubPath.length > 0) {
+            newSubPaths.push(convertedSubPath);
+          }
+        });
+      }
+
+      // Delete the secondary object
+      deleteObject(secondaryId);
+    });
+
+    // Update primary with merged paths
+    updateObject(primary.id, {
+      subPaths: newSubPaths
+    });
+
+    // Reset local merge state
+    setMergePieces([]);
+    setIsMergeDropdownOpen(false);
+  };
+
   // Mesh wrap generator helper
   const handleInitMesh = (densityX: number, densityY: number) => {
     if (!selectedObject) return;
@@ -1318,6 +1376,99 @@ export default function RightPanel({
                       {smartPinnedIds.includes(selectedObject.id) ? 'PINNED' : 'PIN SC'}
                     </button>
                   </div>
+                </div>
+
+                {/* MAKE SINGLE / MERGE DRAWINGS CARD */}
+                <div className="space-y-3 bg-neutral-950/40 p-3.5 rounded-2xl border border-neutral-800/50 relative">
+                  <div className="flex items-center justify-between border-b border-neutral-800/40 pb-2">
+                    <div className="text-[10px] text-amber-400 font-black uppercase tracking-wider flex items-center gap-1.5 font-bold">
+                      <GitMerge className="w-3.5 h-3.5 text-amber-500" />
+                      <span>MAKE SINGLE</span>
+                    </div>
+                    
+                    <div className="relative">
+                      <button
+                        id="btn-add-merge-piece"
+                        onClick={() => setIsMergeDropdownOpen(!isMergeDropdownOpen)}
+                        className="p-1 rounded bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 hover:border-neutral-700 text-amber-500 hover:text-amber-400 transition-all flex items-center justify-center cursor-pointer"
+                        title="Add Drawing Piece to Merge"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+
+                      {isMergeDropdownOpen && (
+                        <div className="absolute right-0 mt-1 w-56 bg-neutral-950 border border-neutral-800 rounded-xl shadow-xl z-50 overflow-hidden py-1 max-h-48 overflow-y-auto">
+                          {(() => {
+                            const availableDrawings = Object.values(objects).filter(obj => 
+                              obj.id !== selectedObject.id && 
+                              !mergePieces.includes(obj.id)
+                            );
+                            
+                            if (availableDrawings.length === 0) {
+                              return (
+                                <div className="text-[10px] text-neutral-500 py-2 px-3 text-center">
+                                  No other drawings available on canvas.
+                                </div>
+                              );
+                            }
+                            
+                            return availableDrawings.map(obj => (
+                              <button
+                                key={obj.id}
+                                onClick={() => {
+                                  setMergePieces([...mergePieces, obj.id]);
+                                  setIsMergeDropdownOpen(false);
+                                }}
+                                className="w-full text-left px-3 py-1.5 hover:bg-neutral-900 text-neutral-300 hover:text-white text-[11px] transition-colors flex items-center gap-1.5 font-semibold"
+                              >
+                                <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: obj.strokeColor || '#000000' }} />
+                                <span className="truncate">{obj.name || `Drawing (${obj.id.slice(-4)})`}</span>
+                              </button>
+                            ));
+                          })()}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <span className="text-[10px] text-neutral-500 block uppercase font-bold tracking-wide">Selected Pieces:</span>
+                    {mergePieces.length === 0 ? (
+                      <div className="text-[10px] text-neutral-400 italic py-1">
+                        No pieces added yet. Click + to add other drawing pieces.
+                      </div>
+                    ) : (
+                      <div className="space-y-1 max-h-32 overflow-y-auto pr-1">
+                        {mergePieces.map(pieceId => {
+                          const piece = objects[pieceId];
+                          if (!piece) return null;
+                          return (
+                            <div key={pieceId} className="flex items-center justify-between bg-neutral-900/60 border border-neutral-800/40 px-2 py-1 rounded-lg text-[11px]">
+                              <span className="text-neutral-300 font-medium truncate max-w-[150px]">{piece.name}</span>
+                              <button
+                                onClick={() => setMergePieces(mergePieces.filter(id => id !== pieceId))}
+                                className="text-neutral-500 hover:text-rose-400 transition-colors"
+                                title="Remove piece"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {mergePieces.length > 0 && (
+                    <button
+                      id="btn-execute-make-single"
+                      onClick={handleMakeSingle}
+                      className="w-full py-2 bg-amber-500 hover:bg-amber-400 text-neutral-950 font-black rounded-xl transition-all shadow-md shadow-amber-500/10 text-xs flex items-center justify-center gap-1.5 mt-2 cursor-pointer animate-fade-in"
+                    >
+                      <GitMerge className="w-3.5 h-3.5" />
+                      MAKE SINGLE DRAWING
+                    </button>
+                  )}
                 </div>
 
                 {/* Smooth X, Y Sliders (always visible, disabled if not independent or closed rigged) */}
