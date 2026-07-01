@@ -23,7 +23,7 @@ import {
   Link,
   Unlink
 } from 'lucide-react';
-import { VectorObject, Bone, Layer, Pivot, Transform } from '../types';
+import { VectorObject, Bone, Layer, Pivot, Transform, Point } from '../types';
 import { distance, localToWorld, worldToLocal, calculateBoundingBox, isPointInPolygon } from '../utils/math';
 
 interface RightPanelProps {
@@ -42,6 +42,8 @@ interface RightPanelProps {
   toggleSmartPin: (id: string) => void;
   activeTool: string;
   setActiveTool: (tool: string) => void;
+  lassoPoints: Point[];
+  setLassoPoints: React.Dispatch<React.SetStateAction<Point[]>>;
 }
 
 const isChildInsideParent = (
@@ -80,6 +82,8 @@ export default function RightPanel({
   toggleSmartPin,
   activeTool,
   setActiveTool,
+  lassoPoints,
+  setLassoPoints,
 }: RightPanelProps) {
   // Batch/Smart Controls check state
   const [smartCheckedIds, setSmartCheckedIds] = useState<{ [id: string]: boolean }>({});
@@ -88,6 +92,93 @@ export default function RightPanel({
   const [oppositeSection1, setOppositeSection1] = useState<string[]>([]);
   const [oppositeSection2, setOppositeSection2] = useState<string[]>([]);
   const [oppositeMode, setOppositeMode] = useState<'rotation' | 'moveX' | 'moveY'>('rotation');
+
+  // Lasso Color Fill state
+  const [lassoColor, setLassoColor] = useState('#E53935');
+
+  // Permanent Attachment state
+  const [attachmentPieces, setAttachmentPieces] = useState<string[]>([]);
+  const [attachSelectedId, setAttachSelectedId] = useState('');
+
+  // Lasso handlers
+  const handleApplyLassoFill = () => {
+    if (lassoPoints.length < 3) {
+      alert("Please draw a closed lasso region on the canvas first!");
+      return;
+    }
+    
+    // If selectedObject exists, fill it. Otherwise fill all drawings!
+    let targetObjects = selectedObject ? [selectedObject] : Object.values(objects);
+    
+    if (targetObjects.length === 0) {
+      alert("No drawings available to fill.");
+      return;
+    }
+
+    targetObjects.forEach(obj => {
+      const localPivot = obj.pivots[0] || { localX: 0, localY: 0 };
+      const localLassoPoints = lassoPoints.map(wp => worldToLocal(wp, obj.transform, localPivot));
+      
+      const currentFills = obj.lassoFills || [];
+      const updatedFills = [...currentFills, { localLassoPoints, color: lassoColor }];
+      
+      updateObject(obj.id, { lassoFills: updatedFills });
+    });
+
+    setLassoPoints([]);
+    setActiveTool('SEL');
+  };
+
+  const handleClearLassoFills = () => {
+    if (selectedObject) {
+      updateObject(selectedObject.id, { lassoFills: [] });
+    } else {
+      Object.values(objects).forEach(obj => {
+        if (obj.lassoFills && obj.lassoFills.length > 0) {
+          updateObject(obj.id, { lassoFills: [] });
+        }
+      });
+    }
+  };
+
+  const handleRemoveLassoArea = () => {
+    setLassoPoints([]);
+  };
+
+  // Attachment Handlers
+  const handleAddAttachmentPiece = (id: string) => {
+    if (!id) return;
+    if (attachmentPieces.includes(id)) return;
+    setAttachmentPieces(prev => [...prev, id]);
+    setAttachSelectedId('');
+  };
+
+  const handleExecuteAttach = () => {
+    const allIdsToAttach = [...attachmentPieces];
+    if (selectedObject && !allIdsToAttach.includes(selectedObject.id)) {
+      allIdsToAttach.push(selectedObject.id);
+    }
+
+    if (allIdsToAttach.length < 2) {
+      alert("Please add at least 2 drawings to attach.");
+      return;
+    }
+
+    const newGroupId = `attach_gp_${Date.now()}`;
+
+    allIdsToAttach.forEach(id => {
+      updateObject(id, { attachedGroupId: newGroupId });
+    });
+
+    setAttachmentPieces([]);
+    alert(`Successfully attached ${allIdsToAttach.length} drawings together! They are now locked to move as a group.`);
+  };
+
+  const handleDetachObject = () => {
+    if (!selectedObject) return;
+    updateObject(selectedObject.id, { attachedGroupId: undefined });
+    alert(`Successfully detached ${selectedObject.name}.`);
+  };
 
   // Hierarchy Management & Auto-Rigging
   const [expandedNodes, setExpandedNodes] = useState<{ [id: string]: boolean }>({});
@@ -436,6 +527,17 @@ export default function RightPanel({
     const transformUpdate = { ...selectedObject.transform, [property]: nextVal };
     updateObject(selectedObject.id, { transform: transformUpdate });
 
+    // Synchronization for permanently attached drawings
+    if ((property === 'x' || property === 'y') && selectedObject.attachedGroupId) {
+      Object.values(objects).forEach(otherObj => {
+        if (otherObj.id !== selectedObject.id && otherObj.attachedGroupId === selectedObject.attachedGroupId) {
+          const oVal = (otherObj.transform as any)[property] || 0;
+          const nextOVal = Number((oVal + amount).toFixed(2));
+          updateObject(otherObj.id, { transform: { ...otherObj.transform, [property]: nextOVal } });
+        }
+      });
+    }
+
     // BATCH APPLY to checked Smart Control drawings
     const checkedIds = Object.keys(smartCheckedIds).filter(id => smartCheckedIds[id] && objects[id]);
     checkedIds.forEach(id => {
@@ -478,8 +580,21 @@ export default function RightPanel({
       }
     }
 
+    const delta = value - ((selectedObject.transform as any)[property] || 0);
+
     const transformUpdate = { ...selectedObject.transform, [property]: value };
     updateObject(selectedObject.id, { transform: transformUpdate });
+
+    // Synchronization for permanently attached drawings
+    if ((property === 'x' || property === 'y') && selectedObject.attachedGroupId) {
+      Object.values(objects).forEach(otherObj => {
+        if (otherObj.id !== selectedObject.id && otherObj.attachedGroupId === selectedObject.attachedGroupId) {
+          const oVal = (otherObj.transform as any)[property] || 0;
+          const nextOVal = Number((oVal + delta).toFixed(2));
+          updateObject(otherObj.id, { transform: { ...otherObj.transform, [property]: nextOVal } });
+        }
+      });
+    }
 
     // Batch Apply
     const checkedIds = Object.keys(smartCheckedIds).filter(id => smartCheckedIds[id] && objects[id]);
@@ -1990,6 +2105,243 @@ export default function RightPanel({
                 )}
               </>
             )}
+
+            {/* LASSO AREA COLOR FILL PANEL */}
+            <div className="space-y-4 bg-neutral-950/40 p-4 rounded-2xl border border-neutral-800/50 mt-4 animate-fade-in">
+              <div className="flex items-center justify-between text-[10px] text-amber-400 font-black uppercase tracking-wider font-black border-b border-neutral-800/40 pb-2.5">
+                <span className="flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
+                  Lasso Area Color Fill
+                </span>
+                {lassoPoints.length > 0 && (
+                  <span className="bg-amber-500/10 text-amber-400 text-[8px] font-black px-1.5 py-0.5 rounded-full">
+                    {lassoPoints.length} PTS
+                  </span>
+                )}
+              </div>
+
+              <div className="space-y-3.5 text-xs">
+                <p className="text-[11px] text-neutral-400 leading-relaxed font-medium">
+                  Draw an area around your drawings with the <strong className="text-amber-400">Lasso Fill tool (Sparkles)</strong>, select a color, and tap Fill to color only that section.
+                </p>
+
+                {/* Lasso Active Tool Button & Area Clears */}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTool('LSO')}
+                    className={`flex-1 py-2 px-3 text-xs font-black uppercase rounded-xl border flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                      activeTool === 'LSO'
+                        ? 'bg-amber-500 text-neutral-950 border-amber-400 font-black shadow-md shadow-amber-500/20'
+                        : 'bg-neutral-900 text-neutral-300 hover:text-white border-neutral-800 hover:border-neutral-700'
+                    }`}
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    Lasso Tool
+                  </button>
+
+                  {lassoPoints.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleRemoveLassoArea}
+                      className="p-2 bg-neutral-900 border border-neutral-800 hover:border-rose-900 text-neutral-400 hover:text-rose-400 rounded-xl transition-all cursor-pointer flex items-center justify-center"
+                      title="Remove lasso area outline"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Color Selector & Swatches */}
+                <div className="space-y-2 bg-neutral-900/50 p-3 rounded-xl border border-neutral-800/40">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-neutral-400 font-black uppercase tracking-wider">Fill Color</span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-[10px] text-neutral-400 font-bold uppercase">{lassoColor}</span>
+                      <input
+                        type="color"
+                        value={lassoColor}
+                        onChange={(e) => setLassoColor(e.target.value)}
+                        className="w-5 h-5 bg-transparent border-0 rounded cursor-pointer shrink-0"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Swatches preset list */}
+                  <div className="flex flex-wrap gap-1.5 pt-1.5 border-t border-neutral-800/20">
+                    {['#E53935', '#D81B60', '#8E24AA', '#5E35B1', '#3949AB', '#1E88E5', '#00ACC1', '#00897B', '#43A047', '#7CB342', '#FDD835', '#FB8C00', '#F4511E', '#FFFFFF', '#000000'].map(swColor => (
+                      <button
+                        key={swColor}
+                        type="button"
+                        onClick={() => setLassoColor(swColor)}
+                        className={`w-4 h-4 rounded-full border cursor-pointer transition-all ${
+                          lassoColor === swColor ? 'scale-125 border-white ring-1 ring-amber-500' : 'border-neutral-950 hover:scale-110'
+                        }`}
+                        style={{ backgroundColor: swColor }}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                {/* Fill / Clear Buttons */}
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleApplyLassoFill}
+                    className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-black rounded-xl text-xs tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/10 cursor-pointer"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    FILL LASSO REGION
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleClearLassoFills}
+                    className="py-2 px-3 bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 text-neutral-400 hover:text-rose-400 font-bold rounded-xl text-[10px] uppercase tracking-wide transition-all cursor-pointer flex items-center justify-center gap-1"
+                    title="Remove all lasso fills from drawing"
+                  >
+                    Reset Fills
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* PERMANENT DRAWING ATTACHMENTS PANEL */}
+            <div className="space-y-4 bg-neutral-950/40 p-4 rounded-2xl border border-neutral-800/50 mt-4 animate-fade-in">
+              <div className="flex items-center justify-between text-[10px] text-amber-400 font-black uppercase tracking-wider font-black border-b border-neutral-800/40 pb-2.5">
+                <span className="flex items-center gap-1.5">
+                  <Link className="w-3.5 h-3.5 text-amber-500" />
+                  Permanent Group Attachments
+                </span>
+                {selectedObject?.attachedGroupId && (
+                  <span className="bg-emerald-500/10 text-emerald-400 text-[8px] font-black px-1.5 py-0.5 rounded-full">
+                    ATTACHED
+                  </span>
+                )}
+              </div>
+
+              <div className="space-y-3 text-xs">
+                <p className="text-[11px] text-neutral-400 leading-relaxed font-medium">
+                  Connect multiple separate drawings permanently so they <strong className="text-amber-400">always move together</strong> as a rigid group while keeping individual rotation, scales, colors, and layering.
+                </p>
+
+                {/* Dropdown to add drawings */}
+                <div className="space-y-2">
+                  <label className="text-[10px] text-neutral-400 font-black uppercase block tracking-wide">
+                    Select drawings to attach:
+                  </label>
+                  <div className="flex gap-1.5">
+                    <select
+                      value={attachSelectedId}
+                      onChange={(e) => handleAddAttachmentPiece(e.target.value)}
+                      className="flex-1 bg-neutral-950 border border-neutral-800 rounded-xl px-2 py-1.5 text-xs text-white outline-none focus:border-amber-500 font-bold"
+                    >
+                      <option value="">-- Add Drawing to Group --</option>
+                      {Object.values(objects)
+                        .filter(o => !attachmentPieces.includes(o.id) && o.id !== selectedObject?.id)
+                        .map(o => (
+                          <option key={o.id} value={o.id}>{o.name}</option>
+                        ))
+                      }
+                    </select>
+                  </div>
+                </div>
+
+                {/* List of attachment pieces added so far */}
+                {(attachmentPieces.length > 0 || selectedObject) && (
+                  <div className="space-y-1.5 bg-neutral-900/50 p-3 rounded-xl border border-neutral-800/40">
+                    <span className="text-[9px] text-neutral-400 uppercase font-black block pb-1 border-b border-neutral-800/20">
+                      Attachments in draft group:
+                    </span>
+                    <div className="space-y-1 max-h-32 overflow-y-auto pt-1 flex flex-col gap-1">
+                      {selectedObject && (
+                        <div className="flex items-center justify-between bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-lg text-[11px]">
+                          <span className="text-amber-400 font-black truncate">{selectedObject.name} (Selected)</span>
+                          <span className="text-[9px] text-amber-500/80 uppercase font-black">Anchor</span>
+                        </div>
+                      )}
+
+                      {attachmentPieces.map(pieceId => {
+                        const piece = objects[pieceId];
+                        if (!piece) return null;
+                        return (
+                          <div key={pieceId} className="flex items-center justify-between bg-neutral-950/60 border border-neutral-800/40 px-2.5 py-1 rounded-lg text-[11px]">
+                            <span className="text-neutral-300 font-medium truncate">{piece.name}</span>
+                            <button
+                              type="button"
+                              onClick={() => setAttachmentPieces(attachmentPieces.filter(id => id !== pieceId))}
+                              className="text-neutral-500 hover:text-rose-400 transition-colors cursor-pointer"
+                              title="Remove"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Attach Button */}
+                <button
+                  type="button"
+                  onClick={handleExecuteAttach}
+                  disabled={attachmentPieces.length === 0 && !selectedObject}
+                  className="w-full py-2 bg-amber-500 hover:bg-amber-400 disabled:bg-neutral-800 disabled:text-neutral-500 text-neutral-950 font-black uppercase text-xs rounded-xl tracking-wider shadow-lg shadow-amber-500/10 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Link className="w-3.5 h-3.5" />
+                  ATTACH DRAWINGS NOW
+                </button>
+
+                {/* Active Group Info, Z-Index Ordering and Detach */}
+                {selectedObject && selectedObject.attachedGroupId && (
+                  <div className="mt-3 pt-3 border-t border-neutral-800/40 space-y-3">
+                    <div className="text-[10px] text-neutral-400 font-black uppercase tracking-wider block">
+                      Active Group Layering & Order
+                    </div>
+                    
+                    {/* Z-Index Controls */}
+                    <div className="flex items-center justify-between gap-1.5">
+                      <span className="text-[10px] text-neutral-400 font-bold">Individual Depth:</span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const curZ = selectedObject.zIndex ?? 0;
+                            updateObject(selectedObject.id, { zIndex: curZ - 1 });
+                          }}
+                          className="px-2.5 py-1 bg-neutral-900 hover:bg-neutral-850 border border-neutral-800 rounded-lg text-[10px] text-neutral-300 font-black cursor-pointer active:scale-95 transition-all"
+                          title="Move Backwards"
+                        >
+                          Send Back
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const curZ = selectedObject.zIndex ?? 0;
+                            updateObject(selectedObject.id, { zIndex: curZ + 1 });
+                          }}
+                          className="px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500 text-amber-400 rounded-lg text-[10px] text-neutral-300 font-black cursor-pointer active:scale-95 transition-all"
+                          title="Bring Forwards"
+                        >
+                          Bring Front
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Detach Selected button */}
+                    <button
+                      type="button"
+                      onClick={handleDetachObject}
+                      className="w-full py-2 bg-rose-950/40 hover:bg-rose-950/70 border border-rose-900/40 hover:border-rose-900 text-rose-300 font-black uppercase text-xs rounded-xl tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Unlink className="w-3.5 h-3.5" />
+                      DETACH FROM GROUP
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
 
             {/* Child-Parent System Tree Panel */}
             <div className="space-y-4 bg-neutral-950/40 p-4 rounded-2xl border border-neutral-800/50 mt-4">

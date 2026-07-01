@@ -147,6 +147,8 @@ interface CanvasAreaProps {
   historyPush: () => void;
   layers?: any[];
   setLayers?: React.Dispatch<React.SetStateAction<any[]>>;
+  lassoPoints: Point[];
+  setLassoPoints: React.Dispatch<React.SetStateAction<Point[]>>;
 }
 
 export default function CanvasArea({
@@ -166,6 +168,8 @@ export default function CanvasArea({
   historyPush,
   layers = [],
   setLayers,
+  lassoPoints,
+  setLassoPoints,
 }: CanvasAreaProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const backCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -175,6 +179,7 @@ export default function CanvasArea({
   // Drawing state
   const [isDrawing, setIsPlayingState] = useState(false);
   const [strokePoints, setStrokePoints] = useState<Point[]>([]);
+  const [isDrawingLasso, setIsDrawingLasso] = useState(false);
   
   // Transform & drag gesture state
   const [dragMode, setDragMode] = useState<'none' | 'move' | 'rotate' | 'scale' | 'pivot' | 'pin' | 'meshPoint' | 'meshGridPoint' | 'puppetPin'>('none');
@@ -703,6 +708,13 @@ export default function CanvasArea({
       return;
     }
 
+    // Lasso Selection tool pointer down
+    if (activeTool === 'LSO') {
+      setIsDrawingLasso(true);
+      setLassoPoints([coords]);
+      return;
+    }
+
     // 5. Vector Pen Tool creation logic
     if (activeTool === 'PEN') {
       if (penPoints.length > 0 && distance(coords, penPoints[0]) < 12) {
@@ -1082,6 +1094,11 @@ export default function CanvasArea({
       return;
     }
 
+    if (isDrawingLasso && activeTool === 'LSO') {
+      setLassoPoints(prev => [...prev, coords]);
+      return;
+    }
+
     if (isDrawing && activeTool === 'ERS') {
       erasePointsAt(coords);
       return;
@@ -1156,6 +1173,22 @@ export default function CanvasArea({
               y: nextY,
             }
           };
+
+          // Relative translation for permanently attached drawings
+          if (obj.attachedGroupId) {
+            (Object.values(updated) as VectorObject[]).forEach(otherObj => {
+              if (otherObj.id !== selectedObjectId && otherObj.attachedGroupId === obj.attachedGroupId) {
+                updated[otherObj.id] = {
+                  ...otherObj,
+                  transform: {
+                    ...otherObj.transform,
+                    x: Number((otherObj.transform.x + deltaX).toFixed(2)),
+                    y: Number((otherObj.transform.y + deltaY).toFixed(2))
+                  }
+                };
+              }
+            });
+          }
 
           propagateRigTransforms(updated, selectedObjectId, deltaX, deltaY, 0);
           return updated;
@@ -1538,6 +1571,7 @@ export default function CanvasArea({
     setIsPlayingState(false);
     setDragMode('none');
     setStrokePoints([]);
+    setIsDrawingLasso(false);
   };
 
   const updateObjectProperties = (id: string, updates: Partial<VectorObject>) => {
@@ -1569,13 +1603,18 @@ export default function CanvasArea({
     // Sort layers by zIndex ascending
     const sortedLayers = [...(layers || [])].sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
     
-    // Sort all objects based on their layers zIndex
+    // Sort all objects based on their layers zIndex, and then by their own zIndex if present
     const sortedObjects = Object.values(objects).sort((a, b) => {
       const layerA = sortedLayers.find(l => l.id === a.layerId);
       const layerB = sortedLayers.find(l => l.id === b.layerId);
       const zA = layerA ? (layerA.zIndex ?? 0) : 0;
       const zB = layerB ? (layerB.zIndex ?? 0) : 0;
-      return zA - zB;
+      if (zA !== zB) {
+        return zA - zB;
+      }
+      const objZA = a.zIndex ?? 0;
+      const objZB = b.zIndex ?? 0;
+      return objZA - objZB;
     });
 
     // Draw active layer drawings in sorted order
@@ -1753,6 +1792,37 @@ export default function CanvasArea({
         ctx.stroke();
         
         ctx.restore();
+      }
+
+      // 4.5 Lasso Fills (drawn relative to the local object space)
+      if (obj.lassoFills && obj.lassoFills.length > 0 && obj.type !== 'image') {
+        obj.lassoFills.forEach(fill => {
+          ctx.save();
+          
+          // Clip 1: Only draw inside the parent drawing's bounds
+          drawAllPaths();
+          ctx.clip();
+          
+          // Clip 2: Only draw inside the lasso selection path
+          ctx.beginPath();
+          const localPivot = obj.pivots[0] || { localX: 0, localY: 0 };
+          const worldLassoPoints = fill.localLassoPoints.map(p => localToWorld(p, obj.transform, localPivot));
+          if (worldLassoPoints.length > 0) {
+            ctx.moveTo(worldLassoPoints[0].x, worldLassoPoints[0].y);
+            for (let i = 1; i < worldLassoPoints.length; i++) {
+              ctx.lineTo(worldLassoPoints[i].x, worldLassoPoints[i].y);
+            }
+            ctx.closePath();
+          }
+          ctx.clip();
+          
+          // Fill the clipped region with the lasso color
+          drawAllPaths();
+          ctx.fillStyle = fill.color;
+          ctx.fill();
+          
+          ctx.restore();
+        });
       }
 
       ctx.restore();
@@ -2094,6 +2164,28 @@ export default function CanvasArea({
       ctx.restore();
     }
 
+    // Render current active Lasso selection path
+    if (lassoPoints && lassoPoints.length > 0) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(lassoPoints[0].x, lassoPoints[0].y);
+      for (let i = 1; i < lassoPoints.length; i++) {
+        ctx.lineTo(lassoPoints[i].x, lassoPoints[i].y);
+      }
+      ctx.closePath();
+      
+      // Beautiful amber glow fill
+      ctx.fillStyle = 'rgba(245, 158, 11, 0.08)';
+      ctx.fill();
+      
+      // Beautiful neon-amber dashed outline
+      ctx.strokeStyle = '#F59E0B';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 4]);
+      ctx.stroke();
+      ctx.restore();
+    }
+
     // Restore top-level viewport zoom/pan transformation
     ctx.restore();
   }, [
@@ -2110,7 +2202,8 @@ export default function CanvasArea({
     elasticWarningId,
     showBones,
     zoomScale,
-    zoomOffset
+    zoomOffset,
+    lassoPoints
   ]);
 
   return (

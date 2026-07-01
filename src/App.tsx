@@ -18,7 +18,7 @@ import LeftPanel from './components/LeftPanel';
 import RightPanel from './components/RightPanel';
 import CanvasArea from './components/CanvasArea';
 import Timeline from './components/Timeline';
-import { VectorObject, Bone, Layer, Frame } from './types';
+import { VectorObject, Bone, Layer, Frame, Point } from './types';
 import { localToWorld, rotatePoint } from './utils/math';
 
 export default function App() {
@@ -56,6 +56,9 @@ export default function App() {
 
   // Smart controls pinned list
   const [smartPinnedIds, setSmartPinnedIds] = useState<string[]>([]);
+
+  // Lasso selection area points state
+  const [lassoPoints, setLassoPoints] = useState<Point[]>([]);
 
   // Ref to track the currently loaded frame index to prevent race conditions & update loops
   const loadedFrameIndexRef = useRef<number>(0);
@@ -877,6 +880,8 @@ export default function App() {
           historyPush={historyPush}
           layers={layers}
           setLayers={setLayers}
+          lassoPoints={lassoPoints}
+          setLassoPoints={setLassoPoints}
         />
 
         {/* Right Collapsible Properties, Sliders, Smart Pinned Controls */}
@@ -898,6 +903,8 @@ export default function App() {
           toggleSmartPin={toggleSmartPin}
           activeTool={activeTool}
           setActiveTool={setActiveTool}
+          lassoPoints={lassoPoints}
+          setLassoPoints={setLassoPoints}
         />
       </div>
 

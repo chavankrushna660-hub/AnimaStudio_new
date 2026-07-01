@@ -129,6 +129,9 @@ export interface VectorObject {
   isLocked: boolean;
   isHidden: boolean;
   keepAttachedTo?: string | null; // Drawing ID to keep permanently attached
+  attachedGroupId?: string; // Group ID for permanent relative move linking
+  lassoFills?: { localLassoPoints: Point[], color: string }[]; // Sub-areas colored via lasso tool
+  zIndex?: number; // Sorting order within the layer
   shadow?: ObjectShadow;
   innerShadow?: ObjectInnerShadow;
   rimLight?: ObjectRimLight;

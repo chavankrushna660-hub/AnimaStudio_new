@@ -17,7 +17,8 @@ import {
   Palette, 
   Zap, 
   GitCommit,
-  LayoutGrid
+  LayoutGrid,
+  Sparkles
 } from 'lucide-react';
 
 interface ToolbarProps {
@@ -43,6 +44,7 @@ export default function Toolbar({
     { id: "KNF", name: "Knife", label: "Knife Tool (KNF)", icon: ScissorsIcon },
     { id: "PIN", name: "Puppet Pin", label: "Puppet Pin (PIN)", icon: PinIcon },
     { id: 'FIL', name: 'Fill', label: 'Fill Bucket (FIL)', icon: PaintBucketIcon },
+    { id: 'LSO', name: 'Lasso Fill', label: 'Lasso Color Fill (LSO)', icon: SparklesIcon, desc: 'Draw a lasso region to color/fill specific sub-areas' },
     { id: 'SHP', name: 'Shape', label: 'Shapes Tool (SHP)', icon: ShapesIcon },
     { id: 'MSH', name: 'Mesh Wrap', label: 'Geometry Deform (MSH)', icon: CropIcon, desc: 'Deform drawing geometry by dragging individual vertices deeply' },
     { id: 'CON', name: 'Constraint', label: 'Constraints (CON)', icon: AlignCenterIcon },
@@ -127,3 +129,4 @@ function AlignCenterIcon(props: any) { return <GitCommit {...props} /> }
 function TrendingUpIcon(props: any) { return <Compass {...props} /> }
 function EyedropperIcon(props: any) { return <Pipette {...props} /> }
 function EraserIcon(props: any) { return <Trash2 {...props} /> }
+function SparklesIcon(props: any) { return <Sparkles {...props} /> }
