@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { RotateCcw } from 'lucide-react';
-import { Point, VectorObject, Bone, Pivot, Frame, Transform } from '../types';
+import { Point, VectorObject, Bone, Pivot, Frame, Transform, RealismSettings } from '../types';
 import { 
   distance, 
   pointToPolylineDistance, 
@@ -130,6 +130,209 @@ const isChildInsideParent = (
   return childWorldPoints.every(pt => isPointInPolygon(pt, parentWorldPoints));
 };
 
+const getTaperWidth = (i: number, N: number, baseWidth: number, enabled: boolean): number => {
+  if (!enabled || N <= 2) return baseWidth;
+  const taperLength = Math.min(15, Math.floor(N / 3.5));
+  if (taperLength <= 0) return baseWidth;
+  
+  if (i < taperLength) {
+    const ratio = i / taperLength;
+    const factor = Math.sin(ratio * Math.PI / 2);
+    return baseWidth * factor;
+  } else if (i >= N - taperLength) {
+    const ratio = (N - 1 - i) / taperLength;
+    const factor = Math.sin(ratio * Math.PI / 2);
+    return baseWidth * factor;
+  }
+  return baseWidth;
+};
+
+const createRealismPoint = (
+  coords: Point,
+  lastPt: Point | null,
+  settings?: RealismSettings
+): Point => {
+  const now = Date.now();
+  let w = settings?.maxThickness ?? 3.5;
+  let angle = 0;
+  
+  if (lastPt) {
+    const dist = Math.hypot(coords.x - lastPt.x, coords.y - lastPt.y);
+    const dt = now - (lastPt.t ?? (now - 16));
+    const timeDelta = Math.max(1, dt);
+    
+    // 1. Velocity-Based Auto-Taper
+    if (settings?.autoTaperEnabled) {
+      const speed = dist / timeDelta; // px per ms
+      // Speed thinning formula: fast = thin, slow = thick
+      const thinning = speed * (settings.thinningFactor * 10);
+      w = Math.max(settings.minThickness, settings.maxThickness - thinning);
+    }
+    
+    // 2. Stroke Angle
+    angle = Math.atan2(coords.y - lastPt.y, coords.x - lastPt.x);
+  } else {
+    w = settings ? (settings.maxThickness + settings.minThickness) / 2 : 3.5;
+  }
+  
+  // 3. Micro-Jitter
+  let jitterX = 0;
+  let jitterY = 0;
+  if (settings?.microJitterEnabled) {
+    const amt = settings.microJitterAmount;
+    jitterX = Math.random() * amt - amt / 2;
+    jitterY = Math.random() * amt - amt / 2;
+  }
+  
+  // 4. Paper Grain static modifier
+  let grainOpacity = 1.0;
+  if (settings?.paperGrainEnabled) {
+    const intensity = settings.paperGrainIntensity;
+    grainOpacity = 1.0 - (Math.random() * intensity);
+  }
+  
+  return {
+    x: coords.x,
+    y: coords.y,
+    t: now,
+    w: Number(w.toFixed(2)),
+    angle,
+    jitterX: Number(jitterX.toFixed(2)),
+    jitterY: Number(jitterY.toFixed(2)),
+    grainOpacity: Number(grainOpacity.toFixed(2))
+  };
+};
+
+const drawVariableWidthStrokeInternal = (
+  ctx: CanvasRenderingContext2D,
+  points: Point[],
+  baseColor: string,
+  settings?: RealismSettings,
+  widthOffset: number = 0,
+  drawShading: boolean = true
+) => {
+  if (points.length === 0) return;
+  if (points.length === 1) {
+    const pt = points[0];
+    const jX = settings?.microJitterEnabled ? (pt.jitterX ?? 0) : 0;
+    const jY = settings?.microJitterEnabled ? (pt.jitterY ?? 0) : 0;
+    const w = (pt.w ?? (settings?.maxThickness ?? 3.5)) + widthOffset;
+    const taperedW = getTaperWidth(0, 1, w, settings?.autoTaperEnabled ?? true);
+    
+    ctx.save();
+    if (settings?.paperGrainEnabled) {
+      ctx.globalAlpha = ctx.globalAlpha * (pt.grainOpacity ?? 1.0);
+    }
+    ctx.beginPath();
+    ctx.arc(pt.x + jX, pt.y + jY, Math.max(0.1, taperedW / 2), 0, Math.PI * 2);
+    ctx.fillStyle = baseColor;
+    ctx.fill();
+    ctx.restore();
+    return;
+  }
+
+  // Draw segment by segment
+  for (let i = 0; i < points.length - 1; i++) {
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    
+    // Apply micro-jitter
+    const jX1 = settings?.microJitterEnabled ? (p1.jitterX ?? 0) : 0;
+    const jY1 = settings?.microJitterEnabled ? (p1.jitterY ?? 0) : 0;
+    const jX2 = settings?.microJitterEnabled ? (p2.jitterX ?? 0) : 0;
+    const jY2 = settings?.microJitterEnabled ? (p2.jitterY ?? 0) : 0;
+    
+    // Paper Grain
+    const gAlpha1 = settings?.paperGrainEnabled ? (p1.grainOpacity ?? 1.0) : 1.0;
+    const gAlpha2 = settings?.paperGrainEnabled ? (p2.grainOpacity ?? 1.0) : 1.0;
+    const segmentAlpha = (gAlpha1 + gAlpha2) / 2;
+    
+    // Widths with taper
+    const w1 = getTaperWidth(i, points.length, p1.w ?? (settings?.maxThickness ?? 3.5), settings?.autoTaperEnabled ?? true) + widthOffset;
+    const w2 = getTaperWidth(i + 1, points.length, p2.w ?? (settings?.maxThickness ?? 3.5), settings?.autoTaperEnabled ?? true) + widthOffset;
+    const avgW = Math.max(0.1, (w1 + w2) / 2);
+    
+    ctx.save();
+    
+    if (settings?.paperGrainEnabled) {
+      ctx.globalAlpha = ctx.globalAlpha * segmentAlpha;
+    }
+    
+    ctx.beginPath();
+    ctx.moveTo(p1.x + jX1, p1.y + jY1);
+    ctx.lineTo(p2.x + jX2, p2.y + jY2);
+    
+    ctx.strokeStyle = baseColor;
+    ctx.lineWidth = avgW;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+    
+    ctx.restore();
+
+    // 2.5D Auto-Shading on the Core stroke only
+    if (drawShading && settings?.autoShadingEnabled && points.length > 1) {
+      const strokeAngle = p2.angle ?? Math.atan2(p2.y - p1.y, p2.x - p1.x);
+      const lightRad = (settings.shadingLightAngle ?? 45) * (Math.PI / 180);
+      
+      const angleDifference = strokeAngle - lightRad;
+      const shadingIntensity = Math.cos(angleDifference);
+      
+      const perpX = -Math.sin(strokeAngle);
+      const perpY = Math.cos(strokeAngle);
+      
+      const shadowOffset = avgW * 0.22;
+      const isLeftHighlight = shadingIntensity > 0;
+      
+      // Highlight: drawn facing the light
+      ctx.save();
+      ctx.beginPath();
+      const hSign = isLeftHighlight ? -1 : 1;
+      ctx.moveTo(p1.x + jX1 + hSign * perpX * shadowOffset, p1.y + jY1 + hSign * perpY * shadowOffset);
+      ctx.lineTo(p2.x + jX2 + hSign * perpX * shadowOffset, p2.y + jY2 + hSign * perpY * shadowOffset);
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.lineWidth = Math.max(0.1, avgW * 0.35);
+      ctx.globalAlpha = ctx.globalAlpha * Math.abs(shadingIntensity) * settings.shadingHighlightOpacity;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+      ctx.restore();
+      
+      // Shadow: drawn facing away from light
+      ctx.save();
+      ctx.beginPath();
+      const sSign = isLeftHighlight ? 1 : -1;
+      ctx.moveTo(p1.x + jX1 + sSign * perpX * shadowOffset, p1.y + jY1 + sSign * perpY * shadowOffset);
+      ctx.lineTo(p2.x + jX2 + sSign * perpX * shadowOffset, p2.y + jY2 + sSign * perpY * shadowOffset);
+      ctx.strokeStyle = '#000000';
+      ctx.lineWidth = Math.max(0.1, avgW * 0.4);
+      ctx.globalAlpha = ctx.globalAlpha * Math.abs(shadingIntensity) * settings.shadingShadowOpacity;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+};
+
+const drawVariableWidthStroke = (
+  ctx: CanvasRenderingContext2D,
+  points: Point[],
+  baseColor: string,
+  settings?: RealismSettings
+) => {
+  if (settings?.inkBleedEnabled) {
+    // PASS 1: Bleed Halo
+    ctx.save();
+    ctx.filter = `blur(${settings.inkBleedBlur}px)`;
+    ctx.globalAlpha = ctx.globalAlpha * settings.inkBleedOpacity;
+    
+    drawVariableWidthStrokeInternal(ctx, points, baseColor, settings, settings.inkBleedWidthOffset, false);
+    ctx.restore();
+  }
+  
+  // PASS 2: Crisp Core & Shading
+  drawVariableWidthStrokeInternal(ctx, points, baseColor, settings, 0, true);
+};
+
 interface CanvasAreaProps {
   objects: { [id: string]: VectorObject };
   setObjects: React.Dispatch<React.SetStateAction<{ [id: string]: VectorObject }>>;
@@ -149,6 +352,7 @@ interface CanvasAreaProps {
   setLayers?: React.Dispatch<React.SetStateAction<any[]>>;
   lassoPoints: Point[];
   setLassoPoints: React.Dispatch<React.SetStateAction<Point[]>>;
+  realismSettings?: RealismSettings;
 }
 
 export default function CanvasArea({
@@ -170,6 +374,7 @@ export default function CanvasArea({
   setLayers,
   lassoPoints,
   setLassoPoints,
+  realismSettings,
 }: CanvasAreaProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const backCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -917,7 +1122,8 @@ export default function CanvasArea({
     // 11. Vector brush drawing logic
     if (activeTool === 'BRS') {
       setIsPlayingState(true);
-      setStrokePoints([coords]);
+      const startPt = createRealismPoint(coords, null, realismSettings);
+      setStrokePoints([startPt]);
       return;
     }
   };
@@ -1090,7 +1296,11 @@ export default function CanvasArea({
     }
 
     if (isDrawing && activeTool === 'BRS') {
-      setStrokePoints(prev => [...prev, coords]);
+      setStrokePoints(prev => {
+        const lastPt = prev[prev.length - 1] || null;
+        const nextPt = createRealismPoint(coords, lastPt, realismSettings);
+        return [...prev, nextPt];
+      });
       return;
     }
 
@@ -1726,15 +1936,59 @@ export default function CanvasArea({
         }
       } else {
         // Render vector drawing
-        drawAllPaths();
-        
-        ctx.lineWidth = obj.strokeWidth;
-        ctx.strokeStyle = obj.strokeColor;
-        ctx.stroke();
+        if (obj.type === 'stroke') {
+          // Map local points to world points, preserving our realism attributes!
+          const worldStrokePoints = localPoints.map((p) => {
+            const wp = localToWorld(p, obj.transform, pivot);
+            return {
+              ...wp,
+              w: p.w,
+              t: p.t,
+              angle: p.angle,
+              jitterX: p.jitterX,
+              jitterY: p.jitterY,
+              grainOpacity: p.grainOpacity
+            };
+          });
+          
+          drawVariableWidthStroke(ctx, worldStrokePoints, obj.strokeColor, realismSettings);
+          
+          // Draw any subPaths of merged drawings
+          if (obj.subPaths && obj.subPaths.length > 0) {
+            obj.subPaths.forEach(sub => {
+              let localSubPoints = sub;
+              if (obj.meshState && obj.meshState.active) {
+                const subBounds = calculateBoundingBox(sub);
+                localSubPoints = sub.map(p => getWarpedPoint(p, obj.meshState, subBounds));
+              } else if (obj.pins && obj.pins.length > 0) {
+                localSubPoints = sub.map(p => deformWithPuppetPins(p, obj.pins));
+              }
+              const worldSubPoints = localSubPoints.map(p => {
+                const wp = localToWorld(p, obj.transform, pivot);
+                return {
+                  ...wp,
+                  w: p.w,
+                  t: p.t,
+                  angle: p.angle,
+                  jitterX: p.jitterX,
+                  jitterY: p.jitterY,
+                  grainOpacity: p.grainOpacity
+                };
+              });
+              drawVariableWidthStroke(ctx, worldSubPoints, obj.strokeColor, realismSettings);
+            });
+          }
+        } else {
+          drawAllPaths();
+          
+          ctx.lineWidth = obj.strokeWidth;
+          ctx.strokeStyle = obj.strokeColor;
+          ctx.stroke();
 
-        if (obj.fillColor && obj.fillColor !== 'transparent') {
-          ctx.fillStyle = obj.fillColor;
-          ctx.fill();
+          if (obj.fillColor && obj.fillColor !== 'transparent') {
+            ctx.fillStyle = obj.fillColor;
+            ctx.fill();
+          }
         }
       }
 
@@ -2138,14 +2392,7 @@ export default function CanvasArea({
     // Render current active brush line
     if (isDrawing && strokePoints.length > 0) {
       ctx.save();
-      ctx.beginPath();
-      ctx.moveTo(strokePoints[0].x, strokePoints[0].y);
-      for (let i = 1; i < strokePoints.length; i++) {
-        ctx.lineTo(strokePoints[i].x, strokePoints[i].y);
-      }
-      ctx.strokeStyle = '#E53935';
-      ctx.lineWidth = 3;
-      ctx.stroke();
+      drawVariableWidthStroke(ctx, strokePoints, '#000000', realismSettings);
       ctx.restore();
     }
 

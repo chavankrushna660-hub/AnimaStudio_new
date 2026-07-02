@@ -18,7 +18,7 @@ import LeftPanel from './components/LeftPanel';
 import RightPanel from './components/RightPanel';
 import CanvasArea from './components/CanvasArea';
 import Timeline from './components/Timeline';
-import { VectorObject, Bone, Layer, Frame, Point } from './types';
+import { VectorObject, Bone, Layer, Frame, Point, RealismSettings } from './types';
 import { localToWorld, rotatePoint } from './utils/math';
 
 export default function App() {
@@ -59,6 +59,26 @@ export default function App() {
 
   // Lasso selection area points state
   const [lassoPoints, setLassoPoints] = useState<Point[]>([]);
+
+  // Realism Maker Settings
+  const [realismSettings, setRealismSettings] = useState<RealismSettings>({
+    autoTaperEnabled: true,
+    minThickness: 1.5,
+    maxThickness: 8.0,
+    thinningFactor: 0.3,
+    autoShadingEnabled: true,
+    shadingLightAngle: 45,
+    shadingHighlightOpacity: 0.2,
+    shadingShadowOpacity: 0.3,
+    microJitterEnabled: false,
+    microJitterAmount: 1.5,
+    paperGrainEnabled: false,
+    paperGrainIntensity: 0.4,
+    inkBleedEnabled: false,
+    inkBleedBlur: 3,
+    inkBleedOpacity: 0.3,
+    inkBleedWidthOffset: 6,
+  });
 
   // Ref to track the currently loaded frame index to prevent race conditions & update loops
   const loadedFrameIndexRef = useRef<number>(0);
@@ -882,6 +902,7 @@ export default function App() {
           setLayers={setLayers}
           lassoPoints={lassoPoints}
           setLassoPoints={setLassoPoints}
+          realismSettings={realismSettings}
         />
 
         {/* Right Collapsible Properties, Sliders, Smart Pinned Controls */}
@@ -905,6 +926,15 @@ export default function App() {
           setActiveTool={setActiveTool}
           lassoPoints={lassoPoints}
           setLassoPoints={setLassoPoints}
+          frames={frames}
+          setFrames={setFrames}
+          currentFrameIndex={currentFrameIndex}
+          setCurrentFrameIndex={setCurrentFrameIndex}
+          setObjects={setObjects}
+          fps={fps}
+          setFps={setFps}
+          realismSettings={realismSettings}
+          setRealismSettings={setRealismSettings}
         />
       </div>
 

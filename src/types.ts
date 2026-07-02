@@ -1,6 +1,32 @@
 export interface Point {
   x: number;
   y: number;
+  t?: number;
+  w?: number;
+  angle?: number;
+  jitterX?: number;
+  jitterY?: number;
+  grainOpacity?: number;
+}
+
+export interface RealismSettings {
+  autoTaperEnabled: boolean;
+  minThickness: number;
+  maxThickness: number;
+  thinningFactor: number;
+  autoShadingEnabled: boolean;
+  shadingLightAngle: number; // degrees (e.g. 45 from top-left)
+  shadingHighlightOpacity: number; // e.g. 0.2
+  shadingShadowOpacity: number; // e.g. 0.3
+  
+  microJitterEnabled: boolean;
+  microJitterAmount: number; // max jitter pixels
+  paperGrainEnabled: boolean;
+  paperGrainIntensity: number; // e.g. 0.4
+  inkBleedEnabled: boolean;
+  inkBleedBlur: number; // e.g. 3
+  inkBleedOpacity: number; // e.g. 0.3
+  inkBleedWidthOffset: number; // e.g. 6
 }
 
 export interface Transform {
@@ -156,6 +182,9 @@ export interface FrameObjectState {
   opacity?: number;
   pivots?: Pivot[];
   pins?: Pivot[];
+  points?: Point[];
+  subPaths?: Point[][];
+  [key: string]: any;
 }
 
 export interface Frame {

@@ -23,7 +23,7 @@ import {
   Link,
   Unlink
 } from 'lucide-react';
-import { VectorObject, Bone, Layer, Pivot, Transform, Point } from '../types';
+import { VectorObject, Bone, Layer, Pivot, Transform, Point, Frame, RealismSettings } from '../types';
 import { distance, localToWorld, worldToLocal, calculateBoundingBox, isPointInPolygon } from '../utils/math';
 
 interface RightPanelProps {
@@ -44,6 +44,15 @@ interface RightPanelProps {
   setActiveTool: (tool: string) => void;
   lassoPoints: Point[];
   setLassoPoints: React.Dispatch<React.SetStateAction<Point[]>>;
+  frames: Frame[];
+  setFrames: React.Dispatch<React.SetStateAction<Frame[]>>;
+  currentFrameIndex: number;
+  setCurrentFrameIndex: React.Dispatch<React.SetStateAction<number>>;
+  setObjects: React.Dispatch<React.SetStateAction<{ [id: string]: VectorObject }>>;
+  fps: number;
+  setFps: (fps: number) => void;
+  realismSettings?: RealismSettings;
+  setRealismSettings?: React.Dispatch<React.SetStateAction<RealismSettings>>;
 }
 
 const isChildInsideParent = (
@@ -84,9 +93,42 @@ export default function RightPanel({
   setActiveTool,
   lassoPoints,
   setLassoPoints,
+  frames,
+  setFrames,
+  currentFrameIndex,
+  setCurrentFrameIndex,
+  setObjects,
+  fps,
+  setFps,
+  realismSettings,
+  setRealismSettings,
 }: RightPanelProps) {
   // Batch/Smart Controls check state
   const [smartCheckedIds, setSmartCheckedIds] = useState<{ [id: string]: boolean }>({});
+
+  // AI Smooth Motion & Loop Generator States
+  const [animationMode, setAnimationMode] = useState<'single' | 'multi'>('single');
+  const [singleStartFrame, setSingleStartFrame] = useState(0);
+  const [singleEndFrame, setSingleEndFrame] = useState(0);
+  const [durationSeconds, setDurationSeconds] = useState(5);
+  const [easeType, setEaseType] = useState<'linear' | 'easeIn' | 'easeOut' | 'easeInOut'>('linear');
+
+  const [multiRefStartFrame, setMultiRefStartFrame] = useState(0);
+  const [multiRefEndFrame, setMultiRefEndFrame] = useState(0);
+  const [multiEndPosFrame, setMultiEndPosFrame] = useState(0);
+
+  // Sync default frame limits when frames length changes
+  React.useEffect(() => {
+    if (singleEndFrame === 0 || singleEndFrame >= frames.length) {
+      setSingleEndFrame(Math.max(0, frames.length - 1));
+    }
+    if (multiRefEndFrame === 0 || multiRefEndFrame >= frames.length) {
+      setMultiRefEndFrame(Math.max(0, Math.max(0, frames.length - 2)));
+    }
+    if (multiEndPosFrame === 0 || multiEndPosFrame >= frames.length) {
+      setMultiEndPosFrame(Math.max(0, frames.length - 1));
+    }
+  }, [frames.length]);
   
   // Opposite Controls State
   const [oppositeSection1, setOppositeSection1] = useState<string[]>([]);
@@ -178,6 +220,268 @@ export default function RightPanel({
     if (!selectedObject) return;
     updateObject(selectedObject.id, { attachedGroupId: undefined });
     alert(`Successfully detached ${selectedObject.name}.`);
+  };
+
+  // AI Smooth Motion & Loop Generator handlers
+  const [hasBackup, setHasBackup] = useState(!!localStorage.getItem('generator_original_frames_backup'));
+
+  const handleRestoreBackup = () => {
+    const backup = localStorage.getItem('generator_original_frames_backup');
+    if (backup) {
+      const parsed = JSON.parse(backup);
+      setFrames(parsed);
+      if (parsed[0]) {
+        setObjects(parsed[0].objects);
+      }
+      setCurrentFrameIndex(0);
+      alert("Successfully restored original reference frames!");
+    }
+  };
+
+  const interpolateTransform = (tStart: Transform, tEnd: Transform, t: number): Transform => {
+    const rotStart = tStart.rotation ?? 0;
+    const rotEnd = tEnd.rotation ?? 0;
+    const rotation = rotStart + t * (rotEnd - rotStart);
+
+    return {
+      x: Number((tStart.x + t * (tEnd.x - tStart.x)).toFixed(2)),
+      y: Number((tStart.y + t * (tEnd.y - tStart.y)).toFixed(2)),
+      rotation: Number(rotation.toFixed(2)),
+      scaleX: Number(((tStart.scaleX ?? 1) + t * ((tEnd.scaleX ?? 1) - (tStart.scaleX ?? 1))).toFixed(2)),
+      scaleY: Number(((tStart.scaleY ?? 1) + t * ((tEnd.scaleY ?? 1) - (tStart.scaleY ?? 1))).toFixed(2)),
+      skewX: tStart.skewX !== undefined && tEnd.skewX !== undefined ? Number((tStart.skewX + t * (tEnd.skewX - tStart.skewX)).toFixed(2)) : tStart.skewX,
+      skewY: tStart.skewY !== undefined && tEnd.skewY !== undefined ? Number((tStart.skewY + t * (tEnd.skewY - tStart.skewY)).toFixed(2)) : tStart.skewY,
+      rotateX: tStart.rotateX !== undefined && tEnd.rotateX !== undefined ? Number((tStart.rotateX + t * (tEnd.rotateX - tStart.rotateX)).toFixed(2)) : tStart.rotateX,
+      rotateY: tStart.rotateY !== undefined && tEnd.rotateY !== undefined ? Number((tStart.rotateY + t * (tEnd.rotateY - tStart.rotateY)).toFixed(2)) : tStart.rotateY,
+      perspective: tStart.perspective !== undefined && tEnd.perspective !== undefined ? Number((tStart.perspective + t * (tEnd.perspective - tStart.perspective)).toFixed(2)) : tStart.perspective,
+    };
+  };
+
+  const handleGenerateSingleStep = () => {
+    if (frames.length < 2) {
+      alert("Please add at least 2 frames (Start & End) to generate an animation.");
+      return;
+    }
+    
+    const F = Math.round(durationSeconds * fps);
+    if (F < 2) {
+      alert("Please select a longer duration or higher FPS to generate at least 2 frames.");
+      return;
+    }
+
+    const startIdx = Math.max(0, Math.min(singleStartFrame, frames.length - 1));
+    const endIdx = Math.max(0, Math.min(singleEndFrame, frames.length - 1));
+
+    if (startIdx === endIdx) {
+      alert("Start and End frames must be different.");
+      return;
+    }
+
+    // Save backup first
+    localStorage.setItem('generator_original_frames_backup', JSON.stringify(frames));
+    setHasBackup(true);
+
+    const startFrameObjects = frames[startIdx].objects;
+    const endFrameObjects = frames[endIdx].objects;
+
+    const newFrames: Frame[] = [];
+
+    for (let i = 0; i < F; i++) {
+      const rawT = i / (F - 1);
+      
+      // Apply Easing
+      let t = rawT;
+      if (easeType === 'easeIn') {
+        t = rawT * rawT;
+      } else if (easeType === 'easeOut') {
+        t = rawT * (2 - rawT);
+      } else if (easeType === 'easeInOut') {
+        t = rawT < 0.5 ? 2 * rawT * rawT : -1 + (4 - 2 * rawT) * rawT;
+      }
+
+      const frameObjects: { [objectId: string]: any } = {};
+
+      const allObjIds = Array.from(new Set([
+        ...Object.keys(startFrameObjects),
+        ...Object.keys(endFrameObjects)
+      ]));
+
+      allObjIds.forEach(objId => {
+        const startObj = startFrameObjects[objId];
+        const endObj = endFrameObjects[objId];
+
+        if (startObj && endObj) {
+          const interpolatedTransform = interpolateTransform(startObj.transform, endObj.transform, t);
+
+          let points = startObj.points;
+          if (startObj.points && endObj.points && startObj.points.length === endObj.points.length) {
+            points = startObj.points.map((p, pIdx) => {
+              const ep = endObj.points[pIdx];
+              return {
+                x: Number((p.x + t * (ep.x - p.x)).toFixed(2)),
+                y: Number((p.y + t * (ep.y - p.y)).toFixed(2))
+              };
+            });
+          }
+
+          let subPaths = startObj.subPaths;
+          if (startObj.subPaths && endObj.subPaths && startObj.subPaths.length === endObj.subPaths.length) {
+            subPaths = startObj.subPaths.map((path, pathIdx) => {
+              const ePath = endObj.subPaths[pathIdx];
+              if (path.length === ePath.length) {
+                return path.map((pt, ptIdx) => {
+                  const ePt = ePath[ptIdx];
+                  return {
+                    x: Number((pt.x + t * (ePt.x - pt.x)).toFixed(2)),
+                    y: Number((pt.y + t * (ePt.y - pt.y)).toFixed(2))
+                  };
+                });
+              }
+              return path;
+            });
+          }
+
+          let pivots = startObj.pivots;
+          if (startObj.pivots && endObj.pivots && startObj.pivots.length === endObj.pivots.length) {
+            pivots = startObj.pivots.map((pvt, pvtIdx) => {
+              const ePvt = endObj.pivots[pvtIdx];
+              return {
+                ...pvt,
+                localX: Number((pvt.localX + t * (ePvt.localX - pvt.localX)).toFixed(2)),
+                localY: Number((pvt.localY + t * (ePvt.localY - pvt.localY)).toFixed(2)),
+              };
+            });
+          }
+
+          const opacity = startObj.opacity !== undefined && endObj.opacity !== undefined
+            ? Number((startObj.opacity + t * (endObj.opacity - startObj.opacity)).toFixed(2))
+            : startObj.opacity;
+
+          frameObjects[objId] = {
+            ...startObj,
+            transform: interpolatedTransform,
+            points,
+            subPaths,
+            pivots,
+            opacity,
+          };
+        } else if (startObj) {
+          frameObjects[objId] = JSON.parse(JSON.stringify(startObj));
+        } else if (endObj) {
+          frameObjects[objId] = JSON.parse(JSON.stringify(endObj));
+        }
+      });
+
+      newFrames.push({
+        index: i,
+        objects: frameObjects,
+      });
+    }
+
+    setFrames(newFrames);
+    setObjects(JSON.parse(JSON.stringify(newFrames[0].objects)));
+    setCurrentFrameIndex(0);
+    alert(`Successfully generated smooth single-step animation with ${F} frames! Click Play to view.`);
+  };
+
+  const handleGenerateMultiStep = () => {
+    if (frames.length < 2) {
+      alert("Please add at least 2 frames to generate a walk cycle/loop.");
+      return;
+    }
+
+    const F = Math.round(durationSeconds * fps);
+    if (F < 2) {
+      alert("Please select a longer duration or higher FPS to generate at least 2 frames.");
+      return;
+    }
+
+    const refStart = Math.max(0, Math.min(multiRefStartFrame, frames.length - 1));
+    const refEnd = Math.max(0, Math.min(multiRefEndFrame, frames.length - 1));
+    const endPosIdx = Math.max(0, Math.min(multiEndPosFrame, frames.length - 1));
+
+    if (refStart > refEnd) {
+      alert("Walk cycle reference Start Frame must be less than or equal to End Frame.");
+      return;
+    }
+
+    const M = refEnd - refStart + 1;
+
+    // Save backup first
+    localStorage.setItem('generator_original_frames_backup', JSON.stringify(frames));
+    setHasBackup(true);
+
+    const startFrameObjects = frames[refStart].objects;
+    const endFrameObjects = frames[endPosIdx].objects;
+
+    const journeyVectors: { [objId: string]: { dx: number; dy: number } } = {};
+    let totalDx = 0;
+    let totalDy = 0;
+    let countMatched = 0;
+
+    Object.keys(startFrameObjects).forEach(objId => {
+      const startObj = startFrameObjects[objId];
+      const endObj = endFrameObjects[objId];
+      if (startObj && endObj) {
+        const dx = endObj.transform.x - startObj.transform.x;
+        const dy = endObj.transform.y - startObj.transform.y;
+        journeyVectors[objId] = { dx, dy };
+        totalDx += dx;
+        totalDy += dy;
+        countMatched++;
+      }
+    });
+
+    const avgDx = countMatched > 0 ? totalDx / countMatched : 0;
+    const avgDy = countMatched > 0 ? totalDy / countMatched : 0;
+
+    const newFrames: Frame[] = [];
+
+    for (let i = 0; i < F; i++) {
+      const rawT = i / (F - 1);
+      
+      let t = rawT;
+      if (easeType === 'easeIn') {
+        t = rawT * rawT;
+      } else if (easeType === 'easeOut') {
+        t = rawT * (2 - rawT);
+      } else if (easeType === 'easeInOut') {
+        t = rawT < 0.5 ? 2 * rawT * rawT : -1 + (4 - 2 * rawT) * rawT;
+      }
+
+      const refIdx = refStart + (i % M);
+      const refObjects = frames[refIdx].objects;
+
+      const frameObjects: { [objId: string]: any } = {};
+
+      Object.keys(refObjects).forEach(objId => {
+        const refObj = refObjects[objId];
+        if (!refObj) return;
+
+        const jVec = journeyVectors[objId] || { dx: avgDx, dy: avgDy };
+
+        const translatedTransform = {
+          ...refObj.transform,
+          x: Number((refObj.transform.x + t * jVec.dx).toFixed(2)),
+          y: Number((refObj.transform.y + t * jVec.dy).toFixed(2))
+        };
+
+        frameObjects[objId] = {
+          ...JSON.parse(JSON.stringify(refObj)),
+          transform: translatedTransform
+        };
+      });
+
+      newFrames.push({
+        index: i,
+        objects: frameObjects
+      });
+    }
+
+    setFrames(newFrames);
+    setObjects(JSON.parse(JSON.stringify(newFrames[0].objects)));
+    setCurrentFrameIndex(0);
+    alert(`Successfully generated walk cycle loop with ${F} frames! Poses repeat, and position glides seamlessly to the target location.`);
   };
 
   // Hierarchy Management & Auto-Rigging
@@ -2340,6 +2644,538 @@ export default function RightPanel({
                     </button>
                   </div>
                 )}
+              </div>
+            </div>
+
+            {/* THE REALISM MAKER & ORGANIC MEDIA ENGINE */}
+            {realismSettings && setRealismSettings && (
+              <div id="realism-maker-panel" className="space-y-4 bg-neutral-950/40 p-4 rounded-2xl border border-neutral-800/50 mt-4 animate-fade-in text-xs">
+                <div className="flex items-center justify-between text-[10px] text-amber-400 font-black uppercase tracking-wider border-b border-neutral-800/40 pb-2.5">
+                  <span className="flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
+                    The Realism Maker
+                  </span>
+                  <span className="bg-amber-500/15 text-amber-400 text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase">
+                    Organic Brush v2.0
+                  </span>
+                </div>
+
+                {/* CALLIGRAPHY / AUTOMATIC TAPER */}
+                <div className="space-y-2.5 bg-neutral-900/55 p-3 rounded-xl border border-neutral-850">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-neutral-300 font-black uppercase tracking-wider">
+                      ✒️ Calligraphy Auto-Taper
+                    </span>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={realismSettings.autoTaperEnabled}
+                        onChange={(e) => setRealismSettings(prev => ({ ...prev, autoTaperEnabled: e.target.checked }))}
+                        className="sr-only peer"
+                      />
+                      <div className="w-8 h-4 bg-neutral-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-neutral-400 after:border-neutral-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-amber-500 peer-checked:after:bg-neutral-950"></div>
+                    </label>
+                  </div>
+                  <p className="text-[10px] text-neutral-400 font-medium leading-relaxed">
+                    Tapers line-ends automatically, and dynamically thins stroke thickness in response to stylus velocity.
+                  </p>
+
+                  {realismSettings.autoTaperEnabled && (
+                    <div className="space-y-2 pt-1">
+                      {/* Max Thickness */}
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[10px]">
+                          <span className="text-neutral-400 font-bold">Max Brush Thickness:</span>
+                          <span className="text-amber-400 font-black">{realismSettings.maxThickness}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="3"
+                          max="25"
+                          step="0.5"
+                          value={realismSettings.maxThickness}
+                          onChange={(e) => setRealismSettings(prev => ({ ...prev, maxThickness: parseFloat(e.target.value) }))}
+                          className="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                        />
+                      </div>
+
+                      {/* Min Thickness */}
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[10px]">
+                          <span className="text-neutral-400 font-bold">Min Taper Thickness:</span>
+                          <span className="text-amber-400 font-black">{realismSettings.minThickness}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0.5"
+                          max="5"
+                          step="0.1"
+                          value={realismSettings.minThickness}
+                          onChange={(e) => setRealismSettings(prev => ({ ...prev, minThickness: parseFloat(e.target.value) }))}
+                          className="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                        />
+                      </div>
+
+                      {/* Thinning Factor */}
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[10px]">
+                          <span className="text-neutral-400 font-bold">Speed Thinning Sensitivity:</span>
+                          <span className="text-amber-400 font-black">{realismSettings.thinningFactor}x</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0.05"
+                          max="1.0"
+                          step="0.05"
+                          value={realismSettings.thinningFactor}
+                          onChange={(e) => setRealismSettings(prev => ({ ...prev, thinningFactor: parseFloat(e.target.value) }))}
+                          className="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* PROCEDURAL 2.5D SHADING */}
+                <div className="space-y-2.5 bg-neutral-900/55 p-3 rounded-xl border border-neutral-850">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-neutral-300 font-black uppercase tracking-wider">
+                      ⛰️ Cylinder Auto-Shading
+                    </span>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={realismSettings.autoShadingEnabled}
+                        onChange={(e) => setRealismSettings(prev => ({ ...prev, autoShadingEnabled: e.target.checked }))}
+                        className="sr-only peer"
+                      />
+                      <div className="w-8 h-4 bg-neutral-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-neutral-400 after:border-neutral-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-amber-500 peer-checked:after:bg-neutral-950"></div>
+                    </label>
+                  </div>
+                  <p className="text-[10px] text-neutral-400 font-medium leading-relaxed">
+                    Instantly generates light highlights and shadow boundaries perpendicular to stroke direction for 3D realism.
+                  </p>
+
+                  {realismSettings.autoShadingEnabled && (
+                    <div className="space-y-2 pt-1">
+                      {/* Light Angle */}
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[10px]">
+                          <span className="text-neutral-400 font-bold">Virtual Light Source Angle:</span>
+                          <span className="text-amber-400 font-black">{realismSettings.shadingLightAngle}°</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="360"
+                          step="5"
+                          value={realismSettings.shadingLightAngle}
+                          onChange={(e) => setRealismSettings(prev => ({ ...prev, shadingLightAngle: parseInt(e.target.value) }))}
+                          className="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                        />
+                      </div>
+
+                      {/* Highlight Opacity */}
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[10px]">
+                          <span className="text-neutral-400 font-bold">Highlight Volume (White):</span>
+                          <span className="text-amber-400 font-black">{Math.round(realismSettings.shadingHighlightOpacity * 100)}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0.0"
+                          max="0.8"
+                          step="0.05"
+                          value={realismSettings.shadingHighlightOpacity}
+                          onChange={(e) => setRealismSettings(prev => ({ ...prev, shadingHighlightOpacity: parseFloat(e.target.value) }))}
+                          className="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                        />
+                      </div>
+
+                      {/* Shadow Opacity */}
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[10px]">
+                          <span className="text-neutral-400 font-bold">Shadow Depth (Black):</span>
+                          <span className="text-amber-400 font-black">{Math.round(realismSettings.shadingShadowOpacity * 100)}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0.0"
+                          max="0.8"
+                          step="0.05"
+                          value={realismSettings.shadingShadowOpacity}
+                          onChange={(e) => setRealismSettings(prev => ({ ...prev, shadingShadowOpacity: parseFloat(e.target.value) }))}
+                          className="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* ORGANIC ENGINE: JITTER & TEXTURE & WET BLEED */}
+                <div className="space-y-2.5 bg-neutral-900/55 p-3 rounded-xl border border-neutral-850">
+                  <span className="text-[10px] text-neutral-300 font-black uppercase tracking-wider block mb-1">
+                    🎨 Organic Media Engine
+                  </span>
+
+                  {/* Micro-Jitter */}
+                  <div className="space-y-1.5 border-b border-neutral-850 pb-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-neutral-400 font-bold">Human Hand Simulator (Jitter)</span>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={realismSettings.microJitterEnabled}
+                          onChange={(e) => setRealismSettings(prev => ({ ...prev, microJitterEnabled: e.target.checked }))}
+                          className="sr-only peer"
+                        />
+                        <div className="w-8 h-4 bg-neutral-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-neutral-400 after:border-neutral-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-amber-500 peer-checked:after:bg-neutral-950"></div>
+                      </label>
+                    </div>
+                    {realismSettings.microJitterEnabled && (
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[9px]">
+                          <span className="text-neutral-500">Tremor Amplitude:</span>
+                          <span className="text-amber-400 font-bold">{realismSettings.microJitterAmount}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0.5"
+                          max="5.0"
+                          step="0.1"
+                          value={realismSettings.microJitterAmount}
+                          onChange={(e) => setRealismSettings(prev => ({ ...prev, microJitterAmount: parseFloat(e.target.value) }))}
+                          className="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Paper Grain */}
+                  <div className="space-y-1.5 border-b border-neutral-850 pb-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-neutral-400 font-bold">Procedural Paper Grain</span>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={realismSettings.paperGrainEnabled}
+                          onChange={(e) => setRealismSettings(prev => ({ ...prev, paperGrainEnabled: e.target.checked }))}
+                          className="sr-only peer"
+                        />
+                        <div className="w-8 h-4 bg-neutral-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-neutral-400 after:border-neutral-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-amber-500 peer-checked:after:bg-neutral-950"></div>
+                      </label>
+                    </div>
+                    {realismSettings.paperGrainEnabled && (
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[9px]">
+                          <span className="text-neutral-500">Texture Contrast/Intensity:</span>
+                          <span className="text-amber-400 font-bold">{Math.round(realismSettings.paperGrainIntensity * 100)}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0.1"
+                          max="0.8"
+                          step="0.05"
+                          value={realismSettings.paperGrainIntensity}
+                          onChange={(e) => setRealismSettings(prev => ({ ...prev, paperGrainIntensity: parseFloat(e.target.value) }))}
+                          className="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Ink Bleed */}
+                  <div className="space-y-1.5 pb-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-neutral-400 font-bold">Wet Smart Ink Bleed</span>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={realismSettings.inkBleedEnabled}
+                          onChange={(e) => setRealismSettings(prev => ({ ...prev, inkBleedEnabled: e.target.checked }))}
+                          className="sr-only peer"
+                        />
+                        <div className="w-8 h-4 bg-neutral-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-neutral-400 after:border-neutral-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-amber-500 peer-checked:after:bg-neutral-950"></div>
+                      </label>
+                    </div>
+                    {realismSettings.inkBleedEnabled && (
+                      <div className="space-y-2 pt-1">
+                        {/* Blur Radius */}
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[9px]">
+                            <span className="text-neutral-500">Wet Spread (Blur):</span>
+                            <span className="text-amber-400 font-bold">{realismSettings.inkBleedBlur}px</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="1"
+                            max="8"
+                            step="1"
+                            value={realismSettings.inkBleedBlur}
+                            onChange={(e) => setRealismSettings(prev => ({ ...prev, inkBleedBlur: parseInt(e.target.value) }))}
+                            className="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                          />
+                        </div>
+
+                        {/* Opacity */}
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[9px]">
+                            <span className="text-neutral-500">Halo Transparency:</span>
+                            <span className="text-amber-400 font-bold">{Math.round(realismSettings.inkBleedOpacity * 100)}%</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="0.1"
+                            max="0.8"
+                            step="0.05"
+                            value={realismSettings.inkBleedOpacity}
+                            onChange={(e) => setRealismSettings(prev => ({ ...prev, inkBleedOpacity: parseFloat(e.target.value) }))}
+                            className="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                          />
+                        </div>
+
+                        {/* Width Offset */}
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[9px]">
+                            <span className="text-neutral-500">Bleed Offset Width:</span>
+                            <span className="text-amber-400 font-bold">+{realismSettings.inkBleedWidthOffset}px</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="2"
+                            max="15"
+                            step="1"
+                            value={realismSettings.inkBleedWidthOffset}
+                            onChange={(e) => setRealismSettings(prev => ({ ...prev, inkBleedWidthOffset: parseInt(e.target.value) }))}
+                            className="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* AI SMOOTH MOTION & LOOP GENERATOR PANEL */}
+            <div id="ai-smooth-motion-panel" className="space-y-4 bg-neutral-950/40 p-4 rounded-2xl border border-neutral-800/50 mt-4 animate-fade-in">
+              <div className="flex items-center justify-between text-[10px] text-amber-400 font-black uppercase tracking-wider font-black border-b border-neutral-800/40 pb-2.5">
+                <span className="flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
+                  AI Smooth Motion Generator
+                </span>
+                <span className="bg-amber-500/15 text-amber-400 text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase">
+                  Advanced Tweening
+                </span>
+              </div>
+
+              <div className="space-y-3.5 text-xs">
+                <p className="text-[11px] text-neutral-400 leading-relaxed font-medium">
+                  Convert a few reference frames into a completed high-framerate animation. Works for rigged limbs, shape morphing, colors, and opacities!
+                </p>
+
+                {/* Segmented Mode Selector */}
+                <div id="gen-mode-selector" className="grid grid-cols-2 gap-1.5 bg-neutral-950 p-1 rounded-xl border border-neutral-800/60">
+                  <button
+                    id="btn-mode-single"
+                    type="button"
+                    onClick={() => setAnimationMode('single')}
+                    className={`py-1.5 px-2 text-[10px] font-black uppercase rounded-lg transition-all cursor-pointer ${
+                      animationMode === 'single'
+                        ? 'bg-amber-500 text-neutral-950 font-black shadow-sm'
+                        : 'text-neutral-400 hover:text-white'
+                    }`}
+                  >
+                    Single-Step Tween
+                  </button>
+                  <button
+                    id="btn-mode-multi"
+                    type="button"
+                    onClick={() => setAnimationMode('multi')}
+                    className={`py-1.5 px-2 text-[10px] font-black uppercase rounded-lg transition-all cursor-pointer ${
+                      animationMode === 'multi'
+                        ? 'bg-amber-500 text-neutral-950 font-black shadow-sm'
+                        : 'text-neutral-400 hover:text-white'
+                    }`}
+                  >
+                    Walk Cycle & Loop
+                  </button>
+                </div>
+
+                {/* Mode-specific Fields */}
+                {animationMode === 'single' ? (
+                  <div id="single-mode-fields" className="space-y-2.5 bg-neutral-900/50 p-3 rounded-xl border border-neutral-800/40">
+                    <span className="text-[9px] text-amber-400 font-black uppercase block pb-1 border-b border-neutral-800/20">
+                      Single-Step Tween References
+                    </span>
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-neutral-400 block font-bold">Start Frame:</label>
+                        <select
+                          id="select-single-start"
+                          value={singleStartFrame}
+                          onChange={(e) => setSingleStartFrame(Number(e.target.value))}
+                          className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-2 py-1 text-xs text-white outline-none font-bold"
+                        >
+                          {frames.map(f => (
+                            <option key={f.index} value={f.index}>Frame {f.index + 1}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-neutral-400 block font-bold">End Frame:</label>
+                        <select
+                          id="select-single-end"
+                          value={singleEndFrame}
+                          onChange={(e) => setSingleEndFrame(Number(e.target.value))}
+                          className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-2 py-1 text-xs text-white outline-none font-bold"
+                        >
+                          {frames.map(f => (
+                            <option key={f.index} value={f.index}>Frame {f.index + 1}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div id="multi-mode-fields" className="space-y-3 bg-neutral-900/50 p-3 rounded-xl border border-neutral-800/40">
+                    <span className="text-[9px] text-amber-400 font-black uppercase block pb-1 border-b border-neutral-800/20">
+                      Loop & Walk Cycle Reference Configuration
+                    </span>
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-neutral-400 block font-bold">Ref Start (Pose):</label>
+                        <select
+                          id="select-multi-ref-start"
+                          value={multiRefStartFrame}
+                          onChange={(e) => setMultiRefStartFrame(Number(e.target.value))}
+                          className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-2 py-1 text-xs text-white outline-none font-bold"
+                        >
+                          {frames.map(f => (
+                            <option key={f.index} value={f.index}>Frame {f.index + 1}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-neutral-400 block font-bold">Ref End (Pose):</label>
+                        <select
+                          id="select-multi-ref-end"
+                          value={multiRefEndFrame}
+                          onChange={(e) => setMultiRefEndFrame(Number(e.target.value))}
+                          className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-2 py-1 text-xs text-white outline-none font-bold"
+                        >
+                          {frames.map(f => (
+                            <option key={f.index} value={f.index}>Frame {f.index + 1}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1 pt-1.5 border-t border-neutral-800/20">
+                      <label className="text-[10px] text-neutral-400 block font-bold">Journey Target End-Position Frame:</label>
+                      <select
+                        id="select-multi-end-pos"
+                        value={multiEndPosFrame}
+                        onChange={(e) => setMultiEndPosFrame(Number(e.target.value))}
+                        className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none font-bold"
+                      >
+                        {frames.map(f => (
+                          <option key={f.index} value={f.index}>Frame {f.index + 1} (Location Marker)</option>
+                        ))}
+                      </select>
+                      <p className="text-[9px] text-neutral-500 pt-0.5 leading-normal">
+                        Character glides from initial pos in Ref Start Frame to target pos in End-Position Frame while repeating the cycle.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Configuration Controls */}
+                <div id="generator-shared-configs" className="space-y-3 bg-neutral-900/35 p-3 rounded-xl border border-neutral-800/30">
+                  <span className="text-[9px] text-neutral-400 font-black uppercase block pb-1 border-b border-neutral-800/20">
+                    Timing & Easing Curve Settings
+                  </span>
+
+                  {/* Duration Slider */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-[10px]">
+                      <span className="text-neutral-400 font-bold">Animation Duration:</span>
+                      <span className="text-amber-400 font-black">{durationSeconds} Seconds</span>
+                    </div>
+                    <input
+                      id="input-duration-seconds"
+                      type="range"
+                      min="1"
+                      max="30"
+                      step="1"
+                      value={durationSeconds}
+                      onChange={(e) => setDurationSeconds(Number(e.target.value))}
+                      className="w-full accent-amber-500 cursor-pointer"
+                    />
+                    <div className="flex items-center justify-between text-[9px] text-neutral-500">
+                      <span>1s</span>
+                      <span>Total: {durationSeconds * fps} frames</span>
+                      <span>30s</span>
+                    </div>
+                  </div>
+
+                  {/* FPS selection dropdown */}
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div className="space-y-1">
+                      <label className="text-[10px] text-neutral-400 block font-bold">Framerate (FPS):</label>
+                      <select
+                        id="select-generator-fps"
+                        value={fps}
+                        onChange={(e) => setFps(Number(e.target.value))}
+                        className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-2 py-1 text-xs text-white outline-none font-bold cursor-pointer"
+                      >
+                        <option value="12">12 FPS</option>
+                        <option value="24">24 FPS</option>
+                        <option value="30">30 FPS (Standard)</option>
+                        <option value="60">60 FPS (Ultra Smooth)</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] text-neutral-400 block font-bold">Easing Curve:</label>
+                      <select
+                        id="select-generator-easing"
+                        value={easeType}
+                        onChange={(e) => setEaseType(e.target.value as any)}
+                        className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-2 py-1 text-xs text-white outline-none font-bold cursor-pointer"
+                      >
+                        <option value="linear">Linear (Uniform)</option>
+                        <option value="easeIn">Ease In (Accelerate)</option>
+                        <option value="easeOut">Ease Out (Decelerate)</option>
+                        <option value="easeInOut">Ease In Out (Smooth)</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Generate / Action Buttons */}
+                <div id="generator-action-container" className="space-y-2 pt-1.5">
+                  <button
+                    id="btn-trigger-generate"
+                    type="button"
+                    onClick={animationMode === 'single' ? handleGenerateSingleStep : handleGenerateMultiStep}
+                    className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-neutral-950 font-black uppercase text-xs rounded-xl tracking-wider shadow-lg shadow-amber-500/10 transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-[0.98]"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 animate-pulse" />
+                    ⚡ Generate Completed Animation
+                  </button>
+
+                  {hasBackup && (
+                    <button
+                      id="btn-trigger-restore"
+                      type="button"
+                      onClick={handleRestoreBackup}
+                      className="w-full py-2 bg-neutral-900 hover:bg-neutral-850 border border-neutral-800 text-neutral-400 hover:text-amber-400 font-bold rounded-xl text-[10px] uppercase tracking-wide transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                    >
+                      ↩ Restore Original Frames
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
 
