@@ -11,7 +11,16 @@ import {
   Settings, 
   Sparkles,
   GitPullRequest,
-  Trash2
+  Trash2,
+  User,
+  UserCheck,
+  LogOut,
+  Clock,
+  AlertTriangle,
+  CheckCircle2,
+  Calendar,
+  Lock,
+  Mail
 } from 'lucide-react';
 import Toolbar from './components/Toolbar';
 import LeftPanel from './components/LeftPanel';
@@ -20,6 +29,13 @@ import CanvasArea from './components/CanvasArea';
 import Timeline from './components/Timeline';
 import { VectorObject, Bone, Layer, Frame, Point, RealismSettings } from './types';
 import { localToWorld, rotatePoint } from './utils/math';
+import { 
+  validateSimpleAuth, 
+  saveUserAnimation, 
+  getUserAnimation, 
+  deleteUserAnimation, 
+  SavedAnimationRecord 
+} from './utils/database';
 
 export default function App() {
   // Topbar Collapse States
@@ -79,6 +95,180 @@ export default function App() {
     inkBleedOpacity: 0.3,
     inkBleedWidthOffset: 6,
   });
+
+  // Simple Authentication & Animation Database states
+  const [currentUser, setCurrentUser] = useState<string | null>(() => {
+    return localStorage.getItem('animastudio_current_user');
+  });
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [savedRecord, setSavedRecord] = useState<SavedAnimationRecord | null>(null);
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [dbNotification, setDbNotification] = useState<{ type: 'success' | 'info' | 'error'; message: string } | null>(null);
+  const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
+
+  // Check user saved records on login or on initial render
+  useEffect(() => {
+    if (currentUser) {
+      const { record, wasDeleted } = getUserAnimation(currentUser);
+      if (wasDeleted) {
+        setSavedRecord(null);
+        setDbNotification({
+          type: 'info',
+          message: 'Notice: Your previously saved animation was deleted automatically because it was more than 1 day old.'
+        });
+        setTimeout(() => setDbNotification(null), 8000);
+      } else if (record) {
+        setSavedRecord(record);
+      } else {
+        setSavedRecord(null);
+      }
+    } else {
+      setSavedRecord(null);
+    }
+  }, [currentUser]);
+
+  // Periodic age-check (runs every 10 seconds to auto-expire if the page stays open)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (currentUser && savedRecord) {
+        const { record, wasDeleted } = getUserAnimation(currentUser);
+        if (wasDeleted) {
+          setSavedRecord(null);
+          setDbNotification({
+            type: 'info',
+            message: 'Your saved animation has just reached the 1-day threshold and was deleted.'
+          });
+          setTimeout(() => setDbNotification(null), 6000);
+        }
+      }
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [currentUser, savedRecord]);
+
+  const handleSaveToDatabase = () => {
+    if (!currentUser) {
+      setIsAuthModalOpen(true);
+      return;
+    }
+
+    try {
+      const record = saveUserAnimation(currentUser, {
+        fps,
+        layers,
+        objects,
+        frames,
+        bones,
+      });
+      setSavedRecord(record);
+      setDbNotification({
+        type: 'success',
+        message: 'Successfully saved current workspace animation to database!'
+      });
+      setTimeout(() => setDbNotification(null), 4000);
+    } catch (e) {
+      setDbNotification({
+        type: 'error',
+        message: 'Failed to save to database.'
+      });
+      setTimeout(() => setDbNotification(null), 4000);
+    }
+  };
+
+  const handleLoadFromDatabase = () => {
+    if (!currentUser || !savedRecord) return;
+
+    // Run age check first
+    const { record, wasDeleted } = getUserAnimation(currentUser);
+    if (wasDeleted) {
+      setSavedRecord(null);
+      setDbNotification({
+        type: 'error',
+        message: 'Unable to load: Your saved animation expired (older than 1 day) and was deleted.'
+      });
+      setTimeout(() => setDbNotification(null), 6000);
+      return;
+    }
+
+    if (record) {
+      historyPush();
+      if (record.objects) setObjects(JSON.parse(JSON.stringify(record.objects)));
+      if (record.bones) setBones(JSON.parse(JSON.stringify(record.bones)));
+      if (record.frames) setFrames(JSON.parse(JSON.stringify(record.frames)));
+      if (record.layers) setLayers(JSON.parse(JSON.stringify(record.layers)));
+      if (record.fps) setFps(record.fps);
+      
+      setCurrentFrameIndex(0);
+      setSelectedObjectId(null);
+
+      setDbNotification({
+        type: 'success',
+        message: 'Successfully restored saved animation from the database!'
+      });
+      setTimeout(() => setDbNotification(null), 4000);
+    }
+  };
+
+  const handleAuthSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+
+    const res = validateSimpleAuth(authEmail, authPassword);
+    if (res.success) {
+      const normalizedEmail = authEmail.trim().toLowerCase();
+      localStorage.setItem('animastudio_current_user', normalizedEmail);
+      setCurrentUser(normalizedEmail);
+      setIsAuthModalOpen(false);
+      setAuthPassword('');
+      
+      const { record, wasDeleted } = getUserAnimation(normalizedEmail);
+      if (record) {
+        setSavedRecord(record);
+        setDbNotification({
+          type: 'success',
+          message: `Logged in as ${normalizedEmail}. Found your saved animation!`
+        });
+      } else if (wasDeleted) {
+        setDbNotification({
+          type: 'info',
+          message: `Logged in as ${normalizedEmail}. Your previous animation had expired and was auto-deleted.`
+        });
+      } else {
+        setDbNotification({
+          type: 'success',
+          message: `Logged in as ${normalizedEmail}!`
+        });
+      }
+      setTimeout(() => setDbNotification(null), 5000);
+    } else {
+      setAuthError(res.message);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('animastudio_current_user');
+    setCurrentUser(null);
+    setSavedRecord(null);
+    setIsProfileDropdownOpen(false);
+    setDbNotification({
+      type: 'info',
+      message: 'Logged out successfully.'
+    });
+    setTimeout(() => setDbNotification(null), 3000);
+  };
+
+  const handleDeleteSavedAnimation = () => {
+    if (currentUser) {
+      deleteUserAnimation(currentUser);
+      setSavedRecord(null);
+      setDbNotification({
+        type: 'info',
+        message: 'Deleted saved animation from database.'
+      });
+      setTimeout(() => setDbNotification(null), 3000);
+    }
+  };
 
   // Ref to track the currently loaded frame index to prevent race conditions & update loops
   const loadedFrameIndexRef = useRef<number>(0);
@@ -796,7 +986,7 @@ export default function App() {
           </button>
         </div>
 
-        {/* Right Actions: Import, Export, Record */}
+        {/* Right Actions: Import, Export, Record, Database */}
         <div className="flex items-center gap-2">
           {/* Upload PNG */}
           <label className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 font-black text-xs cursor-pointer text-neutral-300 hover:text-white transition-all">
@@ -813,7 +1003,7 @@ export default function App() {
           <div className="w-[1px] h-6 bg-neutral-800 mx-1"></div>
 
           {/* Import / Export JSON */}
-          <label className="p-2 rounded-xl bg-neutral-850 hover:bg-neutral-800 text-neutral-400 hover:text-white border border-neutral-800 cursor-pointer transition-colors">
+          <label className="p-2 rounded-xl bg-neutral-850 hover:bg-neutral-800 text-neutral-400 hover:text-white border border-neutral-800 cursor-pointer transition-colors" title="Import JSON">
             <Plus className="w-4 h-4" />
             <input
               type="file"
@@ -850,6 +1040,103 @@ export default function App() {
               RECORD MP4 EXPORT
             </button>
           )}
+
+          <div className="w-[1px] h-6 bg-neutral-800 mx-1"></div>
+
+          {/* User Icon Auth Trigger */}
+          <div className="relative" id="user-profile-menu-container">
+            {currentUser ? (
+              <button
+                onClick={() => setIsProfileDropdownOpen(!isProfileDropdownOpen)}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 hover:text-emerald-300 font-bold text-xs transition-colors cursor-pointer select-none"
+                title={`Logged in as ${currentUser}. Click to open database manager.`}
+              >
+                <UserCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span className="max-w-[80px] truncate block">{currentUser.split('@')[0]}</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => setIsAuthModalOpen(true)}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-750 border border-neutral-700 text-neutral-300 hover:text-white font-bold text-xs transition-colors cursor-pointer select-none"
+                title="Guest Mode. Click here to login to save animations."
+              >
+                <User className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+                <span>LOGIN</span>
+              </button>
+            )}
+
+            {/* Profile Dropdown / Saved Animation manager popup */}
+            {currentUser && isProfileDropdownOpen && (
+              <div className="absolute right-0 mt-2.5 w-72 bg-neutral-900 border border-neutral-800 rounded-2xl shadow-2xl p-4 z-50 text-xs space-y-3.5 animate-fade-in text-neutral-200">
+                <div className="flex items-center justify-between border-b border-neutral-800 pb-2">
+                  <span className="font-extrabold text-neutral-400 uppercase tracking-wider text-[10px]">Your Account</span>
+                  <button 
+                    onClick={handleLogout}
+                    className="flex items-center gap-1.5 text-rose-400 hover:text-rose-300 font-extrabold uppercase text-[9px] bg-rose-500/10 hover:bg-rose-500/20 px-2 py-1 rounded-lg transition-all border border-rose-500/15"
+                  >
+                    <LogOut className="w-3 h-3" />
+                    Logout
+                  </button>
+                </div>
+
+                <div className="space-y-1">
+                  <span className="text-neutral-500 block font-bold text-[9px] uppercase">Logged in as</span>
+                  <span className="text-neutral-200 font-extrabold truncate block text-xs">{currentUser}</span>
+                </div>
+
+                {/* Database Animation Section */}
+                <div className="bg-neutral-950/60 rounded-xl p-3 border border-neutral-800/60 space-y-2.5">
+                  <span className="text-[10px] text-amber-400 font-black uppercase tracking-wider block">💾 Database Storage</span>
+                  
+                  {savedRecord ? (
+                    <div className="space-y-2">
+                      <div className="flex items-start gap-2 text-[11px] text-neutral-300">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-bold text-neutral-200">Saved Animation exists</p>
+                          <div className="flex items-center gap-1 text-[9px] text-neutral-500 font-medium mt-0.5">
+                            <Clock className="w-3 h-3 text-neutral-500" />
+                            <span>Saved: {new Date(savedRecord.savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                          </div>
+                          <div className="text-[9px] text-amber-500 font-black mt-1">
+                            ⚠️ Auto-expires in {Math.max(0, Math.ceil((24 * 60 * 60 * 1000 - (Date.now() - savedRecord.savedAt)) / (60 * 60 * 1000)))} hours
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-1.5 pt-1.5 border-t border-neutral-900">
+                        <button
+                          onClick={handleLoadFromDatabase}
+                          className="px-2.5 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-black text-[10px] text-center transition-all uppercase cursor-pointer"
+                        >
+                          LOAD SAVE
+                        </button>
+                        <button
+                          onClick={handleDeleteSavedAnimation}
+                          className="px-2.5 py-1.5 rounded-lg bg-neutral-850 hover:bg-neutral-800 border border-neutral-800 hover:border-rose-500/30 text-neutral-400 hover:text-rose-400 font-bold text-[10px] text-center transition-all uppercase cursor-pointer"
+                        >
+                          DELETE
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      <p className="text-[10px] text-neutral-500 leading-relaxed">
+                        No animation currently saved in your database slot. Saving stores your objects, layers, and timelines for exactly 1 day.
+                      </p>
+                    </div>
+                  )}
+
+                  <button
+                    onClick={handleSaveToDatabase}
+                    className="w-full py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 text-neutral-950 font-black text-xs text-center hover:shadow-lg hover:shadow-amber-500/10 transition-all uppercase block cursor-pointer"
+                  >
+                    SAVE CURRENT WORK
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
@@ -958,6 +1245,122 @@ export default function App() {
         isPlaying={isPlaying}
         setIsPlaying={setIsPlaying}
       />
+
+      {/* 4. NOTIFICATION & TOAST OVERLAYS */}
+      {dbNotification && (
+        <div 
+          id="db-toast-notification"
+          className={`fixed bottom-24 right-6 z-50 flex items-start gap-3 p-4 rounded-2xl shadow-2xl border text-xs max-w-sm animate-fade-in ${
+            dbNotification.type === 'success' 
+              ? 'bg-emerald-950/95 border-emerald-500/30 text-emerald-300' 
+              : dbNotification.type === 'error'
+              ? 'bg-rose-950/95 border-rose-500/30 text-rose-300'
+              : 'bg-amber-950/95 border-amber-500/30 text-amber-300'
+          }`}
+        >
+          {dbNotification.type === 'success' && <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />}
+          {dbNotification.type === 'error' && <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0" />}
+          {dbNotification.type === 'info' && <Clock className="w-5 h-5 text-amber-400 shrink-0 animate-pulse" />}
+          <div className="space-y-1">
+            <p className="font-extrabold uppercase text-[10px] tracking-wider text-neutral-200">
+              {dbNotification.type === 'success' ? 'Database Success' : dbNotification.type === 'error' ? 'Database Alert' : 'System Notice'}
+            </p>
+            <p className="text-neutral-300 font-medium leading-relaxed">{dbNotification.message}</p>
+          </div>
+        </div>
+      )}
+
+      {/* 5. AUTH MODAL OVERLAY */}
+      {isAuthModalOpen && (
+        <div 
+          id="auth-modal-overlay" 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in"
+        >
+          <div className="w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-2xl shadow-2xl overflow-hidden text-neutral-200">
+            {/* Header */}
+            <div className="p-5 border-b border-neutral-800 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <User className="w-5 h-5 text-amber-500" />
+                <h3 className="font-black uppercase tracking-wider text-sm text-neutral-100">Simple Authentication</h3>
+              </div>
+              <button
+                onClick={() => {
+                  setIsAuthModalOpen(false);
+                  setAuthError('');
+                }}
+                className="text-neutral-500 hover:text-neutral-300 font-black text-sm p-1.5 hover:bg-neutral-800 rounded-lg transition-all"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Form Body */}
+            <form onSubmit={handleAuthSubmit} className="p-5 space-y-4">
+              <p className="text-xs text-neutral-400 leading-relaxed">
+                Log in with your Gmail address to access your private storage slot. Your saved work will be retained securely for exactly <strong className="text-amber-400">1 day (24 hours)</strong> and then auto-deleted.
+              </p>
+
+              {/* Alert info banner */}
+              <div className="bg-amber-500/5 border border-amber-500/10 rounded-xl p-3 text-[10.5px] text-amber-400/90 leading-relaxed space-y-1">
+                <p className="font-bold flex items-center gap-1.5 text-amber-400 text-xs">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                  Simple Credentials Rule:
+                </p>
+                <ul className="list-disc list-inside space-y-0.5 text-neutral-400">
+                  <li>Email must end with <code className="text-amber-400 text-[10px] bg-amber-500/10 px-1 py-0.5 rounded font-mono">@gmail.com</code></li>
+                  <li>Password: <code className="text-amber-400 text-[10px] bg-amber-500/10 px-1 py-0.5 rounded font-mono">123456</code> or <code className="text-amber-400 text-[10px] bg-amber-500/10 px-1 py-0.5 rounded font-mono">password</code></li>
+                </ul>
+              </div>
+
+              {authError && (
+                <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-xl p-3 text-xs font-semibold">
+                  ⚠️ {authError}
+                </div>
+              )}
+
+              {/* Email */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] text-neutral-400 font-black uppercase tracking-wider block">Gmail Address</label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-2.5 w-4 h-4 text-neutral-500" />
+                  <input
+                    type="email"
+                    required
+                    placeholder="yourname@gmail.com"
+                    value={authEmail}
+                    onChange={(e) => setAuthEmail(e.target.value)}
+                    className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 pl-9 pr-4 text-xs font-medium text-white placeholder-neutral-600 outline-none transition-all"
+                  />
+                </div>
+              </div>
+
+              {/* Password */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] text-neutral-400 font-black uppercase tracking-wider block">Password</label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-2.5 w-4 h-4 text-neutral-500" />
+                  <input
+                    type="password"
+                    required
+                    placeholder="••••••"
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 pl-9 pr-4 text-xs font-medium text-white placeholder-neutral-600 outline-none transition-all"
+                  />
+                </div>
+              </div>
+
+              {/* Submit */}
+              <button
+                type="submit"
+                className="w-full py-2.5 mt-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-neutral-950 font-black text-xs text-center transition-all uppercase cursor-pointer"
+              >
+                Log In & Sync
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
