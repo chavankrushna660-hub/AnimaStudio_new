@@ -484,3 +484,18 @@ export function bilinearInterpolate(
 
   return interpolated;
 }
+
+export function findClosestView360(views: any[] | undefined, angle: number): any | null {
+  if (!views || views.length === 0) return null;
+  let closest = views[0];
+  let minDiff = 360;
+  views.forEach(v => {
+    let diff = Math.abs((v.angle - angle + 180) % 360) - 180;
+    diff = Math.abs(diff < -180 ? diff + 360 : diff);
+    if (diff < minDiff) {
+      minDiff = diff;
+      closest = v;
+    }
+  });
+  return closest;
+}

@@ -16,9 +16,12 @@ import {
   Image as ImageIcon,
   Type as TextIcon,
   Sparkles,
-  Layers as LayerIcon
+  Layers as LayerIcon,
+  Box,
+  Upload
 } from 'lucide-react';
 import { VectorObject, Layer } from '../types';
+import { parse3DModelFile } from '../utils/custom3DLoader';
 
 interface LeftPanelProps {
   objects: { [id: string]: VectorObject };
@@ -33,6 +36,20 @@ interface LeftPanelProps {
   open: boolean;
   setOpen: (open: boolean) => void;
   groupObjects: (ids: string[]) => void;
+  activeTool: string;
+  add3DModel?: (type: 'car' | 'character' | 'chair' | 'sphere' | 'box' | 'sword') => void;
+  addCustom3DModel?: (mesh: any, filename: string) => void;
+  add360Object?: (selectedIds: string[]) => void;
+  currentUser: string | null;
+  is360WizardActive?: boolean;
+  draft360Views?: any[];
+  draftAnchorId?: string | null;
+  onionSkinEnabled360?: boolean;
+  setOnionSkinEnabled360?: (val: boolean) => void;
+  start360Wizard?: () => void;
+  addDraft360View?: (drawingId: string, name: string, angle: number) => void;
+  cancel360Wizard?: () => void;
+  compile360Wizard?: (containerName: string) => void;
 }
 
 export default function LeftPanel({
@@ -48,11 +65,66 @@ export default function LeftPanel({
   open,
   setOpen,
   groupObjects,
+  activeTool,
+  add3DModel,
+  addCustom3DModel,
+  add360Object,
+  currentUser,
+  is360WizardActive = false,
+  draft360Views = [],
+  draftAnchorId = null,
+  onionSkinEnabled360 = true,
+  setOnionSkinEnabled360,
+  start360Wizard,
+  addDraft360View,
+  cancel360Wizard,
+  compile360Wizard,
 }: LeftPanelProps) {
   const [expandedNodes, setExpandedNodes] = useState<{ [id: string]: boolean }>({});
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameText, setRenamingText] = useState('');
   const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [isUploadingModel, setIsUploadingModel] = useState(false);
+  const [selected360Ids, setSelected360Ids] = useState<string[]>([]);
+  const [customViewName, setCustomViewName] = useState('Front View');
+  const [customViewAngle, setCustomViewAngle] = useState(0);
+  const [masterContainerName, setMasterContainerName] = useState('Master_360_Character');
+
+  const handleCustom3DUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploadingModel(true);
+    try {
+      const parsed = await parse3DModelFile(file);
+      if (parsed && addCustom3DModel) {
+        addCustom3DModel(parsed, file.name);
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error parsing custom 3D model. Make sure it is a valid OBJ, GLTF, FBX, or ZIP file.');
+    } finally {
+      setIsUploadingModel(false);
+    }
+  };
+
+  const handleCustom3DDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    setIsUploadingModel(true);
+    try {
+      const parsed = await parse3DModelFile(file);
+      if (parsed && addCustom3DModel) {
+        addCustom3DModel(parsed, file.name);
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error parsing custom 3D model. Make sure it is a valid OBJ, GLTF, FBX, or ZIP file.');
+    } finally {
+      setIsUploadingModel(false);
+    }
+  };
+
 
   // Toggle node expansion
   const toggleExpand = (id: string, e: React.MouseEvent) => {
@@ -360,6 +432,291 @@ export default function LeftPanel({
             onDrop={(e) => handleDrop(null, e)}
             className="flex-1 overflow-y-auto p-3 space-y-3 scrollbar-thin select-none"
           >
+            {/* 360° Studio Creation Center */}
+            {activeTool === '360' && (
+              <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-3 space-y-3.5 animate-fade-in shrink-0">
+                <div className="flex items-center gap-1.5 text-amber-400 justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-amber-400 shrink-0 animate-pulse" />
+                    <span className="text-[10px] font-black uppercase tracking-wider">360° Pseudo-3D Studio</span>
+                  </div>
+                </div>
+
+                {!is360WizardActive ? (
+                  <div className="space-y-3">
+                    <p className="text-[10px] text-neutral-400 font-medium leading-normal">
+                      Turn standard 2D layers into fully rotating characters. Select drawings manually or use our smart step-by-step drawing wizard!
+                    </p>
+
+                    {/* Interactive Wizard Start */}
+                    <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-2.5 text-center space-y-2">
+                      <span className="text-[9px] text-amber-400 font-bold block">⭐ Interactive Co-Location Wizard</span>
+                      <p className="text-[9px] text-neutral-400 leading-snug">
+                        Draw your viewpoints (Front, Side, Back, etc.) one by one at the exact same spot. Wizard hides previous drawings and provides <b>onion skin guides</b> automatically!
+                      </p>
+                      <button
+                        onClick={() => {
+                          if (start360Wizard) {
+                            start360Wizard();
+                            setCustomViewName('Front View');
+                            setCustomViewAngle(0);
+                          }
+                        }}
+                        className="w-full bg-amber-500 hover:bg-amber-600 text-neutral-950 text-[10px] font-black py-1.5 rounded-lg uppercase tracking-wider transition-all cursor-pointer shadow-md"
+                      >
+                        🚀 Launch Drawing Wizard
+                      </button>
+                    </div>
+
+                    <div className="h-[1px] bg-neutral-850 my-2" />
+
+                    {/* Classic Manual Selection Compile Option as Fallback */}
+                    <div className="space-y-2">
+                      <span className="text-[9px] text-neutral-500 font-bold block">Option B: Classic Bulk Compiler</span>
+                      {/* Available Drawings */}
+                      <div className="space-y-1.5">
+                        <span className="text-[8px] text-neutral-500 font-black uppercase tracking-widest block">Available 2D Drawings</span>
+                        <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
+                          {Object.values(objects)
+                            .filter(obj => obj.type !== '360_container' && obj.type !== '3d')
+                            .map(obj => {
+                              const isChecked = selected360Ids.includes(obj.id);
+                              return (
+                                <div 
+                                  key={obj.id}
+                                  onClick={() => {
+                                    if (isChecked) {
+                                      setSelected360Ids(selected360Ids.filter(id => id !== obj.id));
+                                    } else {
+                                      setSelected360Ids([...selected360Ids, obj.id]);
+                                    }
+                                  }}
+                                  className={`flex items-center gap-2 p-1.5 rounded-xl text-xs cursor-pointer border transition-all ${
+                                    isChecked 
+                                      ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' 
+                                      : 'bg-neutral-950 border-neutral-850 text-neutral-400 hover:text-neutral-200'
+                                  }`}
+                                >
+                                  <input 
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    readOnly
+                                    className="accent-amber-500 rounded border-neutral-800 scale-90"
+                                  />
+                                  <span className="font-bold truncate text-[11px]">{obj.name}</span>
+                                </div>
+                              );
+                            })
+                          }
+                          {Object.values(objects).filter(obj => obj.type !== '360_container' && obj.type !== '3d').length === 0 && (
+                            <div className="text-[9px] text-neutral-500 font-medium text-center py-4 bg-neutral-950 border border-neutral-900 rounded-xl">
+                              No 2D drawings found. Draw some elements first!
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Build Button */}
+                      <button
+                        onClick={() => {
+                          if (selected360Ids.length === 0) {
+                            alert("Please select at least one drawing.");
+                            return;
+                          }
+                          if (add360Object) {
+                            add360Object(selected360Ids);
+                            setSelected360Ids([]);
+                          }
+                        }}
+                        className="w-full bg-neutral-800 hover:bg-neutral-700 text-white font-bold py-1.5 rounded-lg text-xs uppercase tracking-wider transition-all active:scale-95 cursor-pointer"
+                      >
+                        Compile Selected ({selected360Ids.length})
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {/* Active Wizard Flow */}
+                    <div className="bg-amber-500/20 border border-amber-500/40 rounded-xl p-2.5 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-amber-300 font-bold flex items-center gap-1">
+                          <span className="relative flex h-2 w-2">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                          </span>
+                          WIZARD STEP 1: ADD VIEW
+                        </span>
+                        <button 
+                          onClick={cancel360Wizard}
+                          className="text-[9px] text-neutral-400 hover:text-white underline cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+
+                      {selectedObjectId && objects[selectedObjectId] && objects[selectedObjectId].type !== '360_container' && objects[selectedObjectId].type !== '3d' ? (
+                        <div className="space-y-2.5">
+                          <div className="p-2 bg-neutral-950 border border-neutral-850 rounded-lg text-[10px] text-white">
+                            Selected Drawing: <b className="text-amber-400">{objects[selectedObjectId].name}</b>
+                          </div>
+
+                          {/* View Name configuration */}
+                          <div className="space-y-1">
+                            <label className="text-[8px] text-neutral-400 font-extrabold uppercase tracking-widest block">Viewpoint Custom Name</label>
+                            <input 
+                              type="text"
+                              value={customViewName}
+                              onChange={(e) => setCustomViewName(e.target.value)}
+                              className="w-full bg-neutral-950 border border-neutral-800 text-white rounded-lg p-1 text-[11px] font-bold focus:border-amber-500/50 focus:outline-none"
+                            />
+                            {/* Preset Buttons */}
+                            <div className="flex flex-wrap gap-1">
+                              {[
+                                { n: 'Front View', a: 0 },
+                                { n: 'Right View', a: 90 },
+                                { n: 'Back View', a: 180 },
+                                { n: 'Left View', a: 270 }
+                              ].map(p => (
+                                <button
+                                  key={p.n}
+                                  onClick={() => {
+                                    setCustomViewName(p.n);
+                                    setCustomViewAngle(p.a);
+                                  }}
+                                  className="bg-neutral-800 hover:bg-neutral-750 text-[9px] font-bold text-neutral-300 hover:text-white px-1.5 py-0.5 rounded cursor-pointer"
+                                >
+                                  {p.n} ({p.a}°)
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Angle slider configuration */}
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-[8px] text-neutral-400 font-extrabold uppercase tracking-widest">
+                              <span>View Angle</span>
+                              <span className="text-amber-400 font-bold">{customViewAngle}°</span>
+                            </div>
+                            <input 
+                              type="range"
+                              min="0"
+                              max="359"
+                              value={customViewAngle}
+                              onChange={(e) => setCustomViewAngle(Number(e.target.value))}
+                              className="w-full accent-amber-500"
+                            />
+                          </div>
+
+                          {/* Register View Trigger */}
+                          <button
+                            onClick={() => {
+                              if (addDraft360View) {
+                                addDraft360View(selectedObjectId, customViewName, customViewAngle);
+                                // Suggest next logical viewpoint!
+                                if (customViewAngle === 0) {
+                                  setCustomViewName('Right View');
+                                  setCustomViewAngle(90);
+                                } else if (customViewAngle === 90) {
+                                  setCustomViewName('Back View');
+                                  setCustomViewAngle(180);
+                                } else if (customViewAngle === 180) {
+                                  setCustomViewName('Left View');
+                                  setCustomViewAngle(270);
+                                } else {
+                                  setCustomViewName(`Angle ${customViewAngle + 45}°`);
+                                  setCustomViewAngle((customViewAngle + 45) % 360);
+                                }
+                                setSelectedObjectId(null); // Unselect so they can draw fresh
+                              }
+                            }}
+                            className="w-full bg-amber-500 hover:bg-amber-600 text-neutral-950 font-black py-1.5 rounded-lg text-[10px] uppercase tracking-wider transition-all cursor-pointer"
+                          >
+                            + Register "{customViewName}"
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="bg-neutral-950 border border-neutral-900 rounded-lg p-2.5 text-center space-y-1.5 text-neutral-400">
+                          <p className="text-[10px] font-bold text-neutral-300">
+                            ✍️ Ready for "{customViewName}" ({customViewAngle}°)
+                          </p>
+                          <p className="text-[9px] leading-relaxed text-neutral-500">
+                            Draw the model at this viewpoint exactly at the same location as previous drawings. Then, select the drawing on the canvas to register it!
+                          </p>
+                          <div className="flex justify-center gap-1.5 mt-1">
+                            <span className="px-2 py-0.5 rounded bg-neutral-900 border border-neutral-800 text-[8px] font-mono text-neutral-500">
+                              Brush/Pen/Upload
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Onion Skinning Toggle */}
+                    <div className="flex items-center justify-between bg-neutral-900/50 border border-neutral-850 rounded-xl p-2 px-3">
+                      <span className="text-[10px] text-neutral-300 font-bold">Onion Skinning (Trace Assist)</span>
+                      <input 
+                        type="checkbox"
+                        checked={onionSkinEnabled360}
+                        onChange={(e) => setOnionSkinEnabled360?.(e.target.checked)}
+                        className="accent-amber-500 scale-110 cursor-pointer"
+                      />
+                    </div>
+
+                    {/* Queue List of Registered Viewpoints */}
+                    <div className="space-y-1">
+                      <span className="text-[8px] text-neutral-500 font-black uppercase tracking-widest block">Registered viewpoints ({draft360Views.length})</span>
+                      <div className="space-y-1 max-h-32 overflow-y-auto pr-1">
+                        {draft360Views.map((view, idx) => (
+                          <div 
+                            key={view.id}
+                            className="flex items-center justify-between p-1.5 rounded-lg bg-neutral-900 border border-neutral-850 text-[10px]"
+                          >
+                            <span className="font-bold text-neutral-300 truncate max-w-[120px]">{view.name}</span>
+                            <span className="font-mono text-amber-400 bg-amber-500/10 px-1 py-0.5 rounded text-[9px]">{view.angle}°</span>
+                          </div>
+                        ))}
+                        {draft360Views.length === 0 && (
+                          <div className="text-[9px] text-neutral-500 text-center py-2 italic">
+                            Waiting for first viewpoint registration...
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Compile step */}
+                    <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-2.5 space-y-2">
+                      <span className="text-[9px] text-neutral-400 font-extrabold uppercase tracking-wider block">STEP 2: COMPILE MASTER OBJECT</span>
+                      <div className="space-y-1">
+                        <label className="text-[8px] text-neutral-500 font-bold uppercase tracking-widest block">Master Object Name</label>
+                        <input 
+                          type="text"
+                          value={masterContainerName}
+                          onChange={(e) => setMasterContainerName(e.target.value)}
+                          className="w-full bg-neutral-950 border border-neutral-800 text-white rounded-lg p-1 text-[11px] font-bold focus:border-amber-500/50 focus:outline-none"
+                        />
+                      </div>
+
+                      <button
+                        onClick={() => {
+                          if (draft360Views.length === 0) {
+                            alert("Please add at least one viewpoint before compiling.");
+                            return;
+                          }
+                          if (compile360Wizard) {
+                            compile360Wizard(masterContainerName);
+                          }
+                        }}
+                        className="w-full bg-amber-500 hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed text-neutral-950 font-black py-2 rounded-lg text-xs uppercase tracking-wider transition-all cursor-pointer shadow-lg shadow-amber-500/10"
+                        disabled={draft360Views.length === 0}
+                      >
+                        💫 Convert to 360° Object ({draft360Views.length} views)
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Tree Section */}
             <div className="space-y-1">
               <div className="text-[10px] text-neutral-500 font-extrabold uppercase tracking-wider mb-2">

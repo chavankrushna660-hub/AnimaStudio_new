@@ -131,10 +131,20 @@ export interface ObjectOverlay {
   blendMode: 'normal' | 'multiply' | 'screen' | 'overlay';
 }
 
+export interface View360 {
+  id: string;
+  name: string;
+  angle: number; // 0 to 360
+  drawingId: string; // The original drawing object ID
+  drawingName?: string; // The original drawing name
+  pivots?: Pivot[];
+  bones?: Bone[];
+}
+
 export interface VectorObject {
   id: string;
   name: string;
-  type: 'stroke' | 'shape' | 'image' | 'text';
+  type: 'stroke' | 'shape' | 'image' | 'text' | '3d' | '360_container';
   points: Point[]; // Boundary points or stroke path
   shapeType?: 'circle' | 'rectangle' | 'triangle' | 'star' | 'line';
   strokeColor: string;
@@ -163,6 +173,25 @@ export interface VectorObject {
   rimLight?: ObjectRimLight;
   overlay?: ObjectOverlay;
   meshState?: MeshState;
+  shape3DType?: 'car' | 'character' | 'chair' | 'sphere' | 'box' | 'sword';
+  transform3D?: {
+    x: number; // 3D Translation X
+    y: number; // 3D Translation Y
+    z: number; // 3D Translation Z (Depth)
+    rx: number; // Euler Rotation X (Pitch)
+    ry: number; // Euler Rotation Y (Yaw)
+    rz: number; // Euler Rotation Z (Roll)
+    sx: number; // Scale X
+    sy: number; // Scale Y
+    sz: number; // Scale Z
+  };
+  vertices3D?: { x: number; y: number; z: number }[]; // Raw local 3D vertices
+  faces3D?: { indices: number[]; fillColor: string; baseColor: string }[]; // Indexed polygonal faces
+  bones3D?: { id: string; name: string; parentId?: string; rx: number; ry: number; rz: number; startVertexIdx: number; endVertexIdx: number }[]; // 3D Kinematics bones
+  views360?: View360[];
+  currentAngle360?: number;
+  activeViewId360?: string;
+  lockAngle360?: boolean;
 }
 
 export interface Layer {

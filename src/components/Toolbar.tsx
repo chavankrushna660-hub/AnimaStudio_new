@@ -18,7 +18,8 @@ import {
   Zap, 
   GitCommit,
   LayoutGrid,
-  Sparkles
+  Sparkles,
+  Box
 } from 'lucide-react';
 
 interface ToolbarProps {
@@ -45,6 +46,7 @@ export default function Toolbar({
     { id: "PIN", name: "Puppet Pin", label: "Puppet Pin (PIN)", icon: PinIcon },
     { id: 'FIL', name: 'Fill', label: 'Fill Bucket (FIL)', icon: PaintBucketIcon },
     { id: 'LSO', name: 'Lasso Fill', label: 'Lasso Color Fill (LSO)', icon: SparklesIcon, desc: 'Draw a lasso region to color/fill specific sub-areas' },
+    { id: '360', name: '360° Studio', label: '360° Pseudo-3D (360)', icon: CompassIcon, desc: 'Create and animate 360-degree pseudo-3D objects' },
     { id: 'SHP', name: 'Shape', label: 'Shapes Tool (SHP)', icon: ShapesIcon },
     { id: 'MSH', name: 'Mesh Wrap', label: 'Geometry Deform (MSH)', icon: CropIcon, desc: 'Deform drawing geometry by dragging individual vertices deeply' },
     { id: 'CON', name: 'Constraint', label: 'Constraints (CON)', icon: AlignCenterIcon },
@@ -130,3 +132,5 @@ function TrendingUpIcon(props: any) { return <Compass {...props} /> }
 function EyedropperIcon(props: any) { return <Pipette {...props} /> }
 function EraserIcon(props: any) { return <Trash2 {...props} /> }
 function SparklesIcon(props: any) { return <Sparkles {...props} /> }
+function BoxIcon(props: any) { return <Box {...props} /> }
+function CompassIcon(props: any) { return <Compass {...props} /> }

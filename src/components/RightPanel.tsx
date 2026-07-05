@@ -21,10 +21,11 @@ import {
   Folder,
   FolderPlus,
   Link,
-  Unlink
+  Unlink,
+  Play
 } from 'lucide-react';
 import { VectorObject, Bone, Layer, Pivot, Transform, Point, Frame, RealismSettings } from '../types';
-import { distance, localToWorld, worldToLocal, calculateBoundingBox, isPointInPolygon } from '../utils/math';
+import { distance, localToWorld, worldToLocal, calculateBoundingBox, isPointInPolygon, findClosestView360 } from '../utils/math';
 
 interface RightPanelProps {
   selectedObject: VectorObject | null;
@@ -1711,6 +1712,637 @@ export default function RightPanel({
                       className="bg-neutral-950 border border-neutral-800 text-xs px-2.5 py-1.5 rounded-xl text-white font-bold w-40 outline-none focus:border-amber-500"
                     />
                   </div>
+
+                  {/* 360° MASTER SLIDER CONTROLLER */}
+                  {selectedObject.type === '360_container' && (
+                    <div className="space-y-4 bg-amber-500/5 p-4 rounded-2xl border border-amber-400/20 shadow-lg shadow-black/20 mt-3 animate-fade-in">
+                      <div className="flex items-center justify-between border-b border-amber-500/10 pb-2.5">
+                        <span className="text-xs font-black uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                          <RotateCw className="w-4 h-4 text-amber-400 animate-spin-slow" />
+                          360° Pseudo-3D Rotation
+                        </span>
+                        <span className="text-[9px] text-amber-500 font-extrabold bg-amber-500/10 px-1.5 py-0.5 rounded uppercase">
+                          360 Master
+                        </span>
+                      </div>
+
+                      <p className="text-[10px] text-neutral-400 leading-normal font-medium">
+                        Drag the master slider to smoothly rotate the pseudo-3D object in 360 degrees. The engine instantly resolves to the closest camera angle.
+                      </p>
+
+                      {/* Rotation Slider */}
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-[10px] text-neutral-400">
+                          <span>360° Camera Yaw</span>
+                          <span className="text-amber-400 font-bold font-mono">{(selectedObject.currentAngle360 ?? 0)}°</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="359"
+                          value={selectedObject.currentAngle360 ?? 0}
+                          disabled={selectedObject.lockAngle360}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value);
+                            updateObject(selectedObject.id, {
+                              currentAngle360: val
+                            });
+                          }}
+                          className={`w-full accent-amber-500 h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer ${selectedObject.lockAngle360 ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        />
+                      </div>
+
+                      {/* Lock & Preview Controls */}
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            updateObject(selectedObject.id, {
+                              lockAngle360: !selectedObject.lockAngle360
+                            });
+                          }}
+                          className={`flex-1 text-[10px] py-1.5 rounded-lg border font-bold flex items-center justify-center gap-1 transition-all ${
+                            selectedObject.lockAngle360 
+                              ? 'bg-red-500/10 border-red-500/35 text-red-400' 
+                              : 'bg-neutral-900 border-neutral-800 text-neutral-300 hover:text-white'
+                          }`}
+                        >
+                          {selectedObject.lockAngle360 ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
+                          {selectedObject.lockAngle360 ? 'Unlock Angle' : 'Lock Angle'}
+                        </button>
+                        
+                        <button
+                          onClick={() => {
+                            // Toggle spin preview
+                            if ((window as any)._spin_timer) {
+                              clearInterval((window as any)._spin_timer);
+                              (window as any)._spin_timer = null;
+                              // Force update
+                              updateObject(selectedObject.id, { _isSpinning: false } as any);
+                            } else {
+                              const timer = setInterval(() => {
+                                const currentObj = objects[selectedObject.id];
+                                if (currentObj) {
+                                  const nextAngle = ((currentObj.currentAngle360 ?? 0) + 3) % 360;
+                                  updateObject(selectedObject.id, { currentAngle360: nextAngle });
+                                }
+                              }, 30);
+                              (window as any)._spin_timer = timer;
+                              updateObject(selectedObject.id, { _isSpinning: true } as any);
+                            }
+                          }}
+                          className={`flex-1 text-[10px] py-1.5 rounded-lg border font-bold flex items-center justify-center gap-1 transition-all ${
+                            (selectedObject as any)._isSpinning
+                              ? 'bg-amber-500 text-black border-amber-500 font-extrabold'
+                              : 'bg-neutral-900 border-neutral-800 text-neutral-300 hover:text-white'
+                          }`}
+                        >
+                          <Play className="w-3.5 h-3.5" />
+                          {(selectedObject as any)._isSpinning ? 'Stop Tour' : 'Preview Tour'}
+                        </button>
+                      </div>
+
+                      {/* Views Management */}
+                      <div className="border-t border-neutral-800/40 pt-3 space-y-3">
+                        <span className="text-[10px] text-neutral-400 block font-black uppercase tracking-wider">Angle View Registry</span>
+                        
+                        {/* List of registered views */}
+                        <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                          {(selectedObject.views360 || []).map((view, idx) => {
+                            const isCurrent = findClosestView360(selectedObject.views360, selectedObject.currentAngle360 ?? 0)?.id === view.id;
+                            return (
+                              <div 
+                                key={view.id} 
+                                onClick={() => {
+                                  updateObject(selectedObject.id, { currentAngle360: view.angle });
+                                }}
+                                className={`flex items-center justify-between p-2 rounded-xl text-xs cursor-pointer border transition-all ${
+                                  isCurrent 
+                                    ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' 
+                                    : 'bg-neutral-950 border-neutral-900 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <div className={`w-1.5 h-1.5 rounded-full ${isCurrent ? 'bg-amber-400 animate-pulse' : 'bg-neutral-700'}`} />
+                                  <span className="font-bold">{view.name}</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[10px] font-mono bg-neutral-900 px-1.5 py-0.5 rounded text-neutral-400">
+                                    {view.angle}°
+                                  </span>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const nextAngle = prompt(`Enter new angle for "${view.name}" (0-359):`, view.angle.toString());
+                                      if (nextAngle !== null) {
+                                        const parsed = parseInt(nextAngle);
+                                        if (!isNaN(parsed)) {
+                                          const updatedViews = (selectedObject.views360 || []).map(v => 
+                                            v.id === view.id ? { ...v, angle: parsed % 360 } : v
+                                          );
+                                          updateObject(selectedObject.id, { views360: updatedViews });
+                                        }
+                                      }
+                                    }}
+                                    className="p-1 text-neutral-500 hover:text-white rounded-md hover:bg-neutral-800 transition-colors"
+                                    title="Edit Angle"
+                                  >
+                                    <Settings className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (confirm(`Remove view "${view.name}"?`)) {
+                                        const updatedViews = (selectedObject.views360 || []).filter(v => v.id !== view.id);
+                                        updateObject(selectedObject.id, { views360: updatedViews });
+                                        // Unhide drawing so the user doesn't lose it
+                                        updateObject(view.drawingId, { isHidden: false });
+                                      }
+                                    }}
+                                    className="p-1 text-red-500 hover:text-red-400 rounded-md hover:bg-red-500/10 transition-colors"
+                                    title="Delete View"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Add View Form */}
+                        <div className="bg-neutral-950 p-2.5 rounded-xl border border-neutral-900 space-y-2">
+                          <span className="text-[9px] font-black uppercase text-neutral-500 block">Link Drawing as View</span>
+                          <div className="flex gap-2">
+                            <select
+                              id="add-360-view-select"
+                              className="bg-neutral-900 border border-neutral-800 rounded-lg text-xs p-1.5 text-neutral-300 outline-none flex-1"
+                            >
+                              <option value="">Select Drawing...</option>
+                              {Object.values(objects)
+                                .filter(obj => obj.id !== selectedObject.id && obj.type !== '360_container')
+                                .map(obj => (
+                                  <option key={obj.id} value={obj.id}>{obj.name}</option>
+                                ))
+                              }
+                            </select>
+                            <input
+                              id="add-360-view-angle"
+                              type="number"
+                              placeholder="Angle"
+                              min="0"
+                              max="359"
+                              className="bg-neutral-900 border border-neutral-800 rounded-lg text-xs p-1.5 text-neutral-300 w-16 outline-none text-center"
+                            />
+                            <button
+                              onClick={() => {
+                                const selEl = document.getElementById('add-360-view-select') as HTMLSelectElement;
+                                const angEl = document.getElementById('add-360-view-angle') as HTMLInputElement;
+                                const drawingId = selEl?.value;
+                                const angle = parseInt(angEl?.value || '0');
+                                if (!drawingId) {
+                                  alert("Please select a drawing first.");
+                                  return;
+                                }
+                                const existingViews = selectedObject.views360 || [];
+                                const newView = {
+                                  id: `view_${Date.now()}`,
+                                  angle: angle % 360,
+                                  drawingId,
+                                  name: objects[drawingId]?.name || `View ${existingViews.length + 1}`,
+                                };
+                                updateObject(selectedObject.id, {
+                                  views360: [...existingViews, newView]
+                                });
+                                // Hide original drawing
+                                updateObject(drawingId, { isHidden: true });
+                                if (selEl) selEl.value = "";
+                                if (angEl) angEl.value = "";
+                              }}
+                              className="bg-amber-500 hover:bg-amber-600 text-black text-xs font-bold px-3 py-1.5 rounded-lg flex items-center justify-center transition-colors cursor-pointer"
+                            >
+                              Add
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 3D PROXY CONTROLLER MATRIX */}
+                  {selectedObject.type === '3d' && selectedObject.transform3D && (
+                    <div className="space-y-4 bg-amber-500/5 p-4 rounded-2xl border border-amber-400/20 shadow-lg shadow-black/20 mt-3 animate-fade-in">
+                      <div className="flex items-center justify-between border-b border-amber-500/10 pb-2.5">
+                        <span className="text-xs font-black uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                          <Layers className="w-4 h-4 text-amber-400" />
+                          3D Proxy Transform Matrix
+                        </span>
+                        <span className="text-[9px] text-amber-500 font-extrabold bg-amber-500/10 px-1.5 py-0.5 rounded uppercase">
+                          {selectedObject.shape3DType}
+                        </span>
+                      </div>
+
+                      <p className="text-[10px] text-neutral-400 leading-normal font-medium">
+                        Manipulate coordinates directly across both 2D and 3D viewport metrics. Changes resolve to the projection layer in real-time.
+                      </p>
+
+                      {/* 3D TRANSLATION (X, Y, Z) */}
+                      <div className="space-y-2.5">
+                        <span className="text-[10px] text-neutral-400 block font-black uppercase tracking-wider">3D Translation</span>
+                        
+                        {/* Translation X */}
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-[10px] text-neutral-400">
+                            <span>Translation X (Horizontal)</span>
+                            <span className="text-amber-400 font-bold font-mono">{selectedObject.transform3D.x}px</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="-500"
+                            max="500"
+                            value={selectedObject.transform3D.x}
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value);
+                              updateObject(selectedObject.id, {
+                                transform3D: { ...selectedObject.transform3D!, x: val }
+                              });
+                            }}
+                            className="w-full accent-amber-500 h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer"
+                          />
+                        </div>
+
+                        {/* Translation Y */}
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-[10px] text-neutral-400">
+                            <span>Translation Y (Vertical)</span>
+                            <span className="text-amber-400 font-bold font-mono">{selectedObject.transform3D.y}px</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="-500"
+                            max="500"
+                            value={selectedObject.transform3D.y}
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value);
+                              updateObject(selectedObject.id, {
+                                transform3D: { ...selectedObject.transform3D!, y: val }
+                              });
+                            }}
+                            className="w-full accent-amber-500 h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer"
+                          />
+                        </div>
+
+                        {/* Translation Z (Depth) */}
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-[10px] text-neutral-400">
+                            <span>Translation Z (Depth Plane)</span>
+                            <span className="text-amber-400 font-bold font-mono">{selectedObject.transform3D.z}px</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="-250"
+                            max="500"
+                            value={selectedObject.transform3D.z}
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value);
+                              updateObject(selectedObject.id, {
+                                transform3D: { ...selectedObject.transform3D!, z: val }
+                              });
+                            }}
+                            className="w-full accent-amber-500 h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer"
+                          />
+                        </div>
+                      </div>
+
+                      {/* 3D EULER ROTATION (X, Y, Z) */}
+                      <div className="space-y-2.5 border-t border-neutral-800/40 pt-3">
+                        <span className="text-[10px] text-neutral-400 block font-black uppercase tracking-wider">3D Euler Rotation (Angles)</span>
+                        
+                        {/* Rotation X (Pitch) */}
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-[10px] text-neutral-400">
+                            <span>Pitch Angle (X Axis)</span>
+                            <span className="text-amber-400 font-bold font-mono">{selectedObject.transform3D.rx}°</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="-180"
+                            max="180"
+                            value={selectedObject.transform3D.rx}
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value);
+                              updateObject(selectedObject.id, {
+                                transform3D: { ...selectedObject.transform3D!, rx: val }
+                              });
+                            }}
+                            className="w-full accent-amber-500 h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer"
+                          />
+                        </div>
+
+                        {/* Rotation Y (Yaw) */}
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-[10px] text-neutral-400">
+                            <span>Yaw Angle (Y Axis)</span>
+                            <span className="text-amber-400 font-bold font-mono">{selectedObject.transform3D.ry}°</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="-180"
+                            max="180"
+                            value={selectedObject.transform3D.ry}
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value);
+                              updateObject(selectedObject.id, {
+                                transform3D: { ...selectedObject.transform3D!, ry: val }
+                              });
+                            }}
+                            className="w-full accent-amber-500 h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer"
+                          />
+                        </div>
+
+                        {/* Rotation Z (Roll) */}
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-[10px] text-neutral-400">
+                            <span>Roll Angle (Z Axis)</span>
+                            <span className="text-amber-400 font-bold font-mono">{selectedObject.transform3D.rz}°</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="-180"
+                            max="180"
+                            value={selectedObject.transform3D.rz}
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value);
+                              updateObject(selectedObject.id, {
+                                transform3D: { ...selectedObject.transform3D!, rz: val }
+                              });
+                            }}
+                            className="w-full accent-amber-500 h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer"
+                          />
+                        </div>
+                      </div>
+
+                      {/* 3D SCALE (X, Y, Z) */}
+                      <div className="space-y-2.5 border-t border-neutral-800/40 pt-3">
+                        <span className="text-[10px] text-neutral-400 block font-black uppercase tracking-wider">3D Mesh Scale Factor</span>
+                        
+                        {/* Scale X */}
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-[10px] text-neutral-400">
+                            <span>Scale X Factor</span>
+                            <span className="text-amber-400 font-bold font-mono">{selectedObject.transform3D.sx}x</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="0.1"
+                            max="4"
+                            step="0.05"
+                            value={selectedObject.transform3D.sx}
+                            onChange={(e) => {
+                              const val = parseFloat(e.target.value);
+                              updateObject(selectedObject.id, {
+                                transform3D: { ...selectedObject.transform3D!, sx: val }
+                              });
+                            }}
+                            className="w-full accent-amber-500 h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer"
+                          />
+                        </div>
+
+                        {/* Scale Y */}
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-[10px] text-neutral-400">
+                            <span>Scale Y Factor</span>
+                            <span className="text-amber-400 font-bold font-mono">{selectedObject.transform3D.sy}x</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="0.1"
+                            max="4"
+                            step="0.05"
+                            value={selectedObject.transform3D.sy}
+                            onChange={(e) => {
+                              const val = parseFloat(e.target.value);
+                              updateObject(selectedObject.id, {
+                                transform3D: { ...selectedObject.transform3D!, sy: val }
+                              });
+                            }}
+                            className="w-full accent-amber-500 h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer"
+                          />
+                        </div>
+
+                        {/* Scale Z */}
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-[10px] text-neutral-400">
+                            <span>Scale Z Factor</span>
+                            <span className="text-amber-400 font-bold font-mono">{selectedObject.transform3D.sz}x</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="0.1"
+                            max="4"
+                            step="0.05"
+                            value={selectedObject.transform3D.sz}
+                            onChange={(e) => {
+                              const val = parseFloat(e.target.value);
+                              updateObject(selectedObject.id, {
+                                transform3D: { ...selectedObject.transform3D!, sz: val }
+                              });
+                            }}
+                            className="w-full accent-amber-500 h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer"
+                          />
+                        </div>
+                      </div>
+
+                      {/* SKELETAL BONE RIGGING STUDIO */}
+                      <div className="space-y-3.5 border-t border-neutral-800/40 pt-3.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] text-amber-400 font-black uppercase tracking-wider flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                            Skeletal Mesh Rigging Studio
+                          </span>
+                          <span className="text-[8px] bg-neutral-800 text-neutral-400 px-1.5 py-0.5 rounded font-bold uppercase">
+                            Single Mesh LBS
+                          </span>
+                        </div>
+
+                        <p className="text-[10px] text-neutral-400 leading-normal font-medium">
+                          Rig your custom single 3D mesh by adding skeletal bones between vertices. Vertices will deform organically around joints based on bones' angles!
+                        </p>
+
+                        {/* List Active Bones */}
+                        <div className="space-y-3">
+                          <span className="text-[9px] text-neutral-400 font-black uppercase block tracking-wider">Active Bone Joints</span>
+                          
+                          {!selectedObject.bones3D || selectedObject.bones3D.length === 0 ? (
+                            <div className="text-center py-4 bg-neutral-950/60 rounded-xl border border-neutral-850 border-dashed text-[10px] font-bold text-neutral-500">
+                              No skeletal bone joints rigged yet. Add bone joints below!
+                            </div>
+                          ) : (
+                            selectedObject.bones3D.map((bone: any, bIdx: number) => (
+                              <div key={bone.id || bIdx} className="bg-neutral-950/80 p-3 rounded-xl border border-neutral-850 space-y-2.5">
+                                <div className="flex items-center justify-between border-b border-neutral-900/60 pb-1.5">
+                                  <span className="text-[10px] font-black text-amber-300 uppercase truncate">
+                                    🦴 {bone.name || `Bone_${bIdx + 1}`}
+                                  </span>
+                                  <span className="text-[8.5px] font-mono text-neutral-500">
+                                    Verts: {bone.startVertexIdx} ➔ {bone.endVertexIdx}
+                                  </span>
+                                </div>
+
+                                {/* Slider for pitch */}
+                                <div className="space-y-1">
+                                  <div className="flex items-center justify-between text-[9px] text-neutral-400">
+                                    <span>Joint Pitch (rx)</span>
+                                    <span className="text-amber-400 font-bold font-mono">{bone.rx}°</span>
+                                  </div>
+                                  <input
+                                    type="range"
+                                    min="-180"
+                                    max="180"
+                                    value={bone.rx || 0}
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value);
+                                      const newBones = [...(selectedObject.bones3D || [])];
+                                      newBones[bIdx] = { ...newBones[bIdx], rx: val };
+                                      updateObject(selectedObject.id, { bones3D: newBones });
+                                    }}
+                                    className="w-full accent-amber-500 h-1 bg-neutral-800 rounded appearance-none cursor-pointer"
+                                  />
+                                </div>
+
+                                {/* Slider for yaw */}
+                                <div className="space-y-1">
+                                  <div className="flex items-center justify-between text-[9px] text-neutral-400">
+                                    <span>Joint Yaw (ry)</span>
+                                    <span className="text-amber-400 font-bold font-mono">{bone.ry || 0}°</span>
+                                  </div>
+                                  <input
+                                    type="range"
+                                    min="-180"
+                                    max="180"
+                                    value={bone.ry || 0}
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value);
+                                      const newBones = [...(selectedObject.bones3D || [])];
+                                      newBones[bIdx] = { ...newBones[bIdx], ry: val };
+                                      updateObject(selectedObject.id, { bones3D: newBones });
+                                    }}
+                                    className="w-full accent-amber-500 h-1 bg-neutral-800 rounded appearance-none cursor-pointer"
+                                  />
+                                </div>
+
+                                {/* Slider for roll */}
+                                <div className="space-y-1">
+                                  <div className="flex items-center justify-between text-[9px] text-neutral-400">
+                                    <span>Joint Roll (rz)</span>
+                                    <span className="text-amber-400 font-bold font-mono">{bone.rz || 0}°</span>
+                                  </div>
+                                  <input
+                                    type="range"
+                                    min="-180"
+                                    max="180"
+                                    value={bone.rz || 0}
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value);
+                                      const newBones = [...(selectedObject.bones3D || [])];
+                                      newBones[bIdx] = { ...newBones[bIdx], rz: val };
+                                      updateObject(selectedObject.id, { bones3D: newBones });
+                                    }}
+                                    className="w-full accent-amber-500 h-1 bg-neutral-800 rounded appearance-none cursor-pointer"
+                                  />
+                                </div>
+
+                                <button
+                                  onClick={() => {
+                                    const newBones = (selectedObject.bones3D || []).filter((_: any, idx: number) => idx !== bIdx);
+                                    updateObject(selectedObject.id, { bones3D: newBones });
+                                  }}
+                                  className="w-full py-1 text-[8.5px] bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 font-black rounded-lg transition-all active:scale-95"
+                                >
+                                  REMOVE BONE
+                                </button>
+                              </div>
+                            ))
+                          )}
+                        </div>
+
+                        {/* Add New Bone Controller */}
+                        <div className="bg-neutral-900/50 p-3 rounded-xl border border-neutral-850 space-y-3">
+                          <span className="text-[9.5px] text-amber-400 font-black uppercase block tracking-wider">
+                            + ADD NEW BONE SEGMENT
+                          </span>
+
+                          {/* Bone Name */}
+                          <div className="space-y-1">
+                            <label className="text-[8.5px] text-neutral-500 font-bold uppercase block">Bone Label / Part Name</label>
+                            <input
+                              type="text"
+                              id="new-bone-name"
+                              placeholder="e.g. Right Arm Joint"
+                              className="w-full px-2.5 py-1.5 bg-neutral-950 border border-neutral-850 rounded-lg text-[10px] font-bold text-neutral-200 outline-none focus:border-amber-500/60"
+                            />
+                          </div>
+
+                          {/* Choose start & end vertices dynamically based on total vertices of model */}
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="space-y-1">
+                              <label className="text-[8px] text-neutral-500 font-bold uppercase block">Start Joint Vert</label>
+                              <input
+                                type="number"
+                                id="new-bone-start"
+                                min="0"
+                                max={Math.max(0, (selectedObject.vertices3D?.length || 1) - 1)}
+                                defaultValue="0"
+                                className="w-full px-2 py-1 bg-neutral-950 border border-neutral-850 rounded text-[10px] font-mono text-amber-400 font-bold"
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[8px] text-neutral-500 font-bold uppercase block">End Joint Vert</label>
+                              <input
+                                type="number"
+                                id="new-bone-end"
+                                min="0"
+                                max={Math.max(0, (selectedObject.vertices3D?.length || 1) - 1)}
+                                defaultValue="3"
+                                className="w-full px-2 py-1 bg-neutral-950 border border-neutral-850 rounded text-[10px] font-mono text-amber-400 font-bold"
+                              />
+                            </div>
+                          </div>
+
+                          <button
+                            onClick={() => {
+                              const nameInput = document.getElementById('new-bone-name') as HTMLInputElement;
+                              const startInput = document.getElementById('new-bone-start') as HTMLInputElement;
+                              const endInput = document.getElementById('new-bone-end') as HTMLInputElement;
+
+                              const name = nameInput?.value || `Bone_${(selectedObject.bones3D || []).length + 1}`;
+                              const startVal = parseInt(startInput?.value || '0');
+                              const endVal = parseInt(endInput?.value || '3');
+
+                              const newBone = {
+                                id: `bone_${Date.now()}`,
+                                name,
+                                rx: 0,
+                                ry: 0,
+                                rz: 0,
+                                startVertexIdx: startVal,
+                                endVertexIdx: endVal
+                              };
+
+                              const existingBones = [...(selectedObject.bones3D || [])];
+                              existingBones.push(newBone);
+                              updateObject(selectedObject.id, { bones3D: existingBones });
+
+                              if (nameInput) nameInput.value = '';
+                              alert(`Organically rigged "${name}" bone joint connecting vertices ${startVal} ➔ ${endVal}! Use the bone sliders above to rotate & deform the 3D mesh.`);
+                            }}
+                            className="w-full py-1.5 bg-amber-500 hover:bg-amber-400 text-neutral-950 font-black rounded-lg transition-all active:scale-95 text-[10px]"
+                          >
+                            CONNECT SKELETAL BONE
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Color Picker Sub-section */}
                   <div className="pt-2 border-t border-neutral-800/40 space-y-2">

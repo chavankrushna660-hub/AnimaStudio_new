@@ -27,8 +27,8 @@ import LeftPanel from './components/LeftPanel';
 import RightPanel from './components/RightPanel';
 import CanvasArea from './components/CanvasArea';
 import Timeline from './components/Timeline';
-import { VectorObject, Bone, Layer, Frame, Point, RealismSettings } from './types';
-import { localToWorld, rotatePoint } from './utils/math';
+import { VectorObject, Bone, Layer, Frame, Point, RealismSettings, View360 } from './types';
+import { localToWorld, rotatePoint, calculateBoundingBox } from './utils/math';
 import { 
   validateSimpleAuth, 
   saveUserAnimation, 
@@ -36,6 +36,12 @@ import {
   deleteUserAnimation, 
   SavedAnimationRecord 
 } from './utils/database';
+import { 
+  generate3DGeometry, 
+  getDailyLimitStatus, 
+  incrementDailyLimit 
+} from './utils/engine3D';
+import { parse3DModelFile } from './utils/custom3DLoader';
 
 export default function App() {
   // Topbar Collapse States
@@ -69,6 +75,12 @@ export default function App() {
   // Undo/Redo Stacks
   const [undoStack, setUndoStack] = useState<any[]>([]);
   const [redoStack, setRedoStack] = useState<any[]>([]);
+
+  // 360 Studio Interactive Drawing Wizard State
+  const [is360WizardActive, setIs360WizardActive] = useState(false);
+  const [draft360Views, setDraft360Views] = useState<View360[]>([]);
+  const [draftAnchorId, setDraftAnchorId] = useState<string | null>(null);
+  const [onionSkinEnabled360, setOnionSkinEnabled360] = useState(true);
 
   // Smart controls pinned list
   const [smartPinnedIds, setSmartPinnedIds] = useState<string[]>([]);
@@ -697,6 +709,315 @@ export default function App() {
     setSelectedObjectId(torsoId);
   };
 
+  // Add 3D Proxy Model into the animation canvas with strict limits
+  const add3DModel = (type: 'car' | 'character' | 'chair' | 'sphere' | 'box' | 'sword') => {
+    // 1. Scene Limit: Max 3 active 3D models to guarantee 60 FPS performance and avoid lagging
+    const existing3D = (Object.values(objects) as VectorObject[]).filter(obj => obj.type === '3d');
+    if (existing3D.length >= 3) {
+      alert("App Safety Safeguard: Maximum of 3 active 3D models allowed per project to ensure optimal 60 FPS rendering and completely prevent browser crash conditions.");
+      return;
+    }
+
+    // 2. Daily Limit: Max 10 3D models added per day per user/guest
+    const email = currentUser || 'guest';
+    const limitStatus = getDailyLimitStatus(email);
+    if (!limitStatus.allowed) {
+      alert(`Daily Safety Limit: You have reached your daily allowance of 10 model additions for "${email}". Please try again tomorrow to preserve application performance.`);
+      return;
+    }
+
+    historyPush();
+    incrementDailyLimit(email);
+
+    // Generate local mesh data from library
+    const geom = generate3DGeometry(type);
+
+    const modelId = `obj_3d_${Date.now()}`;
+    const new3DObj: VectorObject = {
+      id: modelId,
+      name: `3D_${type.toUpperCase()}_Proxy`,
+      type: '3d',
+      shape3DType: type,
+      points: [
+        { x: -50, y: -50 },
+        { x: 50, y: -50 },
+        { x: 50, y: 50 },
+        { x: -50, y: 50 },
+        { x: -50, y: -50 }
+      ], // 2D proxy projection footprint
+      strokeColor: '#F59E0B',
+      strokeWidth: 2.5,
+      fillColor: '#F59E0B',
+      opacity: 1,
+      transform: { x: 300, y: 250, rotation: 0, scaleX: 1, scaleY: 1 },
+      transform3D: {
+        x: 0,
+        y: 0,
+        z: 0,
+        rx: 15, // default pitch
+        ry: 45, // default yaw
+        rz: 0,  // default roll
+        sx: 1.5,
+        sy: 1.5,
+        sz: 1.5,
+      },
+      vertices3D: geom.vertices,
+      faces3D: geom.faces,
+      bones3D: geom.bones,
+      pivots: [{ id: `pvt_${Date.now()}_3d`, name: 'CenterJoint', localX: 0, localY: 0, locked: false }],
+      parentId: null,
+      childrenIds: [],
+      layerId: activeLayerId,
+      isLocked: false,
+      isHidden: false,
+    };
+
+    setObjects(prev => ({ ...prev, [modelId]: new3DObj }));
+    setSelectedObjectId(modelId);
+  };
+
+  const add360Object = (selectedIds: string[]) => {
+    if (selectedIds.length === 0) {
+      alert("Please select one or more drawings to convert into a Master 360 Object.");
+      return;
+    }
+    
+    // Check if some are already 360 containers to avoid nested containers
+    const validIds = selectedIds.filter(id => objects[id] && objects[id].type !== '360_container');
+    if (validIds.length === 0) {
+      alert("Please select valid non-container drawings to combine into a Master 360 Object.");
+      return;
+    }
+
+    const views: View360[] = [];
+    validIds.forEach((id, idx) => {
+      const angle = Math.round((idx * 360) / validIds.length) % 360;
+      views.push({
+        id: `view_${Date.now()}_${idx}`,
+        angle,
+        drawingId: id,
+        name: idx === 0 ? 'Front' : idx === 1 && validIds.length === 2 ? 'Back' : `Angle ${angle}°`,
+        drawingName: objects[id]?.name || `Drawing ${idx + 1}`
+      });
+      // Hide the individual drawings on the canvas so they only render inside the master container
+      updateObject(id, { isHidden: true });
+    });
+    
+    const containerId = `360_container_${Date.now()}`;
+    // Find average position
+    let sumX = 0, sumY = 0;
+    validIds.forEach(id => {
+      sumX += objects[id]?.transform.x ?? 300;
+      sumY += objects[id]?.transform.y ?? 250;
+    });
+    const avgX = sumX / validIds.length;
+    const avgY = sumY / validIds.length;
+    
+    const new360Obj: VectorObject = {
+      id: containerId,
+      name: `Master_360_Object`,
+      type: '360_container',
+      views360: views,
+      currentAngle360: 0,
+      activeViewId360: views[0]?.id || '',
+      lockAngle360: false,
+      points: [
+        { x: -60, y: -60 },
+        { x: 60, y: -60 },
+        { x: 60, y: 60 },
+        { x: -60, y: 60 },
+        { x: -60, y: -60 }
+      ],
+      strokeColor: '#F59E0B',
+      strokeWidth: 2,
+      fillColor: 'transparent',
+      opacity: 1,
+      transform: { x: avgX, y: avgY, rotation: 0, scaleX: 1, scaleY: 1 },
+      pivots: [{ id: `pvt_${Date.now()}_360`, name: 'RootPivot', localX: 0, localY: 0, locked: false }],
+      parentId: null,
+      childrenIds: [],
+      layerId: activeLayerId,
+      isLocked: false,
+      isHidden: false,
+    };
+    
+    historyPush();
+    setObjects(prev => ({
+      ...prev,
+      [containerId]: new360Obj
+    }));
+    setSelectedObjectId(containerId);
+  };
+
+  const start360Wizard = () => {
+    setIs360WizardActive(true);
+    setDraft360Views([]);
+    setDraftAnchorId(null);
+  };
+
+  const addDraft360View = (drawingId: string, name: string, angle: number) => {
+    if (!objects[drawingId]) return;
+    const viewId = `view_${Date.now()}`;
+    const newView: View360 = {
+      id: viewId,
+      name,
+      angle: angle % 360,
+      drawingId,
+      drawingName: objects[drawingId].name
+    };
+    
+    // Hide drawing temporarily so they can draw the next one at the exact same spot without clutter
+    setObjects(prev => ({
+      ...prev,
+      [drawingId]: { ...prev[drawingId], isHidden: true }
+    }));
+    
+    setDraft360Views(prev => [...prev, newView]);
+    if (!draftAnchorId) {
+      setDraftAnchorId(drawingId);
+    }
+  };
+
+  const cancel360Wizard = () => {
+    setObjects(prev => {
+      const next = { ...prev };
+      draft360Views.forEach(v => {
+        if (next[v.drawingId]) {
+          next[v.drawingId] = { ...next[v.drawingId], isHidden: false };
+        }
+      });
+      return next;
+    });
+    setIs360WizardActive(false);
+    setDraft360Views([]);
+    setDraftAnchorId(null);
+  };
+
+  const compile360Wizard = (containerName: string) => {
+    if (draft360Views.length === 0) {
+      alert("Please add at least one view before compiling.");
+      return;
+    }
+    const anchorId = draftAnchorId || draft360Views[0].drawingId;
+    const anchorDrawing = objects[anchorId];
+    if (!anchorDrawing) return;
+
+    // Center of anchor
+    const boundsAnchor = calculateBoundingBox(anchorDrawing.points);
+    const txAnchor = anchorDrawing.transform.x;
+    const tyAnchor = anchorDrawing.transform.y;
+    const avgX = (boundsAnchor.x + boundsAnchor.width / 2) + txAnchor;
+    const avgY = (boundsAnchor.y + boundsAnchor.height / 2) + tyAnchor;
+
+    const containerId = `360_container_${Date.now()}`;
+    
+    const new360Obj: VectorObject = {
+      id: containerId,
+      name: containerName || `Master_360_Object`,
+      type: '360_container',
+      views360: [...draft360Views],
+      currentAngle360: 0,
+      activeViewId360: draft360Views[0].id,
+      lockAngle360: false,
+      points: [
+        { x: -60, y: -60 },
+        { x: 60, y: -60 },
+        { x: 60, y: 60 },
+        { x: -60, y: 60 },
+        { x: -60, y: -60 }
+      ],
+      strokeColor: '#F59E0B',
+      strokeWidth: 2,
+      fillColor: 'transparent',
+      opacity: 1,
+      transform: { x: avgX, y: avgY, rotation: 0, scaleX: 1, scaleY: 1 },
+      pivots: [{ id: `pvt_${Date.now()}_360`, name: 'RootPivot', localX: 0, localY: 0, locked: false }],
+      parentId: null,
+      childrenIds: [],
+      layerId: activeLayerId,
+      isLocked: false,
+      isHidden: false,
+    };
+
+    historyPush();
+    setObjects(prev => {
+      const next = { ...prev };
+      draft360Views.forEach(v => {
+        if (next[v.drawingId]) {
+          next[v.drawingId] = { ...next[v.drawingId], isHidden: true };
+        }
+      });
+      next[containerId] = new360Obj;
+      return next;
+    });
+    setSelectedObjectId(containerId);
+
+    setIs360WizardActive(false);
+    setDraft360Views([]);
+    setDraftAnchorId(null);
+  };
+
+  const addCustom3DModel = (mesh: any, filename: string) => {
+    const existing3D = (Object.values(objects) as VectorObject[]).filter(obj => obj.type === '3d');
+    if (existing3D.length >= 3) {
+      alert("App Safety Safeguard: Maximum of 3 active 3D models allowed per project to ensure optimal 60 FPS rendering and completely prevent browser crash conditions.");
+      return;
+    }
+
+    const email = currentUser || 'guest';
+    const limitStatus = getDailyLimitStatus(email);
+    if (!limitStatus.allowed) {
+      alert(`Daily Safety Limit: You have reached your daily allowance of 10 model additions for "${email}". Please try again tomorrow to preserve application performance.`);
+      return;
+    }
+
+    historyPush();
+    incrementDailyLimit(email);
+
+    const modelId = `obj_3d_${Date.now()}`;
+    const new3DObj: VectorObject = {
+      id: modelId,
+      name: filename.replace(/\.[^/.]+$/, "") + "_Mesh",
+      type: '3d',
+      shape3DType: 'box',
+      points: [
+        { x: -50, y: -50 },
+        { x: 50, y: -50 },
+        { x: 50, y: 50 },
+        { x: -50, y: 50 },
+        { x: -50, y: -50 }
+      ],
+      strokeColor: '#F59E0B',
+      strokeWidth: 2.0,
+      fillColor: '#F59E0B',
+      opacity: 1,
+      transform: { x: 300, y: 250, rotation: 0, scaleX: 1, scaleY: 1 },
+      transform3D: {
+        x: 0,
+        y: 0,
+        z: 0,
+        rx: 15,
+        ry: 45,
+        rz: 0,
+        sx: 1.8,
+        sy: 1.8,
+        sz: 1.8,
+      },
+      vertices3D: mesh.vertices,
+      faces3D: mesh.faces,
+      bones3D: mesh.bones || [],
+      pivots: [{ id: `pvt_${Date.now()}_3d`, name: 'CenterJoint', localX: 0, localY: 0, locked: false }],
+      parentId: null,
+      childrenIds: [],
+      layerId: activeLayerId,
+      isLocked: false,
+      isHidden: false,
+    };
+
+    setObjects(prev => ({ ...prev, [modelId]: new3DObj }));
+    setSelectedObjectId(modelId);
+  };
+
   // Object and Canvas operations
   const deleteObject = (id: string) => {
     historyPush();
@@ -1167,6 +1488,20 @@ export default function App() {
             const grpId = `grp_${Date.now()}`;
             alert(`Grouped selected items under parent ID: ${grpId}`);
           }}
+          activeTool={activeTool}
+          add3DModel={add3DModel}
+          addCustom3DModel={addCustom3DModel}
+          add360Object={add360Object}
+          currentUser={currentUser}
+          is360WizardActive={is360WizardActive}
+          draft360Views={draft360Views}
+          draftAnchorId={draftAnchorId}
+          onionSkinEnabled360={onionSkinEnabled360}
+          setOnionSkinEnabled360={setOnionSkinEnabled360}
+          start360Wizard={start360Wizard}
+          addDraft360View={addDraft360View}
+          cancel360Wizard={cancel360Wizard}
+          compile360Wizard={compile360Wizard}
         />
 
         {/* Central Vector Canvas Area */}
@@ -1190,6 +1525,9 @@ export default function App() {
           lassoPoints={lassoPoints}
           setLassoPoints={setLassoPoints}
           realismSettings={realismSettings}
+          is360WizardActive={is360WizardActive}
+          draft360Views={draft360Views}
+          onionSkinEnabled360={onionSkinEnabled360}
         />
 
         {/* Right Collapsible Properties, Sliders, Smart Pinned Controls */}
