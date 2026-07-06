@@ -11,10 +11,7 @@ import {
   deformPoints, 
   calculateBoundingBox,
   rotatePoint,
-  findClosestView360,
-  computeBoneTransforms,
-  deformPointLBS,
-  calculateAutoWeights
+  findClosestView360
 } from '../utils/math';
 
 // Mesh Warp Bilinear Interpolation helper
@@ -60,6 +57,30 @@ const getWarpedPoint = (p: Point, meshState: any, bounds: any) => {
                   bottomRight.currentY * cu * cv;
                   
   return { x: warpedX, y: warpedY };
+};
+
+// 🌟 Lasso selection deformation point helper
+const deformWithLasso = (p: Point, obj: VectorObject): Point => {
+  if (
+    obj.lassoDeformState && 
+    obj.lassoDeformState.active && 
+    obj.lassoDeformState.lassoPoints && 
+    obj.lassoDeformState.lassoPoints.length >= 3
+  ) {
+    if (isPointInPolygon(p, obj.lassoDeformState.lassoPoints)) {
+      const polygon = obj.lassoDeformState.lassoPoints;
+      let sumX = 0;
+      let sumY = 0;
+      polygon.forEach(pt => {
+        sumX += pt.x;
+        sumY += pt.y;
+      });
+      const lassoCenter = { localX: sumX / polygon.length, localY: sumY / polygon.length };
+      // Transform local point relative to the lasso polygon's center
+      return localToWorld(p, obj.lassoDeformState.transform, lassoCenter);
+    }
+  }
+  return p;
 };
 
 // Puppet Pin Warp Shepard's IDW helper
@@ -873,294 +894,7 @@ export default function CanvasArea({
     const coords = getCanvasCoords(e);
     setCurrentCursorPos(coords);
 
-    // Direct Rig Tool creation/drag logic
-    if (activeTool === 'DRIG') {
-      if (selectedObjectId && objects[selectedObjectId]) {
-        const obj = objects[selectedObjectId];
-        const localPivot = obj.pivots[0] || { localX: 0, localY: 0 };
-        const rigState = obj.directRigState;
-        const bonePoints = rigState?.bonePoints || [];
-        const boneTransforms = computeBoneTransforms(bonePoints);
-        
-        let clickedBoneId: string | null = null;
-        let minBDist = 18; // pixels
-        
-        bonePoints.forEach(bp => {
-          const trans = boneTransforms[bp.id];
-          if (trans) {
-            const wPos = localToWorld({ x: trans.currentX, y: trans.currentY }, obj.transform, localPivot);
-            const d = distance(coords, wPos);
-            if (d < minBDist) {
-              minBDist = d;
-              clickedBoneId = bp.id;
-            }
-          }
-        });
-        
-        if (clickedBoneId) {
-          setDraggedDirectRigBoneId(clickedBoneId);
-          setDragMode('directRigBone');
-          setDragStartPoint(coords);
-          // Save original angle for potential rotation
-          setObjects(prev => {
-            const updated = { ...prev };
-            const innerRig = updated[selectedObjectId]?.directRigState;
-            if (innerRig) {
-              innerRig.bonePoints = innerRig.bonePoints.map(bp => {
-                if (bp.id === clickedBoneId) {
-                  return { ...bp, originalAngle: bp.angle || 0 };
-                }
-                return bp;
-              });
-            }
-            return updated;
-          });
-          return;
-        } else {
-          // Add a new bone point in local coordinates
-          const localClick = worldToLocal(coords, obj.transform, localPivot);
-          const newBoneId = `dr_bone_${Date.now()}`;
-          const boneCount = bonePoints.length;
-          
-          const defaultNames = [
-            'root_bone', 'spine_bone', 'neck_bone', 'head_bone',
-            'left_shoulder_bone', 'left_elbow_bone', 'left_wrist_bone',
-            'right_shoulder_bone', 'right_elbow_bone', 'right_wrist_bone',
-            'left_hip_bone', 'left_knee_bone', 'left_ankle_bone',
-            'right_hip_bone', 'right_knee_bone', 'right_ankle_bone'
-          ];
-          const suggestedName = defaultNames[boneCount] || `bone_point_${boneCount + 1}`;
-          
-          // Let's find the parent (closest bone point)
-          let parentBoneId: string | null = null;
-          let minPDist = Infinity;
-          bonePoints.forEach(bp => {
-            const bpDist = distance({ x: bp.x, y: bp.y }, localClick);
-            if (bpDist < minPDist) {
-              minPDist = bpDist;
-              parentBoneId = bp.id;
-            }
-          });
-          
-          if (bonePoints.length === 0) {
-            parentBoneId = null;
-          }
-          
-          const newBone = {
-            id: newBoneId,
-            name: suggestedName,
-            x: Number(localClick.x.toFixed(2)),
-            y: Number(localClick.y.toFixed(2)),
-            parentBoneId: parentBoneId,
-            childBoneIds: [],
-            influenceRadius: 120,
-            angle: 0
-          };
-          
-          const updatedBones = [...bonePoints, newBone];
-          if (parentBoneId) {
-            updatedBones.forEach(bp => {
-              if (bp.id === parentBoneId) {
-                bp.childBoneIds = [...(bp.childBoneIds || []), newBoneId];
-              }
-            });
-          }
-          
-          // Recompute skinning weights
-          const pointWeights = calculateAutoWeights(obj.points, updatedBones);
-          const subPathsWeights = obj.subPaths ? obj.subPaths.map(sub => calculateAutoWeights(sub, updatedBones)) : undefined;
-          
-          setObjects(prev => {
-            if (!prev[selectedObjectId]) return prev;
-            return {
-              ...prev,
-              [selectedObjectId]: {
-                ...prev[selectedObjectId],
-                directRigState: {
-                  active: rigState?.active ?? true,
-                  bonePoints: updatedBones,
-                  pointWeights,
-                  subPathsWeights,
-                  meshDensity: rigState?.meshDensity || 'high'
-                }
-              }
-            };
-          });
-          
-          setDraggedDirectRigBoneId(newBoneId);
-          setDragMode('directRigBone');
-          setDragStartPoint(coords);
-          return;
-        }
-      }
-    }
-
-    // 1. Bone tool creation logic
-    if (activeTool === 'BON') {
-      if (selectedObjectId && objects[selectedObjectId] && objects[selectedObjectId].type === '3d') {
-        const obj = objects[selectedObjectId];
-        if (obj.vertices3D && obj.transform3D) {
-          const transformed3D = obj.vertices3D.map(v => transform3DVertex(v, obj.transform3D!.x, obj.transform3D!.y, obj.transform3D!.z, obj.transform3D!.rx, obj.transform3D!.ry, obj.transform3D!.rz, obj.transform3D!.sx, obj.transform3D!.sy, obj.transform3D!.sz));
-          const projected = transformed3D.map(v => {
-            const proj = project3DVertex(v, 400);
-            return {
-              x: obj.transform.x + proj.x,
-              y: obj.transform.y + proj.y
-            };
-          });
-
-          let clickedVtxIdx = -1;
-          let minDist = 20; // pixels
-          projected.forEach((pt, idx) => {
-            const d = distance(coords, pt);
-            if (d < minDist) {
-              minDist = d;
-              clickedVtxIdx = idx;
-            }
-          });
-
-          if (clickedVtxIdx !== -1) {
-            setIsDrawing3DBone(true);
-            setBone3DStartVtxIdx(clickedVtxIdx);
-            setDragStartPoint(coords);
-          }
-        }
-        return;
-      }
-
-      const pList = getAllPivotsWorld();
-      const nearPivot = pList.find(item => distance(coords, { x: item.worldX, y: item.worldY }) < 15);
-
-      if (!boneStartPoint) {
-        if (nearPivot) {
-          // Start exactly at the clicked pivot point
-          setBoneStartPoint({ x: nearPivot.worldX, y: nearPivot.worldY });
-          setBoneStartObject(objects[nearPivot.objId]);
-          setBoneStartPivot(nearPivot.pivot);
-        } else {
-          // If no pivot clicked, check if we hit any object and auto-create pivot there
-          const hitObj = performHitTest(coords);
-          if (hitObj) {
-            const local = worldToLocal(coords, hitObj.transform, hitObj.pivots[0]);
-            const newPivot: Pivot = {
-              id: `pvt_${Date.now()}`,
-              name: `Pivot_${hitObj.pivots.length + 1}`,
-              localX: Number(local.x.toFixed(2)),
-              localY: Number(local.y.toFixed(2)),
-              locked: false,
-            };
-            setObjects(prev => ({
-              ...prev,
-              [hitObj.id]: {
-                ...prev[hitObj.id],
-                pivots: [newPivot, ...prev[hitObj.id].pivots]
-              }
-            }));
-            setBoneStartPoint(coords);
-            setBoneStartObject(hitObj);
-            setBoneStartPivot(newPivot);
-          }
-        }
-      } else {
-        // Complete Bone connection
-        // Check if there is a target snapped pivot
-        const snappedTarget = pList.find(item => item.objId !== boneStartObject?.id && distance(coords, { x: item.worldX, y: item.worldY }) < 15);
-        
-        if (snappedTarget && boneStartObject) {
-          const targetObj = objects[snappedTarget.objId];
-          const startLocal = worldToLocal(boneStartPoint, boneStartObject.transform, boneStartObject.pivots[0]);
-          const endLocal = worldToLocal({ x: snappedTarget.worldX, y: snappedTarget.worldY }, targetObj.transform, targetObj.pivots[0]);
-          const len = distance(boneStartPoint, { x: snappedTarget.worldX, y: snappedTarget.worldY });
-
-          const newBone: Bone = {
-            id: `bone_${Date.now()}`,
-            name: `Bone_${bones.length + 1}`,
-            startObjectId: boneStartObject.id,
-            endObjectId: targetObj.id,
-            startLocalX: startLocal.x,
-            startLocalY: startLocal.y,
-            endLocalX: endLocal.x,
-            endLocalY: endLocal.y,
-            lockedDistance: len,
-            allowDetach: false,
-            minAngle: -180,
-            maxAngle: 180,
-            enableConstraints: true,
-          };
-
-          setBones(prev => [...prev, newBone]);
-
-          // Parent the target object to starting object
-          setObjects(prev => {
-            const updated = { ...prev };
-            updated[targetObj.id] = {
-              ...updated[targetObj.id],
-              parentId: boneStartObject.id,
-            };
-            if (!updated[boneStartObject.id].childrenIds.includes(targetObj.id)) {
-              updated[boneStartObject.id].childrenIds = [...updated[boneStartObject.id].childrenIds, targetObj.id];
-            }
-            return updated;
-          });
-
-          historyPush();
-        } else if (boneStartObject) {
-          // If no snapped pivot, check if we clicked on another object and auto-create target pivot there
-          const hitObj = performHitTest(coords);
-          if (hitObj && hitObj.id !== boneStartObject.id) {
-            const local = worldToLocal(coords, hitObj.transform, hitObj.pivots[0]);
-            const newPivot: Pivot = {
-              id: `pvt_${Date.now()}`,
-              name: `Pivot_${hitObj.pivots.length + 1}`,
-              localX: Number(local.x.toFixed(2)),
-              localY: Number(local.y.toFixed(2)),
-              locked: false,
-            };
-
-            setObjects(prev => {
-              const updated = { ...prev };
-              updated[hitObj.id] = {
-                ...updated[hitObj.id],
-                pivots: [newPivot, ...updated[hitObj.id].pivots],
-                parentId: boneStartObject.id
-              };
-              if (!updated[boneStartObject.id].childrenIds.includes(hitObj.id)) {
-                updated[boneStartObject.id].childrenIds = [...updated[boneStartObject.id].childrenIds, hitObj.id];
-              }
-              return updated;
-            });
-
-            const startLocal = worldToLocal(boneStartPoint, boneStartObject.transform, boneStartObject.pivots[0]);
-            const len = distance(boneStartPoint, coords);
-
-            const newBone: Bone = {
-              id: `bone_${Date.now()}`,
-              name: `Bone_${bones.length + 1}`,
-              startObjectId: boneStartObject.id,
-              endObjectId: hitObj.id,
-              startLocalX: startLocal.x,
-              startLocalY: startLocal.y,
-              endLocalX: local.x,
-              endLocalY: local.y,
-              lockedDistance: len,
-              allowDetach: false,
-              minAngle: -180,
-              maxAngle: 180,
-              enableConstraints: true,
-            };
-
-            setBones(prev => [...prev, newBone]);
-            historyPush();
-          }
-        }
-        
-        setBoneStartPoint(null);
-        setBoneStartObject(null);
-        setBoneStartPivot(null);
-        setSnappedPivot(null);
-      }
-      return;
-    }
+    // DRIG and BON tool handlers removed to fully clear old bone skeletal rigging code.
 
     // 2. Add custom pivot point (PVT tool)
     if (activeTool === 'PVT' && selectedObjectId) {
@@ -1451,46 +1185,7 @@ export default function CanvasArea({
       if (selectedObjectId) {
         const obj = objects[selectedObjectId];
         if (obj) {
-          // Check if we clicked a Direct Rig bone joint first!
-          if (obj.directRigState && obj.directRigState.active && obj.directRigState.bonePoints && obj.directRigState.bonePoints.length > 0) {
-            let clickedBoneId: string | null = null;
-            let minBDist = 18; // pixels
-            const boneTransforms = computeBoneTransforms(obj.directRigState.bonePoints);
-            const localPivot = obj.pivots[0] || { localX: 0, localY: 0 };
-            
-            obj.directRigState.bonePoints.forEach(bp => {
-              const trans = boneTransforms[bp.id];
-              if (trans) {
-                const wPos = localToWorld({ x: trans.currentX, y: trans.currentY }, obj.transform, localPivot);
-                const d = distance(coords, wPos);
-                if (d < minBDist) {
-                  minBDist = d;
-                  clickedBoneId = bp.id;
-                }
-              }
-            });
-
-            if (clickedBoneId) {
-              setDraggedDirectRigBoneId(clickedBoneId);
-              setDragMode('directRigBone');
-              setDragStartPoint(coords);
-              // Save original angle for potential rotation
-              setObjects(prev => {
-                const updated = { ...prev };
-                const rigState = updated[selectedObjectId]?.directRigState;
-                if (rigState) {
-                  rigState.bonePoints = rigState.bonePoints.map(bp => {
-                    if (bp.id === clickedBoneId) {
-                      return { ...bp, originalAngle: bp.angle || 0 };
-                    }
-                    return bp;
-                  });
-                }
-                return updated;
-              });
-              return;
-            }
-          }
+          // Direct Rig bone joint clicking removed.
 
           // Check if we clicked on a puppet pin first!
           if (obj.pins && obj.pins.length > 0) {
@@ -1670,115 +1365,7 @@ export default function CanvasArea({
     const coords = getCanvasCoords(e);
     setCurrentCursorPos(coords);
 
-    if (dragMode === 'directRigBone' && selectedObjectId && draggedDirectRigBoneId) {
-      const obj = objects[selectedObjectId];
-      if (obj && obj.directRigState) {
-        const localPivot = obj.pivots[0] || { localX: 0, localY: 0 };
-        
-        if (activeTool === 'DRIG') {
-          // Move joint position (edit skeleton)
-          const localPos = worldToLocal(coords, obj.transform, localPivot);
-          setObjects(prev => {
-            const updated = { ...prev };
-            const rigState = updated[selectedObjectId]?.directRigState;
-            if (rigState) {
-              const updatedBones = rigState.bonePoints.map(bp => {
-                if (bp.id === draggedDirectRigBoneId) {
-                  return {
-                    ...bp,
-                    x: Number(localPos.x.toFixed(2)),
-                    y: Number(localPos.y.toFixed(2))
-                  };
-                }
-                return bp;
-              });
-              
-              const pointWeights = calculateAutoWeights(updated[selectedObjectId].points, updatedBones);
-              const subPathsWeights = updated[selectedObjectId].subPaths ? updated[selectedObjectId].subPaths.map(sub => calculateAutoWeights(sub, updatedBones)) : undefined;
-              
-              updated[selectedObjectId].directRigState = {
-                ...rigState,
-                bonePoints: updatedBones,
-                pointWeights,
-                subPathsWeights
-              };
-            }
-            return updated;
-          });
-        } else {
-          // Rotate joint angle (deform pose!)
-          const rigState = obj.directRigState;
-          const bonePoint = rigState.bonePoints.find(bp => bp.id === draggedDirectRigBoneId);
-          
-          if (bonePoint) {
-            if (bonePoint.parentBoneId) {
-              // Find parent bone in world coordinates
-              const parentBp = rigState.bonePoints.find(bp => bp.id === bonePoint.parentBoneId);
-              if (parentBp) {
-                const boneTransforms = computeBoneTransforms(rigState.bonePoints);
-                const parentTrans = boneTransforms[parentBp.id];
-                
-                if (parentTrans) {
-                  const parentWorld = localToWorld({ x: parentTrans.currentX, y: parentTrans.currentY }, obj.transform, localPivot);
-                  
-                  const angleStart = Math.atan2(dragStartPoint.y - parentWorld.y, dragStartPoint.x - parentWorld.x);
-                  const angleCurrent = Math.atan2(coords.y - parentWorld.y, coords.x - parentWorld.x);
-                  const deltaDeg = ((angleCurrent - angleStart) * 180) / Math.PI;
-                  
-                  const originalAngle = (bonePoint as any).originalAngle ?? 0;
-                  const nextAngle = Math.round((originalAngle + deltaDeg) * 10) / 10;
-                  
-                  setObjects(prev => {
-                    const updated = { ...prev };
-                    const innerRig = updated[selectedObjectId]?.directRigState;
-                    if (innerRig) {
-                      innerRig.bonePoints = innerRig.bonePoints.map(bp => {
-                        if (bp.id === draggedDirectRigBoneId) {
-                          return { ...bp, angle: nextAngle };
-                        }
-                        return bp;
-                      });
-                    }
-                    return updated;
-                  });
-                }
-              }
-            } else {
-              // Translate root bone joint relative to parent/world
-              const localPos = worldToLocal(coords, obj.transform, localPivot);
-              setObjects(prev => {
-                const updated = { ...prev };
-                const rigState = updated[selectedObjectId]?.directRigState;
-                if (rigState) {
-                  const updatedBones = rigState.bonePoints.map(bp => {
-                    if (bp.id === draggedDirectRigBoneId) {
-                      return {
-                        ...bp,
-                        x: Number(localPos.x.toFixed(2)),
-                        y: Number(localPos.y.toFixed(2))
-                      };
-                    }
-                    return bp;
-                  });
-                  
-                  const pointWeights = calculateAutoWeights(updated[selectedObjectId].points, updatedBones);
-                  const subPathsWeights = updated[selectedObjectId].subPaths ? updated[selectedObjectId].subPaths.map(sub => calculateAutoWeights(sub, updatedBones)) : undefined;
-                  
-                  updated[selectedObjectId].directRigState = {
-                    ...rigState,
-                    bonePoints: updatedBones,
-                    pointWeights,
-                    subPathsWeights
-                  };
-                }
-                return updated;
-              });
-            }
-          }
-        }
-      }
-      return;
-    }
+    // directRigBone dragging handler removed.
 
     if (dragMode === 'meshGridPoint' && selectedObjectId && draggedMeshPointIndex !== null) {
       const obj = objects[selectedObjectId];
@@ -2591,12 +2178,8 @@ export default function CanvasArea({
       const bounds = calculateBoundingBox(drawObj.points);
       let localPoints = drawObj.points;
       
-      if (drawObj.directRigState && drawObj.directRigState.active) {
-        const boneTransforms = computeBoneTransforms(drawObj.directRigState.bonePoints);
-        localPoints = drawObj.points.map((p, idx) => {
-          const weights = drawObj.directRigState?.pointWeights?.[idx];
-          return deformPointLBS(p, drawObj.directRigState?.bonePoints || [], boneTransforms, weights);
-        });
+      if (drawObj.lassoDeformState && drawObj.lassoDeformState.active) {
+        localPoints = drawObj.points.map(p => deformWithLasso(p, drawObj));
       } else if (drawObj.meshState && drawObj.meshState.active) {
         localPoints = drawObj.points.map(p => getWarpedPoint(p, drawObj.meshState, bounds));
       } else if (drawObj.pins && drawObj.pins.length > 0) {
@@ -2619,13 +2202,8 @@ export default function CanvasArea({
         if (drawObj.subPaths && drawObj.subPaths.length > 0) {
           drawObj.subPaths.forEach((sub, subIdx) => {
             let localSubPoints = sub;
-            if (drawObj.directRigState && drawObj.directRigState.active) {
-              const boneTransforms = computeBoneTransforms(drawObj.directRigState.bonePoints);
-              const subWeights = drawObj.directRigState.subPathsWeights?.[subIdx];
-              localSubPoints = sub.map((p, idx) => {
-                const weights = subWeights?.[idx];
-                return deformPointLBS(p, drawObj.directRigState?.bonePoints || [], boneTransforms, weights);
-              });
+            if (drawObj.lassoDeformState && drawObj.lassoDeformState.active) {
+              localSubPoints = sub.map(p => deformWithLasso(p, drawObj));
             } else if (drawObj.meshState && drawObj.meshState.active) {
               const subBounds = calculateBoundingBox(sub);
               localSubPoints = sub.map(p => getWarpedPoint(p, drawObj.meshState, subBounds));
@@ -2832,20 +2410,17 @@ export default function CanvasArea({
           const localPivot = drawObj.pivots[0] || { localX: 0, localY: 0 };
           const imgBounds = calculateBoundingBox(drawObj.points);
           
-          const hasDirectRig = drawObj.directRigState && drawObj.directRigState.active;
+          const hasLassoDeform = drawObj.lassoDeformState && drawObj.lassoDeformState.active;
           const hasMeshState = drawObj.meshState && drawObj.meshState.active;
           const hasPuppetPins = drawObj.pins && drawObj.pins.length > 0;
 
-          if (hasDirectRig || hasMeshState || hasPuppetPins) {
+          if (hasLassoDeform || hasMeshState || hasPuppetPins) {
             // Draw textured mesh deformation!
-            const COLS = 12;
-            const ROWS = 12;
+            const COLS = 24;
+            const ROWS = 24;
             
             const vertices: Point[][] = [];
             const worldVertices: Point[][] = [];
-            
-            const bonePoints = drawObj.directRigState?.bonePoints || [];
-            const boneTransforms = hasDirectRig ? computeBoneTransforms(bonePoints) : {};
 
             for (let r = 0; r <= ROWS; r++) {
               vertices[r] = [];
@@ -2859,9 +2434,8 @@ export default function CanvasArea({
                 const p = { x: px, y: py };
                 
                 let dp = p;
-                if (hasDirectRig) {
-                  const weights = calculateAutoWeights([p], bonePoints)[0];
-                  dp = deformPointLBS(p, bonePoints, boneTransforms, weights);
+                if (hasLassoDeform) {
+                  dp = deformWithLasso(p, drawObj);
                 } else if (hasMeshState) {
                   dp = getWarpedPoint(p, drawObj.meshState, imgBounds);
                 } else if (hasPuppetPins) {
@@ -3286,79 +2860,30 @@ export default function CanvasArea({
       }
     }
 
-    // Render Direct Rig Bone points overlay for selected object
+    // Render Lasso Deform Selection region polygon overlay for selected object
     if (selectedObjectId && objects[selectedObjectId]) {
       const obj = objects[selectedObjectId];
-      if (obj.directRigState && obj.directRigState.bonePoints && obj.directRigState.bonePoints.length > 0) {
+      if (obj.lassoDeformState && obj.lassoDeformState.lassoPoints && obj.lassoDeformState.lassoPoints.length >= 3) {
         ctx.save();
         
-        const boneTransforms = computeBoneTransforms(obj.directRigState.bonePoints);
-
-        // Draw connection skeleton lines first
-        obj.directRigState.bonePoints.forEach(bp => {
-          if (bp.parentBoneId) {
-            const parent = obj.directRigState!.bonePoints.find(p => p.id === bp.parentBoneId);
-            if (parent) {
-              const transCurr = boneTransforms[bp.id];
-              const transParent = boneTransforms[parent.id];
-              
-              if (transCurr && transParent) {
-                const wChild = localToWorld({ x: transCurr.currentX, y: transCurr.currentY }, obj.transform, obj.pivots[0]);
-                const wParent = localToWorld({ x: transParent.currentX, y: transParent.currentY }, obj.transform, obj.pivots[0]);
-
-                ctx.beginPath();
-                ctx.moveTo(wParent.x, wParent.y);
-                ctx.lineTo(wChild.x, wChild.y);
-                ctx.strokeStyle = '#10B981'; // vibrant emerald green for bones
-                ctx.lineWidth = 4;
-                ctx.lineCap = 'round';
-                ctx.stroke();
-
-                ctx.beginPath();
-                ctx.moveTo(wParent.x, wParent.y);
-                ctx.lineTo(wChild.x, wChild.y);
-                ctx.strokeStyle = '#FFFFFF';
-                ctx.lineWidth = 1.2;
-                ctx.stroke();
-              }
-            }
-          }
-        });
-
-        // Draw bone joint dots on top
-        obj.directRigState.bonePoints.forEach((bp) => {
-          const trans = boneTransforms[bp.id];
-          if (trans) {
-            const wPos = localToWorld({ x: trans.currentX, y: trans.currentY }, obj.transform, obj.pivots[0]);
-
-            ctx.beginPath();
-            ctx.arc(wPos.x, wPos.y, 8.5, 0, Math.PI * 2);
-            ctx.fillStyle = activeTool === 'DRIG' ? 'rgba(59, 130, 246, 0.25)' : 'rgba(16, 185, 129, 0.2)';
-            ctx.fill();
-
-            ctx.beginPath();
-            ctx.arc(wPos.x, wPos.y, 6.5, 0, Math.PI * 2);
-            const isSelected = (draggedDirectRigBoneId === bp.id);
-            ctx.fillStyle = isSelected ? '#F59E0B' : '#3B82F6';
-            ctx.fill();
-            ctx.strokeStyle = '#FFFFFF';
-            ctx.lineWidth = 1.8;
-            ctx.stroke();
-
-            ctx.beginPath();
-            ctx.arc(wPos.x, wPos.y, 2.2, 0, Math.PI * 2);
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fill();
-
-            ctx.font = 'bold 9px monospace';
-            ctx.fillStyle = '#FFFFFF';
-            ctx.shadowColor = 'rgba(0,0,0,0.85)';
-            ctx.shadowBlur = 4;
-            ctx.fillText(bp.name, wPos.x + 10, wPos.y + 3);
-            ctx.shadowBlur = 0;
-          }
-        });
-
+        const localPivot = obj.pivots[0] || { localX: 0, localY: 0 };
+        const worldLassoPoints = obj.lassoDeformState.lassoPoints.map(p => localToWorld(p, obj.transform, localPivot));
+        
+        ctx.beginPath();
+        ctx.moveTo(worldLassoPoints[0].x, worldLassoPoints[0].y);
+        for (let i = 1; i < worldLassoPoints.length; i++) {
+          ctx.lineTo(worldLassoPoints[i].x, worldLassoPoints[i].y);
+        }
+        ctx.closePath();
+        
+        ctx.strokeStyle = '#F59E0B'; // Amber orange
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([5, 5]);
+        ctx.stroke();
+        
+        ctx.fillStyle = 'rgba(245, 158, 11, 0.1)'; // Soft amber fill
+        ctx.fill();
+        
         ctx.restore();
       }
     }

@@ -26,8 +26,8 @@ import {
   Zap,
   Info
 } from 'lucide-react';
-import { VectorObject, Bone, Layer, Pivot, Transform, Point, Frame, RealismSettings, DirectRigBonePoint } from '../types';
-import { distance, localToWorld, worldToLocal, calculateBoundingBox, isPointInPolygon, findClosestView360, calculateAutoWeights, computeBoneTransforms } from '../utils/math';
+import { VectorObject, Bone, Layer, Pivot, Transform, Point, Frame, RealismSettings } from '../types';
+import { distance, localToWorld, worldToLocal, calculateBoundingBox, isPointInPolygon, findClosestView360 } from '../utils/math';
 
 interface RightPanelProps {
   selectedObject: VectorObject | null;
@@ -108,6 +108,13 @@ export default function RightPanel({
 }: RightPanelProps) {
   // Batch/Smart Controls check state
   const [smartCheckedIds, setSmartCheckedIds] = useState<{ [id: string]: boolean }>({});
+
+  const isLassoActive = !!selectedObject?.lassoDeformState?.active;
+  const currentTransformObj = selectedObject 
+    ? (isLassoActive 
+        ? (selectedObject.lassoDeformState?.transform || { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, skewX: 0, skewY: 0, rotateX: 0, rotateY: 0, perspective: 0 })
+        : selectedObject.transform)
+    : null;
 
   // AI Smooth Motion & Loop Generator States
   const [animationMode, setAnimationMode] = useState<'single' | 'multi'>('single');
@@ -815,6 +822,24 @@ export default function RightPanel({
   const handleNudge = (property: string, amount: number) => {
     if (!selectedObject) return;
 
+    // Apply to selected drawing's active lasso region if active
+    if (selectedObject.lassoDeformState?.active) {
+      const currentLassoState = selectedObject.lassoDeformState;
+      const currentTransform = currentLassoState.transform || {
+        x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, skewX: 0, skewY: 0, rotateX: 0, rotateY: 0, perspective: 0
+      };
+      const val = (currentTransform as any)[property] || 0;
+      const nextVal = Number((val + amount).toFixed(2));
+      const transformUpdate = { ...currentTransform, [property]: nextVal };
+      updateObject(selectedObject.id, {
+        lassoDeformState: {
+          ...currentLassoState,
+          transform: transformUpdate
+        }
+      });
+      return;
+    }
+
     // Apply to selected drawing
     const val = (selectedObject.transform as any)[property] || 0;
     const nextVal = Number((val + amount).toFixed(2));
@@ -874,6 +899,22 @@ export default function RightPanel({
 
   const handleSliderChange = (property: string, value: number) => {
     if (!selectedObject) return;
+
+    // Apply to selected drawing's active lasso region if active
+    if (selectedObject.lassoDeformState?.active) {
+      const currentLassoState = selectedObject.lassoDeformState;
+      const currentTransform = currentLassoState.transform || {
+        x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, skewX: 0, skewY: 0, rotateX: 0, rotateY: 0, perspective: 0
+      };
+      const transformUpdate = { ...currentTransform, [property]: value };
+      updateObject(selectedObject.id, {
+        lassoDeformState: {
+          ...currentLassoState,
+          transform: transformUpdate
+        }
+      });
+      return;
+    }
 
     // Enforce parent closed edges constraint if rigged and parent has closed edges
     if ((property === 'x' || property === 'y') && selectedObject.parentId && objects[selectedObject.parentId]) {
@@ -1203,248 +1244,109 @@ export default function RightPanel({
               </div>
             ) : (
               <>
-                {/* DIRECT RIG & DEEP DEFORM PANEL */}
+                {/* LASSO DEFORM & SELECTION PANEL */}
                 {selectedObject && (
-                  <div className="space-y-4 bg-emerald-500/5 p-4 rounded-2xl border border-emerald-500/20 shadow-lg shadow-black/20">
-                    <div className="flex items-center justify-between border-b border-emerald-500/10 pb-2.5">
-                      <span className="text-xs font-black uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
-                        <Zap className="w-4 h-4 text-emerald-400 animate-pulse" />
-                        DIRECT RIG & DEEP DEFORM
+                  <div className="space-y-4 bg-amber-500/5 p-4 rounded-2xl border border-amber-500/20 shadow-lg shadow-black/20">
+                    <div className="flex items-center justify-between border-b border-amber-500/10 pb-2.5">
+                      <span className="text-xs font-black uppercase tracking-wider text-amber-400 flex items-center gap-1.5 font-mono">
+                        <Sparkles className="w-4 h-4 text-amber-400 animate-pulse" />
+                        Lasso Deform Selection
                       </span>
                       <button
-                        id="toggle-direct-rig"
+                        id="toggle-lasso-deform"
+                        disabled={!selectedObject.lassoDeformState?.lassoPoints || selectedObject.lassoDeformState.lassoPoints.length === 0}
                         onClick={() => {
-                          const rigActive = selectedObject.directRigState?.active ?? false;
-                          const currentBones = selectedObject.directRigState?.bonePoints || [];
-                          // Auto rig if no bones exist yet!
-                          let newBones = currentBones;
-                          if (newBones.length === 0) {
-                            // Let's create a default spine-head rig as a gorgeous starter!
-                            const bounds = calculateBoundingBox(selectedObject.points);
-                            const rootY = bounds.y + bounds.height * 0.8;
-                            const spineY = bounds.y + bounds.height * 0.5;
-                            const neckY = bounds.y + bounds.height * 0.35;
-                            const headY = bounds.y + bounds.height * 0.15;
-                            const centerX = bounds.x + bounds.width * 0.5;
-
-                            newBones = [
-                              { id: 'dr_root', name: 'root_bone', x: centerX, y: rootY, parentBoneId: null, childBoneIds: ['dr_spine'], influenceRadius: 150, angle: 0 },
-                              { id: 'dr_spine', name: 'spine_bone', x: centerX, y: spineY, parentBoneId: 'dr_root', childBoneIds: ['dr_neck'], influenceRadius: 120, angle: 0 },
-                              { id: 'dr_neck', name: 'neck_bone', x: centerX, y: neckY, parentBoneId: 'dr_spine', childBoneIds: ['dr_head'], influenceRadius: 100, angle: 0 },
-                              { id: 'dr_head', name: 'head_bone', x: centerX, y: headY, parentBoneId: 'dr_neck', childBoneIds: [], influenceRadius: 110, angle: 0 }
-                            ];
-                          }
-                          const pointWeights = calculateAutoWeights(selectedObject.points, newBones);
-                          const subPathsWeights = selectedObject.subPaths ? selectedObject.subPaths.map(sub => calculateAutoWeights(sub, newBones)) : undefined;
-
+                          const currentlyActive = selectedObject.lassoDeformState?.active ?? false;
+                          const currentDeform = selectedObject.lassoDeformState || {
+                            active: false,
+                            lassoPoints: [],
+                            transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, skewX: 0, skewY: 0, rotateX: 0, rotateY: 0, perspective: 0 }
+                          };
                           updateObject(selectedObject.id, {
-                            directRigState: {
-                              active: !rigActive,
-                              bonePoints: newBones,
-                              pointWeights,
-                              subPathsWeights,
-                              meshDensity: selectedObject.directRigState?.meshDensity || 'high'
+                            lassoDeformState: {
+                              ...currentDeform,
+                              active: !currentlyActive
                             }
                           });
                         }}
                         className={`text-[10px] font-black px-2.5 py-1 rounded-lg border transition-all ${
-                          selectedObject.directRigState?.active 
-                            ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' 
-                            : 'bg-neutral-800 text-neutral-400 border-neutral-700 hover:text-white'
+                          selectedObject.lassoDeformState?.active 
+                            ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 font-bold' 
+                            : 'bg-neutral-800 text-neutral-400 border-neutral-700 hover:text-white disabled:opacity-40 disabled:pointer-events-none'
                         }`}
                       >
-                        {selectedObject.directRigState?.active ? 'RIG ACTIVE' : 'RIG INACTIVE'}
+                        {selectedObject.lassoDeformState?.active ? 'TRANSFORM SELECTED' : 'APPLY TO LASSO'}
                       </button>
                     </div>
 
                     {/* Short instruction HUD */}
-                    <div className="bg-neutral-900/40 border border-neutral-800/40 rounded-xl p-3 text-[10.5px] leading-relaxed text-neutral-300 space-y-1.5">
-                      <div className="font-bold text-emerald-400 flex items-center gap-1">
-                        <Info className="w-3.5 h-3.5" /> Quick Guide: How to use Direct Rig
+                    <div className="bg-neutral-900/40 border border-neutral-800/40 rounded-xl p-3 text-[10.5px] leading-relaxed text-neutral-300 space-y-2">
+                      <div className="font-bold text-amber-400 flex items-center gap-1 font-mono">
+                        <Info className="w-3.5 h-3.5 animate-bounce" /> Guide: Lasso Selection Deform
                       </div>
                       <p>
-                        1. Select the <span className="text-emerald-400 font-bold">Direct Rig (Zap) tool</span> on the left toolbar.
+                        1. Select the <strong className="text-amber-400">Lasso tool (Sparkles)</strong> on the left toolbar and draw a closed region over the canvas.
                       </p>
                       <p>
-                        2. <span className="text-white font-semibold">Click on your drawing</span> to add joint points. They will link to form an skeletal rig.
+                        2. Click <span className="text-white font-semibold">"Set Selected Region"</span> to assign the lasso area to this drawing.
                       </p>
                       <p>
-                        3. Switch to the <span className="text-blue-400 font-bold">Select tool</span> to drag joints on the canvas, or use the sliders below to rotate them!
+                        3. Click <span className="text-white font-semibold">"APPLY TO LASSO"</span> above to transform ONLY the selected area using the sliders below.
                       </p>
                     </div>
 
-                    {selectedObject.directRigState?.active && (
-                      <div className="space-y-4">
-                        {/* Auto-Rig Helper Button */}
-                        <div className="flex gap-2">
-                          <button
-                            id="generate-humanoid-rig"
-                            onClick={() => {
-                              const bounds = calculateBoundingBox(selectedObject.points);
-                              const rootY = bounds.y + bounds.height * 0.8;
-                              const spineY = bounds.y + bounds.height * 0.55;
-                              const neckY = bounds.y + bounds.height * 0.38;
-                              const headY = bounds.y + bounds.height * 0.18;
-                              const centerX = bounds.x + bounds.width * 0.5;
-
-                              const characterBones: DirectRigBonePoint[] = [
-                                { id: 'dr_root', name: 'root_bone', x: centerX, y: rootY, parentBoneId: null, childBoneIds: ['dr_spine', 'dr_l_hip', 'dr_r_hip'], influenceRadius: 150, angle: 0 },
-                                { id: 'dr_spine', name: 'spine_bone', x: centerX, y: spineY, parentBoneId: 'dr_root', childBoneIds: ['dr_neck'], influenceRadius: 120, angle: 0 },
-                                { id: 'dr_neck', name: 'neck_bone', x: centerX, y: neckY, parentBoneId: 'dr_spine', childBoneIds: ['dr_head', 'dr_l_shoulder', 'dr_r_shoulder'], influenceRadius: 100, angle: 0 },
-                                { id: 'dr_head', name: 'head_bone', x: centerX, y: headY, parentBoneId: 'dr_neck', childBoneIds: [], influenceRadius: 110, angle: 0 },
-                                // Left Arm
-                                { id: 'dr_l_shoulder', name: 'left_shoulder', x: centerX - bounds.width * 0.25, y: neckY, parentBoneId: 'dr_neck', childBoneIds: ['dr_l_elbow'], influenceRadius: 80, angle: 0 },
-                                { id: 'dr_l_elbow', name: 'left_elbow', x: centerX - bounds.width * 0.4, y: spineY, parentBoneId: 'dr_l_shoulder', childBoneIds: [], influenceRadius: 70, angle: 0 },
-                                // Right Arm
-                                { id: 'dr_r_shoulder', name: 'right_shoulder', x: centerX + bounds.width * 0.25, y: neckY, parentBoneId: 'dr_neck', childBoneIds: ['dr_r_elbow'], influenceRadius: 80, angle: 0 },
-                                { id: 'dr_r_elbow', name: 'right_elbow', x: centerX + bounds.width * 0.4, y: spineY, parentBoneId: 'dr_r_shoulder', childBoneIds: [], influenceRadius: 70, angle: 0 },
-                                // Legs
-                                { id: 'dr_l_hip', name: 'left_hip', x: centerX - bounds.width * 0.15, y: rootY, parentBoneId: 'dr_root', childBoneIds: ['dr_l_knee'], influenceRadius: 90, angle: 0 },
-                                { id: 'dr_l_knee', name: 'left_knee', x: centerX - bounds.width * 0.2, y: rootY + bounds.height * 0.3, parentBoneId: 'dr_l_hip', childBoneIds: [], influenceRadius: 80, angle: 0 },
-                                { id: 'dr_r_hip', name: 'right_hip', x: centerX + bounds.width * 0.15, y: rootY, parentBoneId: 'dr_root', childBoneIds: ['dr_r_knee'], influenceRadius: 90, angle: 0 },
-                                { id: 'dr_r_knee', name: 'right_knee', x: centerX + bounds.width * 0.2, y: rootY + bounds.height * 0.3, parentBoneId: 'dr_r_hip', childBoneIds: [], influenceRadius: 80, angle: 0 },
-                              ];
-
-                              const pointWeights = calculateAutoWeights(selectedObject.points, characterBones);
-                              const subPathsWeights = selectedObject.subPaths ? selectedObject.subPaths.map(sub => calculateAutoWeights(sub, characterBones)) : undefined;
-
-                              updateObject(selectedObject.id, {
-                                directRigState: {
-                                  active: true,
-                                  bonePoints: characterBones,
-                                  pointWeights,
-                                  subPathsWeights,
-                                  meshDensity: selectedObject.directRigState?.meshDensity || 'high'
+                    <div className="space-y-3">
+                      {/* Controls Row */}
+                      <div className="flex gap-2">
+                        <button
+                          id="set-lasso-deform-region"
+                          disabled={lassoPoints.length === 0}
+                          onClick={() => {
+                            // Find local center pivot of the selected object
+                            const localPivot = selectedObject.pivots[0] || { localX: 0, localY: 0 };
+                            // Convert world lassoPoints to local coordinates of the selected object
+                            const localLassoPoints = lassoPoints.map(wp => worldToLocal(wp, selectedObject.transform, localPivot));
+                            
+                            updateObject(selectedObject.id, {
+                              lassoDeformState: {
+                                active: true,
+                                lassoPoints: localLassoPoints,
+                                transform: selectedObject.lassoDeformState?.transform || {
+                                  x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, skewX: 0, skewY: 0, rotateX: 0, rotateY: 0, perspective: 0
                                 }
+                              }
+                            });
+                          }}
+                          className="flex-1 py-2 bg-neutral-900 border border-neutral-800 hover:bg-neutral-800 text-neutral-300 hover:text-white text-[10px] font-black rounded-lg transition-all uppercase tracking-wider disabled:opacity-30 disabled:pointer-events-none"
+                        >
+                          Set Selected Region ({lassoPoints.length} PTS)
+                        </button>
+
+                        {(selectedObject.lassoDeformState?.lassoPoints?.length ?? 0) > 0 && (
+                          <button
+                            onClick={() => {
+                              updateObject(selectedObject.id, {
+                                lassoDeformState: undefined
                               });
                             }}
-                            className="w-full py-2 bg-neutral-800 hover:bg-emerald-500 hover:text-neutral-950 text-neutral-300 text-[10px] font-black rounded-lg transition-all uppercase tracking-wider border border-neutral-700/50"
+                            className="px-3 bg-neutral-900 border border-neutral-800 hover:border-rose-950 text-neutral-400 hover:text-rose-400 rounded-lg transition-all"
+                            title="Clear Deform Region"
                           >
-                            Generate Full Character Skeleton Rig
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
-                        </div>
-
-                        {/* Bone Points List with sliders */}
-                        <div className="space-y-3.5 max-h-[350px] overflow-y-auto pr-1 scrollbar-thin">
-                          <label className="text-[10px] text-neutral-400 block font-black uppercase tracking-wide">
-                            Bone Joint Rotators (Pose & Deform):
-                          </label>
-                          {(selectedObject.directRigState?.bonePoints || []).length === 0 ? (
-                            <p className="text-[10px] text-neutral-500 italic">No joint points placed yet. Click on drawing with the Zap tool to place them!</p>
-                          ) : (
-                            selectedObject.directRigState.bonePoints.map((bp) => (
-                              <div key={bp.id} className="bg-neutral-900/60 p-3 rounded-xl border border-neutral-800/80 space-y-2 text-[10px]">
-                                <div className="flex items-center justify-between">
-                                  <span className="font-bold text-white text-[11px] flex items-center gap-1">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                                    {bp.name}
-                                  </span>
-                                  <div className="flex items-center gap-1.5">
-                                    {bp.parentBoneId && (
-                                      <span className="text-[9px] text-neutral-500 bg-neutral-950 px-1.5 py-0.5 rounded">
-                                        🔗 {selectedObject.directRigState!.bonePoints.find(p => p.id === bp.parentBoneId)?.name || 'parent'}
-                                      </span>
-                                    )}
-                                    <button
-                                      onClick={() => {
-                                        const updatedBones = selectedObject.directRigState!.bonePoints.filter(b => b.id !== bp.id);
-                                        // clean parents
-                                        updatedBones.forEach(b => {
-                                          if (b.parentBoneId === bp.id) b.parentBoneId = null;
-                                          b.childBoneIds = b.childBoneIds.filter(cid => cid !== bp.id);
-                                        });
-
-                                        const pointWeights = calculateAutoWeights(selectedObject.points, updatedBones);
-                                        const subPathsWeights = selectedObject.subPaths ? selectedObject.subPaths.map(sub => calculateAutoWeights(sub, updatedBones)) : undefined;
-
-                                        updateObject(selectedObject.id, {
-                                          directRigState: {
-                                            ...selectedObject.directRigState!,
-                                            bonePoints: updatedBones,
-                                            pointWeights,
-                                            subPathsWeights
-                                          }
-                                        });
-                                      }}
-                                      className="text-neutral-500 hover:text-red-400 p-0.5"
-                                      title="Delete bone point"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  </div>
-                                </div>
-
-                                {/* Angle Slider */}
-                                <div className="space-y-1">
-                                  <div className="flex items-center justify-between text-neutral-400">
-                                    <span>Joint Angle (Deform)</span>
-                                    <span className="text-emerald-400 font-bold font-mono">{bp.angle || 0}°</span>
-                                  </div>
-                                  <input
-                                    type="range"
-                                    min="-180"
-                                    max="180"
-                                    value={bp.angle || 0}
-                                    onChange={(e) => {
-                                      const nextAngle = parseInt(e.target.value);
-                                      const updatedBones = selectedObject.directRigState!.bonePoints.map(b => {
-                                        if (b.id === bp.id) {
-                                          return { ...b, angle: nextAngle };
-                                        }
-                                        return b;
-                                      });
-                                      updateObject(selectedObject.id, {
-                                        directRigState: {
-                                          ...selectedObject.directRigState!,
-                                          bonePoints: updatedBones
-                                        }
-                                      });
-                                    }}
-                                    className="w-full accent-emerald-500 cursor-pointer h-1.5 rounded-lg bg-neutral-800"
-                                  />
-                                </div>
-
-                                {/* Influence Radius Slider */}
-                                <div className="space-y-1">
-                                  <div className="flex items-center justify-between text-neutral-400">
-                                    <span>Influence Distance</span>
-                                    <span className="text-neutral-300 font-bold font-mono">{bp.influenceRadius || 120}px</span>
-                                  </div>
-                                  <input
-                                    type="range"
-                                    min="20"
-                                    max="300"
-                                    value={bp.influenceRadius || 120}
-                                    onChange={(e) => {
-                                      const nextRadius = parseInt(e.target.value);
-                                      const updatedBones = selectedObject.directRigState!.bonePoints.map(b => {
-                                        if (b.id === bp.id) {
-                                          return { ...b, influenceRadius: nextRadius };
-                                        }
-                                        return b;
-                                      });
-                                      // Recompute skinning weights because influence radius changed!
-                                      const pointWeights = calculateAutoWeights(selectedObject.points, updatedBones);
-                                      const subPathsWeights = selectedObject.subPaths ? selectedObject.subPaths.map(sub => calculateAutoWeights(sub, updatedBones)) : undefined;
-
-                                      updateObject(selectedObject.id, {
-                                        directRigState: {
-                                          ...selectedObject.directRigState!,
-                                          bonePoints: updatedBones,
-                                          pointWeights,
-                                          subPathsWeights
-                                        }
-                                      });
-                                    }}
-                                    className="w-full accent-neutral-400 cursor-pointer h-1 rounded-lg bg-neutral-800"
-                                  />
-                                </div>
-                              </div>
-                            ))
-                          )}
-                        </div>
+                        )}
                       </div>
-                    )}
+
+                      {/* Display current region status */}
+                      <div className="flex items-center justify-between text-[10px] bg-neutral-900/40 px-3 py-2 rounded-xl border border-neutral-800/40">
+                        <span className="text-neutral-400 font-mono">Assigned Region:</span>
+                        <span className="text-neutral-200 font-bold font-mono">
+                          {selectedObject.lassoDeformState?.lassoPoints 
+                            ? `${selectedObject.lassoDeformState.lassoPoints.length} Points` 
+                            : 'None'}
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 )}
 
@@ -2803,43 +2705,43 @@ export default function RightPanel({
                       {/* Slider: Translate X */}
                       <div className="space-y-1">
                         <div className="flex items-center justify-between text-xs">
-                          <span className="text-neutral-400">Smooth Translate X</span>
-                          <span className="text-white font-bold">{selectedObject.transform.x.toFixed(1)}px</span>
+                          <span className="text-neutral-400">{isLassoActive ? 'Lasso Region X Nudge' : 'Smooth Translate X'}</span>
+                          <span className="text-white font-bold">{currentTransformObj ? currentTransformObj.x.toFixed(1) : '0.0'}px</span>
                         </div>
                         <input
                           type="range"
                           min="-500"
                           max="1500"
                           step="0.5"
-                          disabled={!isSmoothMoveEnabled}
-                          value={selectedObject.transform.x}
+                          disabled={!isLassoActive && !isSmoothMoveEnabled}
+                          value={currentTransformObj ? currentTransformObj.x : 0}
                           onChange={(e) => handleSliderChange('x', Number(e.target.value))}
                           className="w-full accent-amber-500 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
                         />
                         <div className="flex items-center justify-between gap-1.5 pt-0.5">
                           <button
-                            disabled={!isSmoothMoveEnabled}
+                            disabled={!isLassoActive && !isSmoothMoveEnabled}
                             onClick={() => handleNudge('x', -10)}
                             className="flex-1 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-40 disabled:pointer-events-none"
                           >
                             -10px
                           </button>
                           <button
-                            disabled={!isSmoothMoveEnabled}
+                            disabled={!isLassoActive && !isSmoothMoveEnabled}
                             onClick={() => handleNudge('x', -1)}
                             className="flex-1 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-40 disabled:pointer-events-none"
                           >
                             -1px
                           </button>
                           <button
-                            disabled={!isSmoothMoveEnabled}
+                            disabled={!isLassoActive && !isSmoothMoveEnabled}
                             onClick={() => handleNudge('x', 1)}
                             className="flex-1 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-40 disabled:pointer-events-none"
                           >
                             +1px
                           </button>
                           <button
-                            disabled={!isSmoothMoveEnabled}
+                            disabled={!isLassoActive && !isSmoothMoveEnabled}
                             onClick={() => handleNudge('x', 10)}
                             className="flex-1 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-40 disabled:pointer-events-none"
                           >
@@ -2851,43 +2753,43 @@ export default function RightPanel({
                       {/* Slider: Translate Y */}
                       <div className="space-y-1">
                         <div className="flex items-center justify-between text-xs">
-                          <span className="text-neutral-400">Smooth Translate Y</span>
-                          <span className="text-white font-bold">{selectedObject.transform.y.toFixed(1)}px</span>
+                          <span className="text-neutral-400">{isLassoActive ? 'Lasso Region Y Nudge' : 'Smooth Translate Y'}</span>
+                          <span className="text-white font-bold">{currentTransformObj ? currentTransformObj.y.toFixed(1) : '0.0'}px</span>
                         </div>
                         <input
                           type="range"
                           min="-500"
                           max="1500"
                           step="0.5"
-                          disabled={!isSmoothMoveEnabled}
-                          value={selectedObject.transform.y}
+                          disabled={!isLassoActive && !isSmoothMoveEnabled}
+                          value={currentTransformObj ? currentTransformObj.y : 0}
                           onChange={(e) => handleSliderChange('y', Number(e.target.value))}
                           className="w-full accent-amber-500 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
                         />
                         <div className="flex items-center justify-between gap-1.5 pt-0.5">
                           <button
-                            disabled={!isSmoothMoveEnabled}
+                            disabled={!isLassoActive && !isSmoothMoveEnabled}
                             onClick={() => handleNudge('y', -10)}
                             className="flex-1 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-40 disabled:pointer-events-none"
                           >
                             -10px
                           </button>
                           <button
-                            disabled={!isSmoothMoveEnabled}
+                            disabled={!isLassoActive && !isSmoothMoveEnabled}
                             onClick={() => handleNudge('y', -1)}
                             className="flex-1 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-40 disabled:pointer-events-none"
                           >
                             -1px
                           </button>
                           <button
-                            disabled={!isSmoothMoveEnabled}
+                            disabled={!isLassoActive && !isSmoothMoveEnabled}
                             onClick={() => handleNudge('y', 1)}
                             className="flex-1 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-40 disabled:pointer-events-none"
                           >
                             +1px
                           </button>
                           <button
-                            disabled={!isSmoothMoveEnabled}
+                            disabled={!isLassoActive && !isSmoothMoveEnabled}
                             onClick={() => handleNudge('y', 10)}
                             className="flex-1 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-40 disabled:pointer-events-none"
                           >
@@ -2903,20 +2805,20 @@ export default function RightPanel({
                 <div className="space-y-4">
                   <div className="text-[10px] text-neutral-500 font-black uppercase tracking-wider flex items-center gap-1">
                     <Maximize2 className="w-3.5 h-3.5 text-amber-500" />
-                    TRANSFORMS (PRECISION)
+                    TRANSFORMS (PRECISION) {isLassoActive && <span className="text-[9px] text-amber-400 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded ml-auto">LASSO SELECTED</span>}
                   </div>
 
                   {/* Slider: Rotate */}
                   <div className="space-y-1">
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-neutral-400">Rotation</span>
-                      <span className="text-white font-bold">{selectedObject.transform.rotation}°</span>
+                      <span className="text-white font-bold">{(currentTransformObj?.rotation ?? 0)}°</span>
                     </div>
                     <input
                       type="range"
                       min="-360"
                       max="360"
-                      value={selectedObject.transform.rotation}
+                      value={currentTransformObj?.rotation ?? 0}
                       onChange={(e) => handleSliderChange('rotation', Number(e.target.value))}
                       className="w-full accent-amber-500 cursor-pointer"
                     />
@@ -2952,14 +2854,14 @@ export default function RightPanel({
                   <div className="space-y-1">
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-neutral-400">Scale X (Width)</span>
-                      <span className="text-white font-bold">{selectedObject.transform.scaleX.toFixed(2)}x</span>
+                      <span className="text-white font-bold">{(currentTransformObj?.scaleX ?? 1).toFixed(2)}x</span>
                     </div>
                     <input
                       type="range"
                       min="0.1"
                       max="4"
                       step="0.05"
-                      value={selectedObject.transform.scaleX}
+                      value={currentTransformObj?.scaleX ?? 1}
                       onChange={(e) => handleSliderChange('scaleX', Number(e.target.value))}
                       className="w-full accent-amber-500 cursor-pointer"
                     />
@@ -2983,14 +2885,14 @@ export default function RightPanel({
                   <div className="space-y-1">
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-neutral-400">Scale Y (Height)</span>
-                      <span className="text-white font-bold">{(selectedObject.transform.scaleY ?? 1).toFixed(2)}x</span>
+                      <span className="text-white font-bold">{(currentTransformObj?.scaleY ?? 1).toFixed(2)}x</span>
                     </div>
                     <input
                       type="range"
                       min="0.1"
                       max="4"
                       step="0.05"
-                      value={selectedObject.transform.scaleY ?? 1}
+                      value={currentTransformObj?.scaleY ?? 1}
                       onChange={(e) => handleSliderChange('scaleY', Number(e.target.value))}
                       className="w-full accent-amber-500 cursor-pointer"
                     />
@@ -3014,14 +2916,14 @@ export default function RightPanel({
                   <div className="space-y-1 pt-1 border-t border-neutral-800/30">
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-neutral-400">Skew X (horizontal skew)</span>
-                      <span className="text-white font-bold">{selectedObject.transform.skewX ?? 0}°</span>
+                      <span className="text-white font-bold">{(currentTransformObj?.skewX ?? 0)}°</span>
                     </div>
                     <input
                       type="range"
                       min="-60"
                       max="60"
                       step="1"
-                      value={selectedObject.transform.skewX ?? 0}
+                      value={currentTransformObj?.skewX ?? 0}
                       onChange={(e) => handleSliderChange('skewX', Number(e.target.value))}
                       className="w-full accent-amber-500 cursor-pointer"
                     />
@@ -3045,14 +2947,14 @@ export default function RightPanel({
                   <div className="space-y-1">
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-neutral-400">Skew Y (vertical skew)</span>
-                      <span className="text-white font-bold">{selectedObject.transform.skewY ?? 0}°</span>
+                      <span className="text-white font-bold">{(currentTransformObj?.skewY ?? 0)}°</span>
                     </div>
                     <input
                       type="range"
                       min="-60"
                       max="60"
                       step="1"
-                      value={selectedObject.transform.skewY ?? 0}
+                      value={currentTransformObj?.skewY ?? 0}
                       onChange={(e) => handleSliderChange('skewY', Number(e.target.value))}
                       className="w-full accent-amber-500 cursor-pointer"
                     />
@@ -3076,14 +2978,14 @@ export default function RightPanel({
                   <div className="space-y-1 pt-1 border-t border-neutral-800/30">
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-neutral-400">Rotate X (3D Flip X)</span>
-                      <span className="text-white font-bold">{selectedObject.transform.rotateX ?? 0}°</span>
+                      <span className="text-white font-bold">{(currentTransformObj?.rotateX ?? 0)}°</span>
                     </div>
                     <input
                       type="range"
                       min="-90"
                       max="90"
                       step="1"
-                      value={selectedObject.transform.rotateX ?? 0}
+                      value={currentTransformObj?.rotateX ?? 0}
                       onChange={(e) => handleSliderChange('rotateX', Number(e.target.value))}
                       className="w-full accent-amber-500 cursor-pointer"
                     />
@@ -3107,14 +3009,14 @@ export default function RightPanel({
                   <div className="space-y-1">
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-neutral-400">Rotate Y (3D Flip Y)</span>
-                      <span className="text-white font-bold">{selectedObject.transform.rotateY ?? 0}°</span>
+                      <span className="text-white font-bold">{(currentTransformObj?.rotateY ?? 0)}°</span>
                     </div>
                     <input
                       type="range"
                       min="-90"
                       max="90"
                       step="1"
-                      value={selectedObject.transform.rotateY ?? 0}
+                      value={currentTransformObj?.rotateY ?? 0}
                       onChange={(e) => handleSliderChange('rotateY', Number(e.target.value))}
                       className="w-full accent-amber-500 cursor-pointer"
                     />
@@ -3138,14 +3040,14 @@ export default function RightPanel({
                   <div className="space-y-1">
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-neutral-400">Perspective Depth</span>
-                      <span className="text-white font-bold">{selectedObject.transform.perspective ?? 0}px</span>
+                      <span className="text-white font-bold">{(currentTransformObj?.perspective ?? 0)}px</span>
                     </div>
                     <input
                       type="range"
                       min="0"
                       max="800"
                       step="10"
-                      value={selectedObject.transform.perspective ?? 0}
+                      value={currentTransformObj?.perspective ?? 0}
                       onChange={(e) => handleSliderChange('perspective', Number(e.target.value))}
                       className="w-full accent-amber-500 cursor-pointer"
                     />

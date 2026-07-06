@@ -141,30 +141,10 @@ export interface View360 {
   bones?: Bone[];
 }
 
-export interface DirectRigBonePoint {
-  id: string;
-  name: string;
-  x: number; // local coordinates (within the bounds of the drawing object)
-  y: number;
-  parentBoneId: string | null;
-  childBoneIds: string[];
-  influenceRadius: number;
-  angle: number; // local joint angle in degrees
-  originalAngle?: number;
-}
-
-export interface DirectRigWeight {
-  assignedBoneId: string | null;
-  weight: number;
-  secondaryWeights?: { boneId: string; weight: number }[];
-}
-
-export interface DirectRigState {
-  active: boolean;
-  bonePoints: DirectRigBonePoint[];
-  pointWeights: DirectRigWeight[]; // parallel to VectorObject.points
-  subPathsWeights?: DirectRigWeight[][]; // parallel to VectorObject.subPaths
-  meshDensity?: 'low' | 'medium' | 'high';
+export interface LassoDeformState {
+  active: boolean; // Is lasso deformation active?
+  lassoPoints: Point[]; // Lasso points in LOCAL coordinates of the object
+  transform: Transform; // Transform applied exclusively to the vertices inside the lasso
 }
 
 export interface VectorObject {
@@ -218,7 +198,7 @@ export interface VectorObject {
   currentAngle360?: number;
   activeViewId360?: string;
   lockAngle360?: boolean;
-  directRigState?: DirectRigState;
+  lassoDeformState?: LassoDeformState;
 }
 
 export interface Layer {
