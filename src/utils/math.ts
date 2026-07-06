@@ -499,3 +499,200 @@ export function findClosestView360(views: any[] | undefined, angle: number): any
   });
   return closest;
 }
+
+// 🦴 Direct Rig Forward Kinematics solver
+export function computeBoneTransforms(
+  bonePoints: any[]
+): { [id: string]: { currentX: number; currentY: number; cumulativeAngle: number } } {
+  const results: { [id: string]: { currentX: number; currentY: number; cumulativeAngle: number } } = {};
+  
+  if (!bonePoints || bonePoints.length === 0) return results;
+
+  // Find root bones (parentBoneId is null or empty)
+  const rootBones = bonePoints.filter(b => !b.parentBoneId);
+  if (rootBones.length === 0 && bonePoints.length > 0) {
+    rootBones.push(bonePoints[0]);
+  }
+
+  // Initialize roots in results
+  rootBones.forEach(r => {
+    results[r.id] = {
+      currentX: r.x,
+      currentY: r.y,
+      cumulativeAngle: r.angle || 0
+    };
+  });
+
+  const queue = [...rootBones.map(b => ({
+    bone: b,
+    parentX: b.x,
+    parentY: b.y,
+    parentAngle: 0
+  }))];
+
+  const visited = new Set<string>();
+
+  while (queue.length > 0) {
+    const curr = queue.shift()!;
+    if (visited.has(curr.bone.id)) continue;
+    visited.add(curr.bone.id);
+
+    const currTransform = results[curr.bone.id];
+    const currX = currTransform ? currTransform.currentX : curr.bone.x;
+    const currY = currTransform ? currTransform.currentY : curr.bone.y;
+    const currAngle = currTransform ? currTransform.cumulativeAngle : (curr.bone.angle || 0);
+
+    // Find children
+    const children = bonePoints.filter(b => b.parentBoneId === curr.bone.id);
+    children.forEach(child => {
+      // Relative vector from parent to child in rest pose
+      const dx = child.x - curr.bone.x;
+      const dy = child.y - curr.bone.y;
+
+      // Rotate this relative vector by parent's cumulative angle
+      const rad = (currAngle * Math.PI) / 180;
+      const rotatedDx = dx * Math.cos(rad) - dy * Math.sin(rad);
+      const rotatedDy = dx * Math.sin(rad) + dy * Math.cos(rad);
+
+      const childCurrentX = currX + rotatedDx;
+      const childCurrentY = currY + rotatedDy;
+      const childCumulativeAngle = currAngle + (child.angle || 0);
+
+      results[child.id] = {
+        currentX: childCurrentX,
+        currentY: childCurrentY,
+        cumulativeAngle: childCumulativeAngle
+      };
+
+      queue.push({
+        bone: child,
+        parentX: childCurrentX,
+        parentY: childCurrentY,
+        parentAngle: childCumulativeAngle
+      });
+    });
+  }
+
+  // Fallback for any disconnected bone points
+  bonePoints.forEach(b => {
+    if (!results[b.id]) {
+      results[b.id] = {
+        currentX: b.x,
+        currentY: b.y,
+        cumulativeAngle: b.angle || 0
+      };
+    }
+  });
+
+  return results;
+}
+
+// 🦴 Linear Blend Skinning Point Deformer
+export function deformPointLBS(
+  p: Point,
+  bonePoints: any[],
+  boneTransforms: { [id: string]: { currentX: number; currentY: number; cumulativeAngle: number } },
+  weights: any | undefined
+): Point {
+  if (!weights || (!weights.assignedBoneId && (!weights.secondaryWeights || weights.secondaryWeights.length === 0))) {
+    return p;
+  }
+
+  let finalX = 0;
+  let finalY = 0;
+  let totalW = 0;
+
+  const influences: { boneId: string; weight: number }[] = [];
+  if (weights.assignedBoneId && weights.weight > 0) {
+    influences.push({ boneId: weights.assignedBoneId, weight: weights.weight });
+  }
+  if (weights.secondaryWeights) {
+    weights.secondaryWeights.forEach((sw: any) => {
+      if (sw.weight > 0) {
+        influences.push({ boneId: sw.boneId, weight: sw.weight });
+      }
+    });
+  }
+
+  if (influences.length === 0) return p;
+
+  influences.forEach(inf => { totalW += inf.weight; });
+  if (totalW === 0) return p;
+
+  influences.forEach(inf => {
+    const w = inf.weight / totalW;
+    const transform = boneTransforms[inf.boneId];
+    const bp = bonePoints.find(b => b.id === inf.boneId);
+
+    if (transform && bp) {
+      const bx0 = bp.x;
+      const by0 = bp.y;
+
+      const bx = transform.currentX;
+      const by = transform.currentY;
+
+      const dx = p.x - bx0;
+      const dy = p.y - by0;
+
+      const rad = (transform.cumulativeAngle * Math.PI) / 180;
+      const rx = dx * Math.cos(rad) - dy * Math.sin(rad);
+      const ry = dx * Math.sin(rad) + dy * Math.cos(rad);
+
+      finalX += (bx + rx) * w;
+      finalY += (by + ry) * w;
+    } else {
+      finalX += p.x * w;
+      finalY += p.y * w;
+    }
+  });
+
+  return { ...p, x: finalX, y: finalY };
+}
+
+// 🦴 Automatic skinning weight painter
+export function calculateAutoWeights(
+  points: Point[],
+  bonePoints: any[]
+): any[] {
+  return points.map(p => {
+    if (!bonePoints || bonePoints.length === 0) {
+      return { assignedBoneId: null, weight: 0, secondaryWeights: [] };
+    }
+
+    const dists = bonePoints.map(bp => {
+      const dx = p.x - bp.x;
+      const dy = p.y - bp.y;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      return { bp, d };
+    });
+
+    dists.sort((a, b) => a.d - b.d);
+    const primaryBone = dists[0].bp;
+    const minD = dists[0].d;
+
+    const influenceRadius = primaryBone.influenceRadius || 120;
+    let weight = 0;
+    if (minD < influenceRadius) {
+      weight = 1 - (minD / influenceRadius);
+    } else {
+      weight = 0.05;
+    }
+
+    const secondaryWeights: { boneId: string; weight: number }[] = [];
+    dists.slice(1, 4).forEach(item => {
+      const rad = (item.bp.influenceRadius || 120) * 1.5;
+      if (item.d < rad) {
+        const sw = (1 - (item.d / rad)) * 0.4;
+        if (sw > 0) {
+          secondaryWeights.push({ boneId: item.bp.id, weight: sw });
+        }
+      }
+    });
+
+    return {
+      assignedBoneId: primaryBone.id,
+      weight,
+      secondaryWeights
+    };
+  });
+}

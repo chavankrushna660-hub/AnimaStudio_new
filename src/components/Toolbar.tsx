@@ -42,6 +42,7 @@ export default function Toolbar({
     { id: 'ERS', name: 'Eraser', label: 'Eraser Tool (ERS)', icon: EraserIcon },
     { id: 'PVT', name: 'Pivot', label: 'Pivot Tool (PVT)', icon: AnchorIcon },
     { id: 'BON', name: 'Bone', label: 'Bone Tool (BON)', icon: BoneIcon },
+    { id: 'DRIG', name: 'Direct Rig', label: 'Direct Rig (DRIG)', icon: ZapIcon, desc: 'Add bone points and auto-rig the entire drawing instantly' },
     { id: "KNF", name: "Knife", label: "Knife Tool (KNF)", icon: ScissorsIcon },
     { id: "PIN", name: "Puppet Pin", label: "Puppet Pin (PIN)", icon: PinIcon },
     { id: 'FIL', name: 'Fill', label: 'Fill Bucket (FIL)', icon: PaintBucketIcon },
@@ -124,6 +125,7 @@ function FeatherIcon(props: any) { return <PenTool {...props} /> }
 function PinIcon(props: any) { return <MapPin {...props} /> }
 function AnchorIcon(props: any) { return <CircleDot {...props} /> }
 function BoneIcon(props: any) { return <GitFork {...props} /> }
+function ZapIcon(props: any) { return <Zap {...props} /> }
 function PaintBucketIcon(props: any) { return <Palette {...props} /> }
 function ShapesIcon(props: any) { return <LayoutGrid {...props} /> }
 function CropIcon(props: any) { return <Crop {...props} /> }

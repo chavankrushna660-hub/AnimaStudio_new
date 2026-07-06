@@ -22,10 +22,12 @@ import {
   FolderPlus,
   Link,
   Unlink,
-  Play
+  Play,
+  Zap,
+  Info
 } from 'lucide-react';
-import { VectorObject, Bone, Layer, Pivot, Transform, Point, Frame, RealismSettings } from '../types';
-import { distance, localToWorld, worldToLocal, calculateBoundingBox, isPointInPolygon, findClosestView360 } from '../utils/math';
+import { VectorObject, Bone, Layer, Pivot, Transform, Point, Frame, RealismSettings, DirectRigBonePoint } from '../types';
+import { distance, localToWorld, worldToLocal, calculateBoundingBox, isPointInPolygon, findClosestView360, calculateAutoWeights, computeBoneTransforms } from '../utils/math';
 
 interface RightPanelProps {
   selectedObject: VectorObject | null;
@@ -1201,6 +1203,251 @@ export default function RightPanel({
               </div>
             ) : (
               <>
+                {/* DIRECT RIG & DEEP DEFORM PANEL */}
+                {selectedObject && (
+                  <div className="space-y-4 bg-emerald-500/5 p-4 rounded-2xl border border-emerald-500/20 shadow-lg shadow-black/20">
+                    <div className="flex items-center justify-between border-b border-emerald-500/10 pb-2.5">
+                      <span className="text-xs font-black uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                        <Zap className="w-4 h-4 text-emerald-400 animate-pulse" />
+                        DIRECT RIG & DEEP DEFORM
+                      </span>
+                      <button
+                        id="toggle-direct-rig"
+                        onClick={() => {
+                          const rigActive = selectedObject.directRigState?.active ?? false;
+                          const currentBones = selectedObject.directRigState?.bonePoints || [];
+                          // Auto rig if no bones exist yet!
+                          let newBones = currentBones;
+                          if (newBones.length === 0) {
+                            // Let's create a default spine-head rig as a gorgeous starter!
+                            const bounds = calculateBoundingBox(selectedObject.points);
+                            const rootY = bounds.y + bounds.height * 0.8;
+                            const spineY = bounds.y + bounds.height * 0.5;
+                            const neckY = bounds.y + bounds.height * 0.35;
+                            const headY = bounds.y + bounds.height * 0.15;
+                            const centerX = bounds.x + bounds.width * 0.5;
+
+                            newBones = [
+                              { id: 'dr_root', name: 'root_bone', x: centerX, y: rootY, parentBoneId: null, childBoneIds: ['dr_spine'], influenceRadius: 150, angle: 0 },
+                              { id: 'dr_spine', name: 'spine_bone', x: centerX, y: spineY, parentBoneId: 'dr_root', childBoneIds: ['dr_neck'], influenceRadius: 120, angle: 0 },
+                              { id: 'dr_neck', name: 'neck_bone', x: centerX, y: neckY, parentBoneId: 'dr_spine', childBoneIds: ['dr_head'], influenceRadius: 100, angle: 0 },
+                              { id: 'dr_head', name: 'head_bone', x: centerX, y: headY, parentBoneId: 'dr_neck', childBoneIds: [], influenceRadius: 110, angle: 0 }
+                            ];
+                          }
+                          const pointWeights = calculateAutoWeights(selectedObject.points, newBones);
+                          const subPathsWeights = selectedObject.subPaths ? selectedObject.subPaths.map(sub => calculateAutoWeights(sub, newBones)) : undefined;
+
+                          updateObject(selectedObject.id, {
+                            directRigState: {
+                              active: !rigActive,
+                              bonePoints: newBones,
+                              pointWeights,
+                              subPathsWeights,
+                              meshDensity: selectedObject.directRigState?.meshDensity || 'high'
+                            }
+                          });
+                        }}
+                        className={`text-[10px] font-black px-2.5 py-1 rounded-lg border transition-all ${
+                          selectedObject.directRigState?.active 
+                            ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' 
+                            : 'bg-neutral-800 text-neutral-400 border-neutral-700 hover:text-white'
+                        }`}
+                      >
+                        {selectedObject.directRigState?.active ? 'RIG ACTIVE' : 'RIG INACTIVE'}
+                      </button>
+                    </div>
+
+                    {/* Short instruction HUD */}
+                    <div className="bg-neutral-900/40 border border-neutral-800/40 rounded-xl p-3 text-[10.5px] leading-relaxed text-neutral-300 space-y-1.5">
+                      <div className="font-bold text-emerald-400 flex items-center gap-1">
+                        <Info className="w-3.5 h-3.5" /> Quick Guide: How to use Direct Rig
+                      </div>
+                      <p>
+                        1. Select the <span className="text-emerald-400 font-bold">Direct Rig (Zap) tool</span> on the left toolbar.
+                      </p>
+                      <p>
+                        2. <span className="text-white font-semibold">Click on your drawing</span> to add joint points. They will link to form an skeletal rig.
+                      </p>
+                      <p>
+                        3. Switch to the <span className="text-blue-400 font-bold">Select tool</span> to drag joints on the canvas, or use the sliders below to rotate them!
+                      </p>
+                    </div>
+
+                    {selectedObject.directRigState?.active && (
+                      <div className="space-y-4">
+                        {/* Auto-Rig Helper Button */}
+                        <div className="flex gap-2">
+                          <button
+                            id="generate-humanoid-rig"
+                            onClick={() => {
+                              const bounds = calculateBoundingBox(selectedObject.points);
+                              const rootY = bounds.y + bounds.height * 0.8;
+                              const spineY = bounds.y + bounds.height * 0.55;
+                              const neckY = bounds.y + bounds.height * 0.38;
+                              const headY = bounds.y + bounds.height * 0.18;
+                              const centerX = bounds.x + bounds.width * 0.5;
+
+                              const characterBones: DirectRigBonePoint[] = [
+                                { id: 'dr_root', name: 'root_bone', x: centerX, y: rootY, parentBoneId: null, childBoneIds: ['dr_spine', 'dr_l_hip', 'dr_r_hip'], influenceRadius: 150, angle: 0 },
+                                { id: 'dr_spine', name: 'spine_bone', x: centerX, y: spineY, parentBoneId: 'dr_root', childBoneIds: ['dr_neck'], influenceRadius: 120, angle: 0 },
+                                { id: 'dr_neck', name: 'neck_bone', x: centerX, y: neckY, parentBoneId: 'dr_spine', childBoneIds: ['dr_head', 'dr_l_shoulder', 'dr_r_shoulder'], influenceRadius: 100, angle: 0 },
+                                { id: 'dr_head', name: 'head_bone', x: centerX, y: headY, parentBoneId: 'dr_neck', childBoneIds: [], influenceRadius: 110, angle: 0 },
+                                // Left Arm
+                                { id: 'dr_l_shoulder', name: 'left_shoulder', x: centerX - bounds.width * 0.25, y: neckY, parentBoneId: 'dr_neck', childBoneIds: ['dr_l_elbow'], influenceRadius: 80, angle: 0 },
+                                { id: 'dr_l_elbow', name: 'left_elbow', x: centerX - bounds.width * 0.4, y: spineY, parentBoneId: 'dr_l_shoulder', childBoneIds: [], influenceRadius: 70, angle: 0 },
+                                // Right Arm
+                                { id: 'dr_r_shoulder', name: 'right_shoulder', x: centerX + bounds.width * 0.25, y: neckY, parentBoneId: 'dr_neck', childBoneIds: ['dr_r_elbow'], influenceRadius: 80, angle: 0 },
+                                { id: 'dr_r_elbow', name: 'right_elbow', x: centerX + bounds.width * 0.4, y: spineY, parentBoneId: 'dr_r_shoulder', childBoneIds: [], influenceRadius: 70, angle: 0 },
+                                // Legs
+                                { id: 'dr_l_hip', name: 'left_hip', x: centerX - bounds.width * 0.15, y: rootY, parentBoneId: 'dr_root', childBoneIds: ['dr_l_knee'], influenceRadius: 90, angle: 0 },
+                                { id: 'dr_l_knee', name: 'left_knee', x: centerX - bounds.width * 0.2, y: rootY + bounds.height * 0.3, parentBoneId: 'dr_l_hip', childBoneIds: [], influenceRadius: 80, angle: 0 },
+                                { id: 'dr_r_hip', name: 'right_hip', x: centerX + bounds.width * 0.15, y: rootY, parentBoneId: 'dr_root', childBoneIds: ['dr_r_knee'], influenceRadius: 90, angle: 0 },
+                                { id: 'dr_r_knee', name: 'right_knee', x: centerX + bounds.width * 0.2, y: rootY + bounds.height * 0.3, parentBoneId: 'dr_r_hip', childBoneIds: [], influenceRadius: 80, angle: 0 },
+                              ];
+
+                              const pointWeights = calculateAutoWeights(selectedObject.points, characterBones);
+                              const subPathsWeights = selectedObject.subPaths ? selectedObject.subPaths.map(sub => calculateAutoWeights(sub, characterBones)) : undefined;
+
+                              updateObject(selectedObject.id, {
+                                directRigState: {
+                                  active: true,
+                                  bonePoints: characterBones,
+                                  pointWeights,
+                                  subPathsWeights,
+                                  meshDensity: selectedObject.directRigState?.meshDensity || 'high'
+                                }
+                              });
+                            }}
+                            className="w-full py-2 bg-neutral-800 hover:bg-emerald-500 hover:text-neutral-950 text-neutral-300 text-[10px] font-black rounded-lg transition-all uppercase tracking-wider border border-neutral-700/50"
+                          >
+                            Generate Full Character Skeleton Rig
+                          </button>
+                        </div>
+
+                        {/* Bone Points List with sliders */}
+                        <div className="space-y-3.5 max-h-[350px] overflow-y-auto pr-1 scrollbar-thin">
+                          <label className="text-[10px] text-neutral-400 block font-black uppercase tracking-wide">
+                            Bone Joint Rotators (Pose & Deform):
+                          </label>
+                          {(selectedObject.directRigState?.bonePoints || []).length === 0 ? (
+                            <p className="text-[10px] text-neutral-500 italic">No joint points placed yet. Click on drawing with the Zap tool to place them!</p>
+                          ) : (
+                            selectedObject.directRigState.bonePoints.map((bp) => (
+                              <div key={bp.id} className="bg-neutral-900/60 p-3 rounded-xl border border-neutral-800/80 space-y-2 text-[10px]">
+                                <div className="flex items-center justify-between">
+                                  <span className="font-bold text-white text-[11px] flex items-center gap-1">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                                    {bp.name}
+                                  </span>
+                                  <div className="flex items-center gap-1.5">
+                                    {bp.parentBoneId && (
+                                      <span className="text-[9px] text-neutral-500 bg-neutral-950 px-1.5 py-0.5 rounded">
+                                        🔗 {selectedObject.directRigState!.bonePoints.find(p => p.id === bp.parentBoneId)?.name || 'parent'}
+                                      </span>
+                                    )}
+                                    <button
+                                      onClick={() => {
+                                        const updatedBones = selectedObject.directRigState!.bonePoints.filter(b => b.id !== bp.id);
+                                        // clean parents
+                                        updatedBones.forEach(b => {
+                                          if (b.parentBoneId === bp.id) b.parentBoneId = null;
+                                          b.childBoneIds = b.childBoneIds.filter(cid => cid !== bp.id);
+                                        });
+
+                                        const pointWeights = calculateAutoWeights(selectedObject.points, updatedBones);
+                                        const subPathsWeights = selectedObject.subPaths ? selectedObject.subPaths.map(sub => calculateAutoWeights(sub, updatedBones)) : undefined;
+
+                                        updateObject(selectedObject.id, {
+                                          directRigState: {
+                                            ...selectedObject.directRigState!,
+                                            bonePoints: updatedBones,
+                                            pointWeights,
+                                            subPathsWeights
+                                          }
+                                        });
+                                      }}
+                                      className="text-neutral-500 hover:text-red-400 p-0.5"
+                                      title="Delete bone point"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {/* Angle Slider */}
+                                <div className="space-y-1">
+                                  <div className="flex items-center justify-between text-neutral-400">
+                                    <span>Joint Angle (Deform)</span>
+                                    <span className="text-emerald-400 font-bold font-mono">{bp.angle || 0}°</span>
+                                  </div>
+                                  <input
+                                    type="range"
+                                    min="-180"
+                                    max="180"
+                                    value={bp.angle || 0}
+                                    onChange={(e) => {
+                                      const nextAngle = parseInt(e.target.value);
+                                      const updatedBones = selectedObject.directRigState!.bonePoints.map(b => {
+                                        if (b.id === bp.id) {
+                                          return { ...b, angle: nextAngle };
+                                        }
+                                        return b;
+                                      });
+                                      updateObject(selectedObject.id, {
+                                        directRigState: {
+                                          ...selectedObject.directRigState!,
+                                          bonePoints: updatedBones
+                                        }
+                                      });
+                                    }}
+                                    className="w-full accent-emerald-500 cursor-pointer h-1.5 rounded-lg bg-neutral-800"
+                                  />
+                                </div>
+
+                                {/* Influence Radius Slider */}
+                                <div className="space-y-1">
+                                  <div className="flex items-center justify-between text-neutral-400">
+                                    <span>Influence Distance</span>
+                                    <span className="text-neutral-300 font-bold font-mono">{bp.influenceRadius || 120}px</span>
+                                  </div>
+                                  <input
+                                    type="range"
+                                    min="20"
+                                    max="300"
+                                    value={bp.influenceRadius || 120}
+                                    onChange={(e) => {
+                                      const nextRadius = parseInt(e.target.value);
+                                      const updatedBones = selectedObject.directRigState!.bonePoints.map(b => {
+                                        if (b.id === bp.id) {
+                                          return { ...b, influenceRadius: nextRadius };
+                                        }
+                                        return b;
+                                      });
+                                      // Recompute skinning weights because influence radius changed!
+                                      const pointWeights = calculateAutoWeights(selectedObject.points, updatedBones);
+                                      const subPathsWeights = selectedObject.subPaths ? selectedObject.subPaths.map(sub => calculateAutoWeights(sub, updatedBones)) : undefined;
+
+                                      updateObject(selectedObject.id, {
+                                        directRigState: {
+                                          ...selectedObject.directRigState!,
+                                          bonePoints: updatedBones,
+                                          pointWeights,
+                                          subPathsWeights
+                                        }
+                                      });
+                                    }}
+                                    className="w-full accent-neutral-400 cursor-pointer h-1 rounded-lg bg-neutral-800"
+                                  />
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* MESH TRANSFORM OPTIONS */}
                 {activeTool === 'MSH' && (
                   <div className="space-y-4 bg-amber-500/5 p-4 rounded-2xl border border-amber-400/20 shadow-lg shadow-black/20">

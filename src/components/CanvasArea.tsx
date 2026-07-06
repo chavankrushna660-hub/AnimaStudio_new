@@ -11,7 +11,10 @@ import {
   deformPoints, 
   calculateBoundingBox,
   rotatePoint,
-  findClosestView360
+  findClosestView360,
+  computeBoneTransforms,
+  deformPointLBS,
+  calculateAutoWeights
 } from '../utils/math';
 
 // Mesh Warp Bilinear Interpolation helper
@@ -103,6 +106,72 @@ const deformWithPuppetPins = (p: Point, pins: Pivot[]) => {
   }
   
   return p;
+};
+
+// Textured triangle renderer for 2D HTML5 Canvas
+const drawTexturedTriangle = (
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  u0: number, v0: number,
+  u1: number, v1: number,
+  u2: number, v2: number,
+  x0: number, y0: number,
+  x1: number, y1: number,
+  x2: number, y2: number
+) => {
+  // Find centroid of destination triangle
+  const cx = (x0 + x1 + x2) / 3;
+  const cy = (y0 + y1 + y2) / 3;
+
+  // Slightly push vertices outward from centroid (e.g. by 0.5 pixels) to avoid rendering seams
+  const expand = 0.5;
+  
+  let dx0 = x0 - cx;
+  let dy0 = y0 - cy;
+  let len0 = Math.sqrt(dx0 * dx0 + dy0 * dy0);
+  if (len0 > 0) {
+    x0 += (dx0 / len0) * expand;
+    y0 += (dy0 / len0) * expand;
+  }
+
+  let dx1 = x1 - cx;
+  let dy1 = y1 - cy;
+  let len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1);
+  if (len1 > 0) {
+    x1 += (dx1 / len1) * expand;
+    y1 += (dy1 / len1) * expand;
+  }
+
+  let dx2 = x2 - cx;
+  let dy2 = y2 - cy;
+  let len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+  if (len2 > 0) {
+    x2 += (dx2 / len2) * expand;
+    y2 += (dy2 / len2) * expand;
+  }
+
+  const delta = u0 * (v1 - v2) + u1 * (v2 - v0) + u2 * (v0 - v1);
+  if (Math.abs(delta) < 0.0001) return;
+
+  const a = (x0 * (v1 - v2) + x1 * (v2 - v0) + x2 * (v0 - v1)) / delta;
+  const c = (x0 * (u2 - u1) + x1 * (u0 - u2) + x2 * (u1 - u0)) / delta;
+  const e = (x0 * (u1 * v2 - u2 * v1) + x1 * (u2 * v0 - u0 * v2) + x2 * (u0 * v1 - u1 * v0)) / delta;
+
+  const b = (y0 * (v1 - v2) + y1 * (v2 - v0) + y2 * (v0 - v1)) / delta;
+  const d = (y0 * (u2 - u1) + y1 * (u0 - u2) + y2 * (u1 - u0)) / delta;
+  const f = (y0 * (u1 * v2 - u2 * v1) + y1 * (u2 * v0 - u0 * v2) + y2 * (u0 * v1 - u1 * v0)) / delta;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(x0, y0);
+  ctx.lineTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.closePath();
+  ctx.clip();
+
+  ctx.transform(a, b, c, d, e, f);
+  ctx.drawImage(img, 0, 0);
+  ctx.restore();
 };
 
 const isChildInsideParent = (
@@ -455,11 +524,12 @@ export default function CanvasArea({
   const [isDrawingLasso, setIsDrawingLasso] = useState(false);
   
   // Transform & drag gesture state
-  const [dragMode, setDragMode] = useState<'none' | 'move' | 'rotate' | 'scale' | 'pivot' | 'pin' | 'meshPoint' | 'meshGridPoint' | 'puppetPin'>('none');
+  const [dragMode, setDragMode] = useState<'none' | 'move' | 'rotate' | 'scale' | 'pivot' | 'pin' | 'meshPoint' | 'meshGridPoint' | 'puppetPin' | 'directRigBone'>('none');
   const [dragStartPoint, setDragStartPoint] = useState<Point>({ x: 0, y: 0 });
   const [initialTransform, setInitialTransform] = useState<any>(null);
   const [activeHandleIndex, setActiveHandleIndex] = useState<number | null>(null);
   const [draggedMeshPointIndex, setDraggedMeshPointIndex] = useState<number | null>(null);
+  const [draggedDirectRigBoneId, setDraggedDirectRigBoneId] = useState<string | null>(null);
   
   // Selection anti-unselect 3-tap counter
   const [tapCount, setTapCount] = useState<number>(0);
@@ -802,6 +872,128 @@ export default function CanvasArea({
 
     const coords = getCanvasCoords(e);
     setCurrentCursorPos(coords);
+
+    // Direct Rig Tool creation/drag logic
+    if (activeTool === 'DRIG') {
+      if (selectedObjectId && objects[selectedObjectId]) {
+        const obj = objects[selectedObjectId];
+        const localPivot = obj.pivots[0] || { localX: 0, localY: 0 };
+        const rigState = obj.directRigState;
+        const bonePoints = rigState?.bonePoints || [];
+        const boneTransforms = computeBoneTransforms(bonePoints);
+        
+        let clickedBoneId: string | null = null;
+        let minBDist = 18; // pixels
+        
+        bonePoints.forEach(bp => {
+          const trans = boneTransforms[bp.id];
+          if (trans) {
+            const wPos = localToWorld({ x: trans.currentX, y: trans.currentY }, obj.transform, localPivot);
+            const d = distance(coords, wPos);
+            if (d < minBDist) {
+              minBDist = d;
+              clickedBoneId = bp.id;
+            }
+          }
+        });
+        
+        if (clickedBoneId) {
+          setDraggedDirectRigBoneId(clickedBoneId);
+          setDragMode('directRigBone');
+          setDragStartPoint(coords);
+          // Save original angle for potential rotation
+          setObjects(prev => {
+            const updated = { ...prev };
+            const innerRig = updated[selectedObjectId]?.directRigState;
+            if (innerRig) {
+              innerRig.bonePoints = innerRig.bonePoints.map(bp => {
+                if (bp.id === clickedBoneId) {
+                  return { ...bp, originalAngle: bp.angle || 0 };
+                }
+                return bp;
+              });
+            }
+            return updated;
+          });
+          return;
+        } else {
+          // Add a new bone point in local coordinates
+          const localClick = worldToLocal(coords, obj.transform, localPivot);
+          const newBoneId = `dr_bone_${Date.now()}`;
+          const boneCount = bonePoints.length;
+          
+          const defaultNames = [
+            'root_bone', 'spine_bone', 'neck_bone', 'head_bone',
+            'left_shoulder_bone', 'left_elbow_bone', 'left_wrist_bone',
+            'right_shoulder_bone', 'right_elbow_bone', 'right_wrist_bone',
+            'left_hip_bone', 'left_knee_bone', 'left_ankle_bone',
+            'right_hip_bone', 'right_knee_bone', 'right_ankle_bone'
+          ];
+          const suggestedName = defaultNames[boneCount] || `bone_point_${boneCount + 1}`;
+          
+          // Let's find the parent (closest bone point)
+          let parentBoneId: string | null = null;
+          let minPDist = Infinity;
+          bonePoints.forEach(bp => {
+            const bpDist = distance({ x: bp.x, y: bp.y }, localClick);
+            if (bpDist < minPDist) {
+              minPDist = bpDist;
+              parentBoneId = bp.id;
+            }
+          });
+          
+          if (bonePoints.length === 0) {
+            parentBoneId = null;
+          }
+          
+          const newBone = {
+            id: newBoneId,
+            name: suggestedName,
+            x: Number(localClick.x.toFixed(2)),
+            y: Number(localClick.y.toFixed(2)),
+            parentBoneId: parentBoneId,
+            childBoneIds: [],
+            influenceRadius: 120,
+            angle: 0
+          };
+          
+          const updatedBones = [...bonePoints, newBone];
+          if (parentBoneId) {
+            updatedBones.forEach(bp => {
+              if (bp.id === parentBoneId) {
+                bp.childBoneIds = [...(bp.childBoneIds || []), newBoneId];
+              }
+            });
+          }
+          
+          // Recompute skinning weights
+          const pointWeights = calculateAutoWeights(obj.points, updatedBones);
+          const subPathsWeights = obj.subPaths ? obj.subPaths.map(sub => calculateAutoWeights(sub, updatedBones)) : undefined;
+          
+          setObjects(prev => {
+            if (!prev[selectedObjectId]) return prev;
+            return {
+              ...prev,
+              [selectedObjectId]: {
+                ...prev[selectedObjectId],
+                directRigState: {
+                  active: rigState?.active ?? true,
+                  bonePoints: updatedBones,
+                  pointWeights,
+                  subPathsWeights,
+                  meshDensity: rigState?.meshDensity || 'high'
+                }
+              }
+            };
+          });
+          
+          setDraggedDirectRigBoneId(newBoneId);
+          setDragMode('directRigBone');
+          setDragStartPoint(coords);
+          return;
+        }
+      }
+    }
 
     // 1. Bone tool creation logic
     if (activeTool === 'BON') {
@@ -1259,6 +1451,47 @@ export default function CanvasArea({
       if (selectedObjectId) {
         const obj = objects[selectedObjectId];
         if (obj) {
+          // Check if we clicked a Direct Rig bone joint first!
+          if (obj.directRigState && obj.directRigState.active && obj.directRigState.bonePoints && obj.directRigState.bonePoints.length > 0) {
+            let clickedBoneId: string | null = null;
+            let minBDist = 18; // pixels
+            const boneTransforms = computeBoneTransforms(obj.directRigState.bonePoints);
+            const localPivot = obj.pivots[0] || { localX: 0, localY: 0 };
+            
+            obj.directRigState.bonePoints.forEach(bp => {
+              const trans = boneTransforms[bp.id];
+              if (trans) {
+                const wPos = localToWorld({ x: trans.currentX, y: trans.currentY }, obj.transform, localPivot);
+                const d = distance(coords, wPos);
+                if (d < minBDist) {
+                  minBDist = d;
+                  clickedBoneId = bp.id;
+                }
+              }
+            });
+
+            if (clickedBoneId) {
+              setDraggedDirectRigBoneId(clickedBoneId);
+              setDragMode('directRigBone');
+              setDragStartPoint(coords);
+              // Save original angle for potential rotation
+              setObjects(prev => {
+                const updated = { ...prev };
+                const rigState = updated[selectedObjectId]?.directRigState;
+                if (rigState) {
+                  rigState.bonePoints = rigState.bonePoints.map(bp => {
+                    if (bp.id === clickedBoneId) {
+                      return { ...bp, originalAngle: bp.angle || 0 };
+                    }
+                    return bp;
+                  });
+                }
+                return updated;
+              });
+              return;
+            }
+          }
+
           // Check if we clicked on a puppet pin first!
           if (obj.pins && obj.pins.length > 0) {
             let clickedPinIdx = -1;
@@ -1436,6 +1669,116 @@ export default function CanvasArea({
 
     const coords = getCanvasCoords(e);
     setCurrentCursorPos(coords);
+
+    if (dragMode === 'directRigBone' && selectedObjectId && draggedDirectRigBoneId) {
+      const obj = objects[selectedObjectId];
+      if (obj && obj.directRigState) {
+        const localPivot = obj.pivots[0] || { localX: 0, localY: 0 };
+        
+        if (activeTool === 'DRIG') {
+          // Move joint position (edit skeleton)
+          const localPos = worldToLocal(coords, obj.transform, localPivot);
+          setObjects(prev => {
+            const updated = { ...prev };
+            const rigState = updated[selectedObjectId]?.directRigState;
+            if (rigState) {
+              const updatedBones = rigState.bonePoints.map(bp => {
+                if (bp.id === draggedDirectRigBoneId) {
+                  return {
+                    ...bp,
+                    x: Number(localPos.x.toFixed(2)),
+                    y: Number(localPos.y.toFixed(2))
+                  };
+                }
+                return bp;
+              });
+              
+              const pointWeights = calculateAutoWeights(updated[selectedObjectId].points, updatedBones);
+              const subPathsWeights = updated[selectedObjectId].subPaths ? updated[selectedObjectId].subPaths.map(sub => calculateAutoWeights(sub, updatedBones)) : undefined;
+              
+              updated[selectedObjectId].directRigState = {
+                ...rigState,
+                bonePoints: updatedBones,
+                pointWeights,
+                subPathsWeights
+              };
+            }
+            return updated;
+          });
+        } else {
+          // Rotate joint angle (deform pose!)
+          const rigState = obj.directRigState;
+          const bonePoint = rigState.bonePoints.find(bp => bp.id === draggedDirectRigBoneId);
+          
+          if (bonePoint) {
+            if (bonePoint.parentBoneId) {
+              // Find parent bone in world coordinates
+              const parentBp = rigState.bonePoints.find(bp => bp.id === bonePoint.parentBoneId);
+              if (parentBp) {
+                const boneTransforms = computeBoneTransforms(rigState.bonePoints);
+                const parentTrans = boneTransforms[parentBp.id];
+                
+                if (parentTrans) {
+                  const parentWorld = localToWorld({ x: parentTrans.currentX, y: parentTrans.currentY }, obj.transform, localPivot);
+                  
+                  const angleStart = Math.atan2(dragStartPoint.y - parentWorld.y, dragStartPoint.x - parentWorld.x);
+                  const angleCurrent = Math.atan2(coords.y - parentWorld.y, coords.x - parentWorld.x);
+                  const deltaDeg = ((angleCurrent - angleStart) * 180) / Math.PI;
+                  
+                  const originalAngle = (bonePoint as any).originalAngle ?? 0;
+                  const nextAngle = Math.round((originalAngle + deltaDeg) * 10) / 10;
+                  
+                  setObjects(prev => {
+                    const updated = { ...prev };
+                    const innerRig = updated[selectedObjectId]?.directRigState;
+                    if (innerRig) {
+                      innerRig.bonePoints = innerRig.bonePoints.map(bp => {
+                        if (bp.id === draggedDirectRigBoneId) {
+                          return { ...bp, angle: nextAngle };
+                        }
+                        return bp;
+                      });
+                    }
+                    return updated;
+                  });
+                }
+              }
+            } else {
+              // Translate root bone joint relative to parent/world
+              const localPos = worldToLocal(coords, obj.transform, localPivot);
+              setObjects(prev => {
+                const updated = { ...prev };
+                const rigState = updated[selectedObjectId]?.directRigState;
+                if (rigState) {
+                  const updatedBones = rigState.bonePoints.map(bp => {
+                    if (bp.id === draggedDirectRigBoneId) {
+                      return {
+                        ...bp,
+                        x: Number(localPos.x.toFixed(2)),
+                        y: Number(localPos.y.toFixed(2))
+                      };
+                    }
+                    return bp;
+                  });
+                  
+                  const pointWeights = calculateAutoWeights(updated[selectedObjectId].points, updatedBones);
+                  const subPathsWeights = updated[selectedObjectId].subPaths ? updated[selectedObjectId].subPaths.map(sub => calculateAutoWeights(sub, updatedBones)) : undefined;
+                  
+                  updated[selectedObjectId].directRigState = {
+                    ...rigState,
+                    bonePoints: updatedBones,
+                    pointWeights,
+                    subPathsWeights
+                  };
+                }
+                return updated;
+              });
+            }
+          }
+        }
+      }
+      return;
+    }
 
     if (dragMode === 'meshGridPoint' && selectedObjectId && draggedMeshPointIndex !== null) {
       const obj = objects[selectedObjectId];
@@ -2184,6 +2527,7 @@ export default function CanvasArea({
 
     setIsPlayingState(false);
     setDragMode('none');
+    setDraggedDirectRigBoneId(null);
     setStrokePoints([]);
     setIsDrawingLasso(false);
   };
@@ -2247,7 +2591,13 @@ export default function CanvasArea({
       const bounds = calculateBoundingBox(drawObj.points);
       let localPoints = drawObj.points;
       
-      if (drawObj.meshState && drawObj.meshState.active) {
+      if (drawObj.directRigState && drawObj.directRigState.active) {
+        const boneTransforms = computeBoneTransforms(drawObj.directRigState.bonePoints);
+        localPoints = drawObj.points.map((p, idx) => {
+          const weights = drawObj.directRigState?.pointWeights?.[idx];
+          return deformPointLBS(p, drawObj.directRigState?.bonePoints || [], boneTransforms, weights);
+        });
+      } else if (drawObj.meshState && drawObj.meshState.active) {
         localPoints = drawObj.points.map(p => getWarpedPoint(p, drawObj.meshState, bounds));
       } else if (drawObj.pins && drawObj.pins.length > 0) {
         localPoints = drawObj.points.map(p => deformWithPuppetPins(p, drawObj.pins));
@@ -2267,9 +2617,16 @@ export default function CanvasArea({
           }
         }
         if (drawObj.subPaths && drawObj.subPaths.length > 0) {
-          drawObj.subPaths.forEach(sub => {
+          drawObj.subPaths.forEach((sub, subIdx) => {
             let localSubPoints = sub;
-            if (drawObj.meshState && drawObj.meshState.active) {
+            if (drawObj.directRigState && drawObj.directRigState.active) {
+              const boneTransforms = computeBoneTransforms(drawObj.directRigState.bonePoints);
+              const subWeights = drawObj.directRigState.subPathsWeights?.[subIdx];
+              localSubPoints = sub.map((p, idx) => {
+                const weights = subWeights?.[idx];
+                return deformPointLBS(p, drawObj.directRigState?.bonePoints || [], boneTransforms, weights);
+              });
+            } else if (drawObj.meshState && drawObj.meshState.active) {
               const subBounds = calculateBoundingBox(sub);
               localSubPoints = sub.map(p => getWarpedPoint(p, drawObj.meshState, subBounds));
             } else if (drawObj.pins && drawObj.pins.length > 0) {
@@ -2472,18 +2829,128 @@ export default function CanvasArea({
         }
         
         if (img.complete && img.naturalWidth > 0) {
-          ctx.save();
           const localPivot = drawObj.pivots[0] || { localX: 0, localY: 0 };
           const imgBounds = calculateBoundingBox(drawObj.points);
           
-          // Apply transformation to context
-          ctx.translate(drawObj.transform.x, drawObj.transform.y);
-          ctx.rotate((drawObj.transform.rotation * Math.PI) / 180);
-          ctx.scale(drawObj.transform.scaleX, drawObj.transform.scaleY);
-          ctx.translate(-localPivot.localX, -localPivot.localY);
-          
-          ctx.drawImage(img, imgBounds.x, imgBounds.y, imgBounds.width, imgBounds.height);
-          ctx.restore();
+          const hasDirectRig = drawObj.directRigState && drawObj.directRigState.active;
+          const hasMeshState = drawObj.meshState && drawObj.meshState.active;
+          const hasPuppetPins = drawObj.pins && drawObj.pins.length > 0;
+
+          if (hasDirectRig || hasMeshState || hasPuppetPins) {
+            // Draw textured mesh deformation!
+            const COLS = 12;
+            const ROWS = 12;
+            
+            const vertices: Point[][] = [];
+            const worldVertices: Point[][] = [];
+            
+            const bonePoints = drawObj.directRigState?.bonePoints || [];
+            const boneTransforms = hasDirectRig ? computeBoneTransforms(bonePoints) : {};
+
+            for (let r = 0; r <= ROWS; r++) {
+              vertices[r] = [];
+              worldVertices[r] = [];
+              const ty = r / ROWS;
+              const py = imgBounds.y + ty * imgBounds.height;
+
+              for (let c = 0; c <= COLS; c++) {
+                const tx = c / COLS;
+                const px = imgBounds.x + tx * imgBounds.width;
+                const p = { x: px, y: py };
+                
+                let dp = p;
+                if (hasDirectRig) {
+                  const weights = calculateAutoWeights([p], bonePoints)[0];
+                  dp = deformPointLBS(p, bonePoints, boneTransforms, weights);
+                } else if (hasMeshState) {
+                  dp = getWarpedPoint(p, drawObj.meshState, imgBounds);
+                } else if (hasPuppetPins) {
+                  dp = deformWithPuppetPins(p, drawObj.pins!);
+                }
+                
+                vertices[r][c] = dp;
+                // Project local deformed point to world space
+                const wp = localToWorld(dp, drawObj.transform, localPivot);
+                worldVertices[r][c] = wp;
+              }
+            }
+
+            // Render each grid cell as 2 textured triangles
+            for (let r = 0; r < ROWS; r++) {
+              for (let c = 0; c < COLS; c++) {
+                // Local fraction coords
+                const tx0 = c / COLS;
+                const tx1 = (c + 1) / COLS;
+                const ty0 = r / ROWS;
+                const ty1 = (r + 1) / ROWS;
+
+                // Source UV coordinates on image
+                const u0 = tx0 * img.naturalWidth;
+                const u1 = tx1 * img.naturalWidth;
+                const v0 = ty0 * img.naturalHeight;
+                const v1 = ty1 * img.naturalHeight;
+
+                // Destination World coords
+                const d_tl = worldVertices[r][c];       // top-left
+                const d_tr = worldVertices[r][c + 1];   // top-right
+                const d_bl = worldVertices[r + 1][c];   // bottom-left
+                const d_br = worldVertices[r + 1][c + 1]; // bottom-right
+
+                // Triangle 1: top-left, top-right, bottom-left
+                drawTexturedTriangle(
+                  ctx,
+                  img,
+                  u0, v0,
+                  u1, v0,
+                  u0, v1,
+                  d_tl.x, d_tl.y,
+                  d_tr.x, d_tr.y,
+                  d_bl.x, d_bl.y
+                );
+
+                // Triangle 2: top-right, bottom-right, bottom-left
+                drawTexturedTriangle(
+                  ctx,
+                  img,
+                  u1, v0,
+                  u1, v1,
+                  u0, v1,
+                  d_tr.x, d_tr.y,
+                  d_br.x, d_br.y,
+                  d_bl.x, d_bl.y
+                );
+              }
+            }
+          } else {
+            ctx.save();
+            // Aligned Transformation Matrix matching localToWorld order perfectly!
+            ctx.translate(drawObj.transform.x + localPivot.localX, drawObj.transform.y + localPivot.localY);
+            
+            // 2D Rotation around Pivot
+            ctx.rotate((drawObj.transform.rotation * Math.PI) / 180);
+            
+            // 3D simulated rotation or standard Skew
+            const skewX = drawObj.transform.skewX || 0;
+            const skewY = drawObj.transform.skewY || 0;
+            if (skewX !== 0 || skewY !== 0) {
+              ctx.transform(1, Math.tan((skewY * Math.PI) / 180), Math.tan((skewX * Math.PI) / 180), 1, 0, 0);
+            }
+            
+            // 3D rotation flips
+            const rotateX = drawObj.transform.rotateX || 0;
+            const rotateY = drawObj.transform.rotateY || 0;
+            const cosRotX = Math.cos((rotateX * Math.PI) / 180);
+            const cosRotY = Math.cos((rotateY * Math.PI) / 180);
+            
+            // Apply Scale (with 3D perspective / flip reduction factors matching localToWorld)
+            ctx.scale(drawObj.transform.scaleX * cosRotY, drawObj.transform.scaleY * cosRotX);
+            
+            // Offset back to local coordinates
+            ctx.translate(-localPivot.localX, -localPivot.localY);
+            
+            ctx.drawImage(img, imgBounds.x, imgBounds.y, imgBounds.width, imgBounds.height);
+            ctx.restore();
+          }
         }
       } else {
         // Render vector drawing
@@ -2815,6 +3282,83 @@ export default function CanvasArea({
           ctx.fillStyle = '#FFFFFF';
           ctx.fill();
         });
+        ctx.restore();
+      }
+    }
+
+    // Render Direct Rig Bone points overlay for selected object
+    if (selectedObjectId && objects[selectedObjectId]) {
+      const obj = objects[selectedObjectId];
+      if (obj.directRigState && obj.directRigState.bonePoints && obj.directRigState.bonePoints.length > 0) {
+        ctx.save();
+        
+        const boneTransforms = computeBoneTransforms(obj.directRigState.bonePoints);
+
+        // Draw connection skeleton lines first
+        obj.directRigState.bonePoints.forEach(bp => {
+          if (bp.parentBoneId) {
+            const parent = obj.directRigState!.bonePoints.find(p => p.id === bp.parentBoneId);
+            if (parent) {
+              const transCurr = boneTransforms[bp.id];
+              const transParent = boneTransforms[parent.id];
+              
+              if (transCurr && transParent) {
+                const wChild = localToWorld({ x: transCurr.currentX, y: transCurr.currentY }, obj.transform, obj.pivots[0]);
+                const wParent = localToWorld({ x: transParent.currentX, y: transParent.currentY }, obj.transform, obj.pivots[0]);
+
+                ctx.beginPath();
+                ctx.moveTo(wParent.x, wParent.y);
+                ctx.lineTo(wChild.x, wChild.y);
+                ctx.strokeStyle = '#10B981'; // vibrant emerald green for bones
+                ctx.lineWidth = 4;
+                ctx.lineCap = 'round';
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.moveTo(wParent.x, wParent.y);
+                ctx.lineTo(wChild.x, wChild.y);
+                ctx.strokeStyle = '#FFFFFF';
+                ctx.lineWidth = 1.2;
+                ctx.stroke();
+              }
+            }
+          }
+        });
+
+        // Draw bone joint dots on top
+        obj.directRigState.bonePoints.forEach((bp) => {
+          const trans = boneTransforms[bp.id];
+          if (trans) {
+            const wPos = localToWorld({ x: trans.currentX, y: trans.currentY }, obj.transform, obj.pivots[0]);
+
+            ctx.beginPath();
+            ctx.arc(wPos.x, wPos.y, 8.5, 0, Math.PI * 2);
+            ctx.fillStyle = activeTool === 'DRIG' ? 'rgba(59, 130, 246, 0.25)' : 'rgba(16, 185, 129, 0.2)';
+            ctx.fill();
+
+            ctx.beginPath();
+            ctx.arc(wPos.x, wPos.y, 6.5, 0, Math.PI * 2);
+            const isSelected = (draggedDirectRigBoneId === bp.id);
+            ctx.fillStyle = isSelected ? '#F59E0B' : '#3B82F6';
+            ctx.fill();
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 1.8;
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.arc(wPos.x, wPos.y, 2.2, 0, Math.PI * 2);
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fill();
+
+            ctx.font = 'bold 9px monospace';
+            ctx.fillStyle = '#FFFFFF';
+            ctx.shadowColor = 'rgba(0,0,0,0.85)';
+            ctx.shadowBlur = 4;
+            ctx.fillText(bp.name, wPos.x + 10, wPos.y + 3);
+            ctx.shadowBlur = 0;
+          }
+        });
+
         ctx.restore();
       }
     }
