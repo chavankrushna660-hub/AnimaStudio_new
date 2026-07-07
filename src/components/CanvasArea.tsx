@@ -1306,8 +1306,6 @@ export default function CanvasArea({
       const clickedObj = performHitTest(coords);
       if (clickedObj) {
         setSelectedObjectId(clickedObj.id);
-      } else {
-        setSelectedObjectId(null);
       }
       return;
     }
@@ -1369,8 +1367,7 @@ export default function CanvasArea({
         setDragStartPoint(coords);
         setInitialTransform({ ...clickedObj.transform });
       } else {
-        // Clear selection and prevent canvas shifting
-        setSelectedObjectId(null);
+        // Prevent canvas shifting, but preserve active selection per guidelines
         setDragMode('none');
       }
       return;
@@ -1391,7 +1388,6 @@ export default function CanvasArea({
           y: clickedObj.transform.y,
         });
       } else {
-        setSelectedObjectId(null);
         setDragMode('none');
       }
       return;
