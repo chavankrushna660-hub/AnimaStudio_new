@@ -895,10 +895,7 @@ export default function CanvasArea({
         const transformed3D = obj.vertices3D.map(v => transform3DVertex(v, obj.transform3D!.x, obj.transform3D!.y, obj.transform3D!.z, obj.transform3D!.rx, obj.transform3D!.ry, obj.transform3D!.rz, obj.transform3D!.sx, obj.transform3D!.sy, obj.transform3D!.sz));
         const projected = transformed3D.map(v => {
           const proj = project3DVertex(v, 400);
-          return {
-            x: obj.transform.x + proj.x,
-            y: obj.transform.y + proj.y
-          };
+          return localToWorld(proj, obj.transform, obj.pivots[0] || { localX: 0, localY: 0 });
         });
         
         // Check all faces
@@ -1190,7 +1187,53 @@ export default function CanvasArea({
       }
     }
 
-    // DRIG and BON tool handlers removed to fully clear old bone skeletal rigging code.
+    // 1.5 Bone tool pointer down handler
+    if (activeTool === 'BON') {
+      if (selectedObjectId && objects[selectedObjectId]) {
+        const obj = objects[selectedObjectId];
+        if (obj.type === '3d' && obj.vertices3D && obj.transform3D) {
+          // Check if we clicked on a 3D vertex first to start single 3D mesh skeletal rigging!
+          const transformed3D = obj.vertices3D.map(v => transform3DVertex(v, obj.transform3D!.x, obj.transform3D!.y, obj.transform3D!.z, obj.transform3D!.rx, obj.transform3D!.ry, obj.transform3D!.rz, obj.transform3D!.sx, obj.transform3D!.sy, obj.transform3D!.sz));
+          const projected = transformed3D.map(v => {
+            const proj = project3DVertex(v, 400);
+            return localToWorld(proj, obj.transform, obj.pivots[0] || { localX: 0, localY: 0 });
+          });
+
+          let clickedVtxIdx = -1;
+          let minDist = 20; // pixels
+          projected.forEach((pt, idx) => {
+            const d = distance(coords, pt);
+            if (d < minDist) {
+              minDist = d;
+              clickedVtxIdx = idx;
+            }
+          });
+
+          if (clickedVtxIdx !== -1) {
+            setIsDrawing3DBone(true);
+            setBone3DStartVtxIdx(clickedVtxIdx);
+            setCurrentCursorPos(coords);
+            return;
+          }
+        }
+      }
+
+      // Fallback: draw standard inter-object bone linking pivots!
+      const pList = getAllPivotsWorld();
+      const clickedPivot = pList.find(item => distance(coords, { x: item.worldX, y: item.worldY }) < 15);
+      if (clickedPivot) {
+        setBoneStartPoint({ x: clickedPivot.worldX, y: clickedPivot.worldY });
+        setBoneStartObject(objects[clickedPivot.objId]);
+        setBoneStartPivot(clickedPivot.pivot);
+        setSnappedPivot(null);
+      } else {
+        const clickedObj = performHitTest(coords);
+        if (clickedObj) {
+          setSelectedObjectId(clickedObj.id);
+        }
+      }
+      return;
+    }
 
     // 2. Add custom pivot point (PVT tool)
     if (activeTool === 'PVT' && selectedObjectId) {
@@ -1351,10 +1394,7 @@ export default function CanvasArea({
           const transformed3D = clickedObj.vertices3D.map(v => transform3DVertex(v, clickedObj.transform3D!.x, clickedObj.transform3D!.y, clickedObj.transform3D!.z, clickedObj.transform3D!.rx, clickedObj.transform3D!.ry, clickedObj.transform3D!.rz, clickedObj.transform3D!.sx, clickedObj.transform3D!.sy, clickedObj.transform3D!.sz));
           const projected = transformed3D.map(v => {
             const proj = project3DVertex(v, 400);
-            return {
-              x: clickedObj.transform.x + proj.x,
-              y: clickedObj.transform.y + proj.y
-            };
+            return localToWorld(proj, clickedObj.transform, clickedObj.pivots[0] || { localX: 0, localY: 0 });
           });
 
           const matchedFaces: { idx: number; avgZ: number }[] = [];
@@ -1426,10 +1466,7 @@ export default function CanvasArea({
           const transformed3D = obj.vertices3D.map(v => transform3DVertex(v, obj.transform3D!.x, obj.transform3D!.y, obj.transform3D!.z, obj.transform3D!.rx, obj.transform3D!.ry, obj.transform3D!.rz, obj.transform3D!.sx, obj.transform3D!.sy, obj.transform3D!.sz));
           const projected = transformed3D.map(v => {
             const proj = project3DVertex(v, 400);
-            return {
-              x: obj.transform.x + proj.x,
-              y: obj.transform.y + proj.y
-            };
+            return localToWorld(proj, obj.transform, obj.pivots[0] || { localX: 0, localY: 0 });
           });
 
           let clickedVtxIdx = -1;
@@ -2167,10 +2204,7 @@ export default function CanvasArea({
             const transformed3D = updatedVtx.map(v => transform3DVertex(v, originalObj.transform3D!.x, originalObj.transform3D!.y, originalObj.transform3D!.z, originalObj.transform3D!.rx, originalObj.transform3D!.ry, originalObj.transform3D!.rz, originalObj.transform3D!.sx, originalObj.transform3D!.sy, originalObj.transform3D!.sz));
             const projected = transformed3D.map(v => {
               const proj = project3DVertex(v, 400);
-              return {
-                x: originalObj.transform.x + proj.x,
-                y: originalObj.transform.y + proj.y
-              };
+              return localToWorld(proj, originalObj.transform, originalObj.pivots[0] || { localX: 0, localY: 0 });
             });
 
             updatedVtx.forEach((v, idx) => {
@@ -2385,10 +2419,7 @@ export default function CanvasArea({
         const transformed3D = obj.vertices3D.map(v => transform3DVertex(v, obj.transform3D!.x, obj.transform3D!.y, obj.transform3D!.z, obj.transform3D!.rx, obj.transform3D!.ry, obj.transform3D!.rz, obj.transform3D!.sx, obj.transform3D!.sy, obj.transform3D!.sz));
         const projected = transformed3D.map(v => {
           const proj = project3DVertex(v, 400);
-          return {
-            x: obj.transform.x + proj.x,
-            y: obj.transform.y + proj.y
-          };
+          return localToWorld(proj, obj.transform, obj.pivots[0] || { localX: 0, localY: 0 });
         });
 
         let releasedVtxIdx = -1;
@@ -2679,10 +2710,7 @@ export default function CanvasArea({
         const transformed3D = skinnedVertices.map(v => transform3DVertex(v, drawObj.transform3D!.x, drawObj.transform3D!.y, drawObj.transform3D!.z, drawObj.transform3D!.rx, drawObj.transform3D!.ry, drawObj.transform3D!.rz, drawObj.transform3D!.sx, drawObj.transform3D!.sy, drawObj.transform3D!.sz));
         const projected = transformed3D.map(v => {
           const proj = project3DVertex(v, 400);
-          return {
-            x: drawObj.transform.x + proj.x,
-            y: drawObj.transform.y + proj.y
-          };
+          return localToWorld(proj, drawObj.transform, drawObj.pivots[0] || { localX: 0, localY: 0 });
         });
 
         const facesWithDepth = drawObj.faces3D.map((face, index) => {
@@ -2732,6 +2760,48 @@ export default function CanvasArea({
           ctx.strokeStyle = drawObj.strokeColor || 'rgba(0,0,0,0.2)';
           ctx.stroke();
         });
+
+        // Draw lasso fills for 3D model!
+        if (drawObj.lassoFills && drawObj.lassoFills.length > 0) {
+          drawObj.lassoFills.forEach(fill => {
+            ctx.save();
+            
+            // Clip 1: Only draw inside the faces of the 3D drawing
+            ctx.beginPath();
+            facesWithDepth.forEach(({ face }) => {
+              if (face.indices.length < 3) return;
+              if (projected[face.indices[0]]) {
+                ctx.moveTo(projected[face.indices[0]].x, projected[face.indices[0]].y);
+              }
+              for (let i = 1; i < face.indices.length; i++) {
+                const idx = face.indices[i];
+                if (projected[idx]) {
+                  ctx.lineTo(projected[idx].x, projected[idx].y);
+                }
+              }
+              ctx.closePath();
+            });
+            ctx.clip();
+            
+            // Clip 2: Only draw inside the lasso selection path
+            ctx.beginPath();
+            const localPivot = drawObj.pivots[0] || { localX: 0, localY: 0 };
+            const worldLassoPoints = fill.localLassoPoints.map(p => localToWorld(p, drawObj.transform, localPivot));
+            if (worldLassoPoints.length > 0) {
+              ctx.moveTo(worldLassoPoints[0].x, worldLassoPoints[0].y);
+              for (let i = 1; i < worldLassoPoints.length; i++) {
+                ctx.lineTo(worldLassoPoints[i].x, worldLassoPoints[i].y);
+              }
+              ctx.closePath();
+            }
+            ctx.clip();
+            
+            // Fill the clipped region with the lasso color
+            ctx.fillStyle = fill.color;
+            ctx.fillRect(artboardX - 100, artboardY - 100, artboardW + 200, artboardH + 200);
+            ctx.restore();
+          });
+        }
 
         // Render Rigged Skeletal Bones on top of selected 3D Model
         if (selectedObjectId === drawObj.id && (drawObj as any).bones3D && (drawObj as any).bones3D.length > 0) {

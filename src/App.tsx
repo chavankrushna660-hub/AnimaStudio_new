@@ -121,6 +121,19 @@ export default function App() {
   const [authPassword, setAuthPassword] = useState('');
   const [authError, setAuthError] = useState('');
   const [dbNotification, setDbNotification] = useState<{ type: 'success' | 'info' | 'error'; message: string } | null>(null);
+  const [limitNotification, setLimitNotification] = useState<string | null>(null);
+  const limitTimeoutRef = useRef<any>(null);
+
+  const triggerLimitNotification = () => {
+    if (limitTimeoutRef.current) {
+      clearTimeout(limitTimeoutRef.current);
+    }
+    setLimitNotification("you have reached daily limit for 3D mesh please wait for refresh");
+    limitTimeoutRef.current = setTimeout(() => {
+      setLimitNotification(null);
+    }, 2000);
+  };
+
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
 
   // Canvas Size States
@@ -527,6 +540,29 @@ export default function App() {
           }
         };
 
+        // 1. Instantly propagate translation for permanently attached sibling group
+        if (obj.attachedGroupId && (dX !== 0 || dY !== 0)) {
+          Object.keys(updated).forEach(k => {
+            if (k !== id && updated[k].attachedGroupId === obj.attachedGroupId) {
+              const sibling = updated[k];
+              const siblingOrigT = { ...sibling.transform };
+              const siblingNewT = {
+                ...sibling.transform,
+                x: Number((sibling.transform.x + dX).toFixed(2)),
+                y: Number((sibling.transform.y + dY).toFixed(2))
+              };
+              updated[k] = {
+                ...sibling,
+                transform: siblingNewT
+              };
+
+              // Propagate hierarchical transformations down from each sibling
+              propagate(k, dX, dY, 0, 1, 1);
+            }
+          });
+        }
+
+        // 2. Propagate parent-child hierarchies from the modified object
         propagate(id, dX, dY, dRot, sXRatio, sYRatio);
       }
 
@@ -769,7 +805,7 @@ export default function App() {
     const email = currentUser || 'guest';
     const limitStatus = getDailyLimitStatus(email);
     if (!limitStatus.allowed) {
-      alert(`Daily Safety Limit: You have reached your daily allowance of 10 model additions for "${email}". Please try again tomorrow to preserve application performance.`);
+      triggerLimitNotification();
       return;
     }
 
@@ -1014,7 +1050,7 @@ export default function App() {
     const email = currentUser || 'guest';
     const limitStatus = getDailyLimitStatus(email);
     if (!limitStatus.allowed) {
-      alert(`Daily Safety Limit: You have reached your daily allowance of 10 model additions for "${email}". Please try again tomorrow to preserve application performance.`);
+      triggerLimitNotification();
       return;
     }
 
@@ -1078,7 +1114,7 @@ export default function App() {
     const email = currentUser || 'guest';
     const limitStatus = getDailyLimitStatus(email);
     if (!limitStatus.allowed) {
-      alert(`Daily Safety Limit: You have reached your daily allowance of 5 3D model creations for "${email}". Please try again tomorrow to preserve application performance.`);
+      triggerLimitNotification();
       return;
     }
 
@@ -1751,6 +1787,31 @@ export default function App() {
             </p>
             <p className="text-neutral-300 font-medium leading-relaxed">{dbNotification.message}</p>
           </div>
+        </div>
+      )}
+
+      {/* Daily limit alert toast */}
+      {limitNotification && (
+        <div 
+          id="limit-toast-notification"
+          className="fixed bottom-24 right-6 z-50 flex items-start justify-between gap-3 p-4 rounded-2xl shadow-2xl border text-xs max-w-sm animate-fade-in bg-rose-950/95 border-rose-500/30 text-rose-300"
+        >
+          <div className="flex gap-2.5 items-start">
+            <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+            <div className="space-y-1 pr-2">
+              <p className="font-extrabold uppercase text-[10px] tracking-wider text-rose-200">
+                LIMIT REACHED
+              </p>
+              <p className="text-neutral-200 font-medium leading-relaxed">{limitNotification}</p>
+            </div>
+          </div>
+          <button
+            onClick={() => setLimitNotification(null)}
+            className="text-rose-400 hover:text-white font-bold p-1 hover:bg-rose-900/40 rounded transition-all shrink-0 cursor-pointer text-[11px]"
+            title="Dismiss"
+          >
+            ✕
+          </button>
         </div>
       )}
 

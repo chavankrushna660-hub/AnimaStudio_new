@@ -609,7 +609,7 @@ export function getDailyLimitStatus(email: string): { count: number; allowed: bo
     const current = Number(localStorage.getItem(storageKey) || '0');
     return {
       count: current,
-      allowed: current < 5, // Strict rule: Max 5 3D models per day
+      allowed: current < 10, // Strict rule: Max 10 3D models per day
     };
   } catch {
     return { count: 0, allowed: true };

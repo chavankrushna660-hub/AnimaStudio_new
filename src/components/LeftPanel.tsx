@@ -720,13 +720,13 @@ export default function LeftPanel({
                     <div className="flex items-center justify-between text-[9px] font-extrabold uppercase tracking-wider text-neutral-400">
                       <span>💫 Daily 3D Limit</span>
                       <span className="text-amber-400 font-mono text-[10px] font-bold">
-                        {getDailyLimitStatus(currentUser || 'guest').count} / 5 Used
+                        {getDailyLimitStatus(currentUser || 'guest').count} / 10 Used
                       </span>
                     </div>
                     <div className="h-1 bg-neutral-850 rounded-full overflow-hidden">
                       <div 
                         className="bg-gradient-to-r from-amber-400 to-amber-500 h-full transition-all"
-                        style={{ width: `${Math.min(100, (getDailyLimitStatus(currentUser || 'guest').count / 5) * 100)}%` }}
+                        style={{ width: `${Math.min(100, (getDailyLimitStatus(currentUser || 'guest').count / 10) * 100)}%` }}
                       />
                     </div>
                     <p className="text-[9px] text-neutral-500 leading-normal">
