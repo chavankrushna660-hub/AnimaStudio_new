@@ -16,6 +16,7 @@ import {
   Layers,
   Workflow,
   Sparkles,
+  Feather,
   GitMerge,
   Maximize2,
   Folder,
@@ -47,6 +48,10 @@ interface RightPanelProps {
   setActiveTool: (tool: string) => void;
   lassoPoints: Point[];
   setLassoPoints: React.Dispatch<React.SetStateAction<Point[]>>;
+  lassoMode: 'freehand' | 'pen';
+  setLassoMode: (mode: 'freehand' | 'pen') => void;
+  penLassoPoints: Point[];
+  setPenLassoPoints: React.Dispatch<React.SetStateAction<Point[]>>;
   frames: Frame[];
   setFrames: React.Dispatch<React.SetStateAction<Frame[]>>;
   currentFrameIndex: number;
@@ -96,6 +101,10 @@ export default function RightPanel({
   setActiveTool,
   lassoPoints,
   setLassoPoints,
+  lassoMode,
+  setLassoMode,
+  penLassoPoints,
+  setPenLassoPoints,
   frames,
   setFrames,
   currentFrameIndex,
@@ -1276,6 +1285,39 @@ export default function RightPanel({
                         }`}
                       >
                         {selectedObject.lassoDeformState?.active ? 'TRANSFORM SELECTED' : 'APPLY TO LASSO'}
+                      </button>
+                    </div>
+
+                    {/* Selection Mode Toggle */}
+                    <div className="flex bg-neutral-900/60 p-1 rounded-xl border border-neutral-800/60 gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLassoMode('freehand');
+                          setPenLassoPoints([]);
+                        }}
+                        className={`flex-1 py-1.5 px-2 text-[10px] font-black uppercase tracking-wider rounded-lg flex items-center justify-center gap-1 cursor-pointer transition-all ${
+                          lassoMode === 'freehand'
+                            ? 'bg-amber-500 text-neutral-950 font-black shadow shadow-amber-500/20'
+                            : 'text-neutral-400 hover:text-neutral-200'
+                        }`}
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        Freehand Lasso
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLassoMode('pen');
+                        }}
+                        className={`flex-1 py-1.5 px-2 text-[10px] font-black uppercase tracking-wider rounded-lg flex items-center justify-center gap-1 cursor-pointer transition-all ${
+                          lassoMode === 'pen'
+                            ? 'bg-amber-500 text-neutral-950 font-black shadow shadow-amber-500/20'
+                            : 'text-neutral-400 hover:text-neutral-200'
+                        }`}
+                      >
+                        <Feather className="w-3.5 h-3.5" />
+                        Vector Pen
                       </button>
                     </div>
 
@@ -3209,6 +3251,39 @@ export default function RightPanel({
                 <p className="text-[11px] text-neutral-400 leading-relaxed font-medium">
                   Draw an area around your drawings with the <strong className="text-amber-400">Lasso Fill tool (Sparkles)</strong>, select a color, and tap Fill to color only that section.
                 </p>
+
+                {/* Selection Mode Toggle */}
+                <div className="flex bg-neutral-900/60 p-1 rounded-xl border border-neutral-800/60 gap-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLassoMode('freehand');
+                      setPenLassoPoints([]);
+                    }}
+                    className={`flex-1 py-1.5 px-2 text-[10px] font-black uppercase tracking-wider rounded-lg flex items-center justify-center gap-1 cursor-pointer transition-all ${
+                      lassoMode === 'freehand'
+                        ? 'bg-amber-500 text-neutral-950 font-black shadow shadow-amber-500/20'
+                        : 'text-neutral-400 hover:text-neutral-200'
+                    }`}
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    Freehand Lasso
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLassoMode('pen');
+                    }}
+                    className={`flex-1 py-1.5 px-2 text-[10px] font-black uppercase tracking-wider rounded-lg flex items-center justify-center gap-1 cursor-pointer transition-all ${
+                      lassoMode === 'pen'
+                        ? 'bg-amber-500 text-neutral-950 font-black shadow shadow-amber-500/20'
+                        : 'text-neutral-400 hover:text-neutral-200'
+                    }`}
+                  >
+                    <Feather className="w-3.5 h-3.5" />
+                    Vector Pen
+                  </button>
+                </div>
 
                 {/* Lasso Active Tool Button & Area Clears */}
                 <div className="flex items-center gap-2">

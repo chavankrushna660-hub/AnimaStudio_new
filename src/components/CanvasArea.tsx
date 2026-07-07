@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { RotateCcw } from 'lucide-react';
+import { RotateCcw, Sparkles, Feather } from 'lucide-react';
 import { Point, VectorObject, Bone, Pivot, Frame, Transform, RealismSettings } from '../types';
 import { transform3DVertex, project3DVertex, getFaceLightColor, deformVertices3D } from '../utils/engine3D';
 import { 
@@ -59,7 +59,33 @@ const getWarpedPoint = (p: Point, meshState: any, bounds: any) => {
   return { x: warpedX, y: warpedY };
 };
 
-// 🌟 Lasso selection deformation point helper
+// 🌟 Distance from point to line segment helper
+const pointToSegmentDistance = (p: Point, v: Point, w: Point): number => {
+  const l2 = (v.x - w.x) ** 2 + (v.y - w.y) ** 2;
+  if (l2 === 0) return distance(p, v);
+  let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
+  t = Math.max(0, Math.min(1, t));
+  return distance(p, {
+    x: v.x + t * (w.x - v.x),
+    y: v.y + t * (w.y - v.y)
+  });
+};
+
+// 🌟 Distance from point to polygon boundary helper
+const pointToPolygonDistance = (p: Point, polygon: Point[]): number => {
+  let minD = Infinity;
+  for (let i = 0; i < polygon.length; i++) {
+    const v = polygon[i];
+    const w = polygon[(i + 1) % polygon.length];
+    const d = pointToSegmentDistance(p, v, w);
+    if (d < minD) {
+      minD = d;
+    }
+  }
+  return minD;
+};
+
+// 🌟 Lasso selection deformation point helper with seamless organic boundary welding
 const deformWithLasso = (p: Point, obj: VectorObject): Point => {
   if (
     obj.lassoDeformState && 
@@ -67,17 +93,34 @@ const deformWithLasso = (p: Point, obj: VectorObject): Point => {
     obj.lassoDeformState.lassoPoints && 
     obj.lassoDeformState.lassoPoints.length >= 3
   ) {
-    if (isPointInPolygon(p, obj.lassoDeformState.lassoPoints)) {
-      const polygon = obj.lassoDeformState.lassoPoints;
-      let sumX = 0;
-      let sumY = 0;
-      polygon.forEach(pt => {
-        sumX += pt.x;
-        sumY += pt.y;
-      });
-      const lassoCenter = { localX: sumX / polygon.length, localY: sumY / polygon.length };
-      // Transform local point relative to the lasso polygon's center
-      return localToWorld(p, obj.lassoDeformState.transform, lassoCenter);
+    const polygon = obj.lassoDeformState.lassoPoints;
+    let sumX = 0;
+    let sumY = 0;
+    polygon.forEach(pt => {
+      sumX += pt.x;
+      sumY += pt.y;
+    });
+    const lassoCenter = { localX: sumX / polygon.length, localY: sumY / polygon.length };
+    // Rigid body transform of selected pixels relative to center
+    const pTransformed = localToWorld(p, obj.lassoDeformState.transform, lassoCenter);
+
+    if (isPointInPolygon(p, polygon)) {
+      return pTransformed;
+    } else {
+      const d = pointToPolygonDistance(p, polygon);
+      const polyBounds = calculateBoundingBox(polygon);
+      const size = Math.max(polyBounds.width, polyBounds.height);
+      // Perfect localized transition radius: 20% of selection size, bounded between 15px and 45px
+      const R = Math.max(15, Math.min(45, size * 0.2));
+      if (d >= R) {
+        return p; // Keep points outside the transition range completely static!
+      }
+      const t = 1 - d / R;
+      const w = t * t * (3 - 2 * t); // Hermite smoothstep for organic blend
+      return {
+        x: p.x + w * (pTransformed.x - p.x),
+        y: p.y + w * (pTransformed.y - p.y)
+      };
     }
   }
   return p;
@@ -444,6 +487,10 @@ interface CanvasAreaProps {
   setLayers?: React.Dispatch<React.SetStateAction<any[]>>;
   lassoPoints: Point[];
   setLassoPoints: React.Dispatch<React.SetStateAction<Point[]>>;
+  lassoMode: 'freehand' | 'pen';
+  setLassoMode: (mode: 'freehand' | 'pen') => void;
+  penLassoPoints: Point[];
+  setPenLassoPoints: React.Dispatch<React.SetStateAction<Point[]>>;
   realismSettings?: RealismSettings;
   is360WizardActive?: boolean;
   draft360Views?: any[];
@@ -469,6 +516,10 @@ export default function CanvasArea({
   setLayers,
   lassoPoints,
   setLassoPoints,
+  lassoMode,
+  setLassoMode,
+  penLassoPoints,
+  setPenLassoPoints,
   realismSettings,
   is360WizardActive = false,
   draft360Views = [],
@@ -968,8 +1019,33 @@ export default function CanvasArea({
 
     // Lasso Selection tool pointer down
     if (activeTool === 'LSO') {
-      setIsDrawingLasso(true);
-      setLassoPoints([coords]);
+      if (lassoMode === 'freehand') {
+        setIsDrawingLasso(true);
+        setLassoPoints([coords]);
+      } else {
+        // Pen Selection Mode
+        // If double click (e.detail === 2) and we have enough points, close it!
+        if (e.detail === 2 && penLassoPoints.length >= 3) {
+          setLassoPoints([...penLassoPoints]);
+          setPenLassoPoints([]);
+          return;
+        }
+
+        if (penLassoPoints.length > 0) {
+          const firstPt = penLassoPoints[0];
+          const dist = distance(coords, firstPt);
+          const threshold = 15 / zoomScale;
+          if (dist < threshold) {
+            // Close loop
+            if (penLassoPoints.length >= 3) {
+              setLassoPoints([...penLassoPoints]);
+              setPenLassoPoints([]);
+            }
+            return;
+          }
+        }
+        setPenLassoPoints(prev => [...prev, coords]);
+      }
       return;
     }
 
@@ -2170,9 +2246,24 @@ export default function CanvasArea({
       const layer = (layers || []).find(l => l.id === obj.layerId);
       if (layer && layer.isHidden) return; // Skip if layer is hidden
 
-      ctx.save();
-
       let drawObj = resolve360Object(obj, objects);
+
+      const hasLassoDeform = !!(drawObj.lassoDeformState && drawObj.lassoDeformState.active && drawObj.lassoDeformState.lassoPoints && drawObj.lassoDeformState.lassoPoints.length >= 3);
+      const localPivot = drawObj.pivots[0] || { localX: 0, localY: 0 };
+      const polygon = drawObj.lassoDeformState?.lassoPoints || [];
+      
+      let lassoCenter = { localX: 0, localY: 0 };
+      if (polygon.length > 0) {
+        let sumX = 0;
+        let sumY = 0;
+        polygon.forEach(pt => {
+          sumX += pt.x;
+          sumY += pt.y;
+        });
+        lassoCenter = { localX: sumX / polygon.length, localY: sumY / polygon.length };
+      }
+
+      ctx.save();
 
       // Calculate warped local points
       const bounds = calculateBoundingBox(drawObj.points);
@@ -2410,11 +2501,11 @@ export default function CanvasArea({
           const localPivot = drawObj.pivots[0] || { localX: 0, localY: 0 };
           const imgBounds = calculateBoundingBox(drawObj.points);
           
-          const hasLassoDeform = drawObj.lassoDeformState && drawObj.lassoDeformState.active;
+          const hasLassoDeformImage = !!(drawObj.lassoDeformState && drawObj.lassoDeformState.active && drawObj.lassoDeformState.lassoPoints && drawObj.lassoDeformState.lassoPoints.length >= 3);
           const hasMeshState = drawObj.meshState && drawObj.meshState.active;
           const hasPuppetPins = drawObj.pins && drawObj.pins.length > 0;
 
-          if (hasLassoDeform || hasMeshState || hasPuppetPins) {
+          if (hasLassoDeformImage || hasMeshState || hasPuppetPins) {
             // Draw textured mesh deformation!
             const COLS = 24;
             const ROWS = 24;
@@ -2434,7 +2525,7 @@ export default function CanvasArea({
                 const p = { x: px, y: py };
                 
                 let dp = p;
-                if (hasLassoDeform) {
+                if (hasLassoDeformImage) {
                   dp = deformWithLasso(p, drawObj);
                 } else if (hasMeshState) {
                   dp = getWarpedPoint(p, drawObj.meshState, imgBounds);
@@ -3054,6 +3145,55 @@ export default function CanvasArea({
       ctx.restore();
     }
 
+    // Render current in-progress Pen selection path
+    if (activeTool === 'LSO' && lassoMode === 'pen' && penLassoPoints && penLassoPoints.length > 0) {
+      ctx.save();
+      
+      // Draw path lines
+      ctx.beginPath();
+      ctx.moveTo(penLassoPoints[0].x, penLassoPoints[0].y);
+      for (let i = 1; i < penLassoPoints.length; i++) {
+        ctx.lineTo(penLassoPoints[i].x, penLassoPoints[i].y);
+      }
+      
+      // Draw live rubberband line from last point to current cursor pos
+      ctx.lineTo(currentCursorPos.x, currentCursorPos.y);
+      
+      ctx.strokeStyle = 'rgba(245, 158, 11, 0.7)';
+      ctx.lineWidth = 2 / zoomScale;
+      ctx.setLineDash([4, 4]);
+      ctx.stroke();
+      
+      // Draw the dots
+      penLassoPoints.forEach((pt, index) => {
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 5 / zoomScale, 0, Math.PI * 2);
+        
+        if (index === 0) {
+          // Accent highlighted circle for first point
+          ctx.fillStyle = '#F59E0B';
+          ctx.strokeStyle = '#FFFFFF';
+          ctx.lineWidth = 2 / zoomScale;
+          ctx.fill();
+          ctx.stroke();
+          
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, 9 / zoomScale, 0, Math.PI * 2);
+          ctx.strokeStyle = 'rgba(245, 158, 11, 0.4)';
+          ctx.lineWidth = 1.5 / zoomScale;
+          ctx.stroke();
+        } else {
+          ctx.fillStyle = '#374151';
+          ctx.strokeStyle = '#F59E0B';
+          ctx.lineWidth = 1.5 / zoomScale;
+          ctx.fill();
+          ctx.stroke();
+        }
+      });
+      
+      ctx.restore();
+    }
+
     // Restore top-level viewport zoom/pan transformation
     ctx.restore();
   }, [
@@ -3071,7 +3211,9 @@ export default function CanvasArea({
     showBones,
     zoomScale,
     zoomOffset,
-    lassoPoints
+    lassoPoints,
+    lassoMode,
+    penLassoPoints
   ]);
 
   return (
@@ -3095,6 +3237,70 @@ export default function CanvasArea({
         onPointerLeave={handlePointerUp}
         className="absolute inset-0 cursor-crosshair touch-none"
       />
+
+      {/* Floating Lasso Selection Mode HUD */}
+      {activeTool === 'LSO' && (
+        <div id="canvas-lasso-mode-hud" className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-neutral-900/95 backdrop-blur-md px-4 py-2 rounded-2xl border border-neutral-800 shadow-xl pointer-events-auto z-50 animate-fade-in text-white">
+          <span className="text-[10px] text-amber-500 font-black uppercase tracking-wider mr-1">Selection Mode:</span>
+          
+          <button
+            type="button"
+            onClick={() => {
+              setLassoMode('freehand');
+              setPenLassoPoints([]);
+            }}
+            className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer ${
+              lassoMode === 'freehand'
+                ? 'bg-amber-500 text-neutral-950 font-black shadow shadow-amber-500/30'
+                : 'text-neutral-400 hover:text-white hover:bg-neutral-800/60'
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            Lasso
+          </button>
+          
+          <button
+            type="button"
+            onClick={() => {
+              setLassoMode('pen');
+            }}
+            className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer ${
+              lassoMode === 'pen'
+                ? 'bg-amber-500 text-neutral-950 font-black shadow shadow-amber-500/30'
+                : 'text-neutral-400 hover:text-white hover:bg-neutral-800/60'
+            }`}
+          >
+            <Feather className="w-3.5 h-3.5" />
+            Vector Pen
+          </button>
+          
+          {lassoMode === 'pen' && penLassoPoints.length > 0 && (
+            <>
+              <div className="h-4 w-[1px] bg-neutral-800 mx-1" />
+              <button
+                type="button"
+                disabled={penLassoPoints.length < 3}
+                onClick={() => {
+                  setLassoPoints([...penLassoPoints]);
+                  setPenLassoPoints([]);
+                }}
+                className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:hover:bg-emerald-600 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1"
+                title="Connect first and last points to finalize the selection area"
+              >
+                Done ({penLassoPoints.length} pts)
+              </button>
+              
+              <button
+                type="button"
+                onClick={() => setPenLassoPoints([])}
+                className="px-2.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer"
+              >
+                Clear
+              </button>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Floating Canvas controls HUD */}
       <div id="canvas-zoom-hud" className="absolute bottom-4 right-4 flex items-center gap-2 bg-white/95 backdrop-blur-md px-3 py-1.5 rounded-full border border-gray-200 shadow-md pointer-events-auto z-50">

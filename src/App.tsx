@@ -87,6 +87,8 @@ export default function App() {
 
   // Lasso selection area points state
   const [lassoPoints, setLassoPoints] = useState<Point[]>([]);
+  const [lassoMode, setLassoMode] = useState<'freehand' | 'pen'>('freehand');
+  const [penLassoPoints, setPenLassoPoints] = useState<Point[]>([]);
 
   // Realism Maker Settings
   const [realismSettings, setRealismSettings] = useState<RealismSettings>({
@@ -1524,6 +1526,10 @@ export default function App() {
           setLayers={setLayers}
           lassoPoints={lassoPoints}
           setLassoPoints={setLassoPoints}
+          lassoMode={lassoMode}
+          setLassoMode={setLassoMode}
+          penLassoPoints={penLassoPoints}
+          setPenLassoPoints={setPenLassoPoints}
           realismSettings={realismSettings}
           is360WizardActive={is360WizardActive}
           draft360Views={draft360Views}
@@ -1551,6 +1557,10 @@ export default function App() {
           setActiveTool={setActiveTool}
           lassoPoints={lassoPoints}
           setLassoPoints={setLassoPoints}
+          lassoMode={lassoMode}
+          setLassoMode={setLassoMode}
+          penLassoPoints={penLassoPoints}
+          setPenLassoPoints={setPenLassoPoints}
           frames={frames}
           setFrames={setFrames}
           currentFrameIndex={currentFrameIndex}
