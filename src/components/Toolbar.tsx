@@ -19,7 +19,8 @@ import {
   GitCommit,
   LayoutGrid,
   Sparkles,
-  Box
+  Box,
+  ZoomIn
 } from 'lucide-react';
 
 interface ToolbarProps {
@@ -51,6 +52,7 @@ export default function Toolbar({
     { id: 'CON', name: 'Constraint', label: 'Constraints (CON)', icon: AlignCenterIcon },
     { id: 'MOT', name: 'Motion Path', label: 'Motion Path (MOT)', icon: TrendingUpIcon },
     { id: 'EYE', name: 'Eyedropper', label: 'Eyedropper (EYE)', icon: EyedropperIcon },
+    { id: 'ZOM', name: 'Zoom & Pan', label: 'Zoom & Pan (ZOM)', icon: ZoomInIcon, desc: 'Pinch with two fingers to zoom, or drag with single touch/pointer to pan smoothly in any direction.' },
   ];
 
   return (
@@ -134,3 +136,4 @@ function EraserIcon(props: any) { return <Trash2 {...props} /> }
 function SparklesIcon(props: any) { return <Sparkles {...props} /> }
 function BoxIcon(props: any) { return <Box {...props} /> }
 function CompassIcon(props: any) { return <Compass {...props} /> }
+function ZoomInIcon(props: any) { return <ZoomIn {...props} /> }

@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { RotateCcw, Sparkles, Feather } from 'lucide-react';
-import { Point, VectorObject, Bone, Pivot, Frame, Transform, RealismSettings } from '../types';
+import { RotateCcw, Sparkles, Feather, ZoomIn, ZoomOut } from 'lucide-react';
+import { Point, VectorObject, Bone, Pivot, Frame, Transform, RealismSettings, LassoControlPoint } from '../types';
 import { transform3DVertex, project3DVertex, getFaceLightColor, deformVertices3D } from '../utils/engine3D';
 import { 
   distance, 
@@ -123,6 +123,52 @@ const deformWithLasso = (p: Point, obj: VectorObject): Point => {
       };
     }
   }
+  return p;
+};
+
+// 🌟 Lasso Control Points Mesh Shepard's IDW deform helper
+const deformWithLassoControlPoints = (p: Point, controlPoints: LassoControlPoint[]): Point => {
+  if (!controlPoints || controlPoints.length === 0) return p;
+
+  // Let's find if any control point is moved
+  let hasMovement = false;
+  for (const cp of controlPoints) {
+    if (Math.abs(cp.currentX - cp.originalX) > 0.05 || Math.abs(cp.currentY - cp.originalY) > 0.05) {
+      hasMovement = true;
+      break;
+    }
+  }
+  if (!hasMovement) return p;
+
+  // Shepard's Interpolation (IDW)
+  let sumX = 0;
+  let sumY = 0;
+  let totalWeight = 0;
+  const pPower = 2; // Power parameter for distance weighting
+
+  for (const cp of controlPoints) {
+    const dx = p.x - cp.originalX;
+    const dy = p.y - cp.originalY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (dist < 0.1) {
+      // Extremely close to a control point, return its exact current position
+      return { x: cp.currentX, y: cp.currentY };
+    }
+
+    const weight = 1 / Math.pow(dist, pPower);
+    sumX += (cp.currentX - cp.originalX) * weight;
+    sumY += (cp.currentY - cp.originalY) * weight;
+    totalWeight += weight;
+  }
+
+  if (totalWeight > 0) {
+    return {
+      x: p.x + sumX / totalWeight,
+      y: p.y + sumY / totalWeight
+    };
+  }
+
   return p;
 };
 
@@ -553,13 +599,53 @@ export default function CanvasArea({
   }, [artboardW, artboardH]);
 
   const recenterCanvas = () => {
-    const scaleX = (dimensions.width - 48) / artboardW;
-    const scaleY = (dimensions.height - 48) / artboardH;
-    const bestScale = Math.min(2.0, Math.max(0.3, Math.min(scaleX, scaleY)));
-    const offsetX = (dimensions.width - artboardW * bestScale) / 2;
-    const offsetY = (dimensions.height - artboardH * bestScale) / 2;
-    setZoomScale(bestScale);
-    setZoomOffset({ x: offsetX, y: offsetY });
+    try {
+      const scaleX = (dimensions.width - 48) / artboardW;
+      const scaleY = (dimensions.height - 48) / artboardH;
+      const bestScale = Math.min(2.0, Math.max(0.3, Math.min(scaleX, scaleY)));
+      const offsetX = (dimensions.width - artboardW * bestScale) / 2;
+      const offsetY = (dimensions.height - artboardH * bestScale) / 2;
+      setZoomScale(bestScale);
+      setZoomOffset({ x: offsetX, y: offsetY });
+    } catch (err) {
+      console.error("Recenter canvas failed", err);
+    }
+  };
+
+  const zoomIn = () => {
+    try {
+      const currentScale = zoomScale;
+      const nextScale = Math.min(10.0, currentScale + 0.15);
+      const factor = currentScale > 0 ? nextScale / currentScale : 1;
+      const centerX = dimensions.width / 2;
+      const centerY = dimensions.height / 2;
+      
+      setZoomScale(nextScale);
+      setZoomOffset(prevOffset => ({
+        x: centerX - (centerX - prevOffset.x) * factor,
+        y: centerY - (centerY - prevOffset.y) * factor
+      }));
+    } catch (err) {
+      console.error("Zoom in failed", err);
+    }
+  };
+
+  const zoomOut = () => {
+    try {
+      const currentScale = zoomScale;
+      const nextScale = Math.max(0.15, currentScale - 0.15);
+      const factor = currentScale > 0 ? nextScale / currentScale : 1;
+      const centerX = dimensions.width / 2;
+      const centerY = dimensions.height / 2;
+      
+      setZoomScale(nextScale);
+      setZoomOffset(prevOffset => ({
+        x: centerX - (centerX - prevOffset.x) * factor,
+        y: centerY - (centerY - prevOffset.y) * factor
+      }));
+    } catch (err) {
+      console.error("Zoom out failed", err);
+    }
   };
 
   useEffect(() => {
@@ -588,21 +674,81 @@ export default function CanvasArea({
 
   const resolve360Object = (obj: VectorObject, objectsList: { [id: string]: VectorObject }): VectorObject => {
     if (obj.type !== '360_container') return obj;
-    const views = obj.views360 || [];
-    const closestView = findClosestView360(views, obj.currentAngle360 ?? 0);
-    if (!closestView) return obj;
-    const targetDrawing = objectsList[closestView.drawingId];
+    const rawViews = obj.views360 || [];
+    if (rawViews.length === 0) return obj;
+
+    // Sort views by angle to find upper and lower bounds
+    const views = [...rawViews].sort((a, b) => a.angle - b.angle);
+    const angle = ((obj.currentAngle360 ?? 0) % 360 + 360) % 360;
+
+    let vLower = views[views.length - 1];
+    let vUpper = views[0];
+
+    for (let i = 0; i < views.length; i++) {
+      if (views[i].angle <= angle) {
+        vLower = views[i];
+      }
+    }
+    for (let i = views.length - 1; i >= 0; i--) {
+      if (views[i].angle >= angle) {
+        vUpper = views[i];
+      }
+    }
+
+    let angleDiff = vUpper.angle - vLower.angle;
+    if (angleDiff < 0) angleDiff += 360;
+    let currentDiff = angle - vLower.angle;
+    if (currentDiff < 0) currentDiff += 360;
+
+    const t = angleDiff === 0 ? 0 : currentDiff / angleDiff;
+
+    const targetLower = objectsList[vLower.drawingId];
+    const targetUpper = objectsList[vUpper.drawingId];
     const anchorDrawingId = views[0]?.drawingId;
     const anchorDrawing = objectsList[anchorDrawingId];
-    if (!targetDrawing || !anchorDrawing) return obj;
 
-    const boundsTarget = calculateBoundingBox(targetDrawing.points);
+    if (!targetLower || !anchorDrawing) return obj;
+
+    const targetDrawing = t > 0.5 && targetUpper ? targetUpper : targetLower;
+
+    // Linear vertex interpolation if array lengths match
+    let interpolatedPoints = targetLower.points;
+    if (targetUpper && targetLower.points.length === targetUpper.points.length) {
+      interpolatedPoints = targetLower.points.map((p, idx) => {
+        const p2 = targetUpper.points[idx];
+        return {
+          ...p,
+          x: p.x + (p2.x - p.x) * t,
+          y: p.y + (p2.y - p.y) * t
+        };
+      });
+    }
+
+    let interpolatedSubPaths = targetLower.subPaths;
+    if (targetUpper && targetLower.subPaths && targetUpper.subPaths && targetLower.subPaths.length === targetUpper.subPaths.length) {
+      interpolatedSubPaths = targetLower.subPaths.map((subLower, sIdx) => {
+        const subUpper = targetUpper.subPaths![sIdx];
+        if (subLower.length === subUpper.length) {
+          return subLower.map((p, pIdx) => {
+            const p2 = subUpper[pIdx];
+            return {
+              ...p,
+              x: p.x + (p2.x - p.x) * t,
+              y: p.y + (p2.y - p.y) * t
+            };
+          });
+        }
+        return subLower;
+      });
+    }
+
+    const boundsTarget = calculateBoundingBox(interpolatedPoints);
     const boundsAnchor = calculateBoundingBox(anchorDrawing.points);
     
     const txAnchor = anchorDrawing.transform.x;
     const tyAnchor = anchorDrawing.transform.y;
-    const txTarget = targetDrawing.transform.x;
-    const tyTarget = targetDrawing.transform.y;
+    const txTarget = targetUpper ? (targetLower.transform.x + (targetUpper.transform.x - targetLower.transform.x) * t) : targetLower.transform.x;
+    const tyTarget = targetUpper ? (targetLower.transform.y + (targetUpper.transform.y - targetLower.transform.y) * t) : targetLower.transform.y;
     
     const canvasCXAnchor = (boundsAnchor.x + boundsAnchor.width / 2) + txAnchor;
     const canvasCYAnchor = (boundsAnchor.y + boundsAnchor.height / 2) + tyAnchor;
@@ -616,18 +762,18 @@ export default function CanvasArea({
       ...targetDrawing.transform,
       x: obj.transform.x,
       y: obj.transform.y,
-      rotation: obj.transform.rotation + (targetDrawing.transform.rotation - anchorDrawing.transform.rotation),
-      scaleX: obj.transform.scaleX * (targetDrawing.transform.scaleX / anchorDrawing.transform.scaleX),
-      scaleY: obj.transform.scaleY * (targetDrawing.transform.scaleY / anchorDrawing.transform.scaleY),
+      rotation: obj.transform.rotation + (targetLower.transform.rotation + (targetUpper ? (targetUpper.transform.rotation - targetLower.transform.rotation) * t : 0) - anchorDrawing.transform.rotation),
+      scaleX: obj.transform.scaleX * ((targetLower.transform.scaleX + (targetUpper ? (targetUpper.transform.scaleX - targetLower.transform.scaleX) * t : 0)) / anchorDrawing.transform.scaleX),
+      scaleY: obj.transform.scaleY * ((targetLower.transform.scaleY + (targetUpper ? (targetUpper.transform.scaleY - targetLower.transform.scaleY) * t : 0)) / anchorDrawing.transform.scaleY),
     };
 
-    const alignedPoints = targetDrawing.points.map(p => ({
+    const alignedPoints = interpolatedPoints.map(p => ({
       ...p,
       x: p.x + dx,
       y: p.y + dy
     }));
 
-    const alignedSubPaths = targetDrawing.subPaths?.map(sub => 
+    const alignedSubPaths = interpolatedSubPaths?.map(sub => 
       sub.map(p => ({
         ...p,
         x: p.x + dx,
@@ -652,7 +798,7 @@ export default function CanvasArea({
   const [isDrawingLasso, setIsDrawingLasso] = useState(false);
   
   // Transform & drag gesture state
-  const [dragMode, setDragMode] = useState<'none' | 'move' | 'rotate' | 'scale' | 'pivot' | 'pin' | 'meshPoint' | 'meshGridPoint' | 'puppetPin' | 'directRigBone'>('none');
+  const [dragMode, setDragMode] = useState<'none' | 'move' | 'rotate' | 'scale' | 'pivot' | 'pin' | 'meshPoint' | 'meshGridPoint' | 'puppetPin' | 'lassoControlPoint' | 'directRigBone' | 'zoom' | 'pan'>('none');
   const [dragStartPoint, setDragStartPoint] = useState<Point>({ x: 0, y: 0 });
   const [initialTransform, setInitialTransform] = useState<any>(null);
   const [activeHandleIndex, setActiveHandleIndex] = useState<number | null>(null);
@@ -689,6 +835,10 @@ export default function CanvasArea({
   const activePointersRef = useRef<{ [id: number]: Point }>({});
   const lastPinchDistRef = useRef<number>(0);
   const lastPinchMidRef = useRef<Point>({ x: 0, y: 0 });
+  const dragStartScreenRef = useRef<Point>({ x: 0, y: 0 });
+  const dragStartOffsetRef = useRef<Point>({ x: 0, y: 0 });
+  const lastPinchOffsetRef = useRef<Point>({ x: 0, y: 0 });
+  const lastPinchScaleRef = useRef<number>(1);
 
   // Get coordinates relative to canvas bounding box with zoom/pan applied
   const getCanvasCoords = (e: React.PointerEvent<HTMLCanvasElement>): Point => {
@@ -983,23 +1133,60 @@ export default function CanvasArea({
     activePointersRef.current[e.pointerId] = { x: e.clientX, y: e.clientY };
     const pointerIds = Object.keys(activePointersRef.current);
     
+    if (activeTool === 'ZOM') {
+      if (pointerIds.length === 2) {
+        const p1 = activePointersRef.current[Number(pointerIds[0])];
+        const p2 = activePointersRef.current[Number(pointerIds[1])];
+        
+        const dist = distance(p1, p2);
+        lastPinchDistRef.current = dist;
+        lastPinchMidRef.current = {
+          x: (p1.x + p2.x) / 2,
+          y: (p1.y + p2.y) / 2
+        };
+        lastPinchOffsetRef.current = { ...zoomOffset };
+        lastPinchScaleRef.current = zoomScale;
+        
+        setDragMode('zoom');
+      } else if (pointerIds.length === 1) {
+        dragStartScreenRef.current = { x: e.clientX, y: e.clientY };
+        dragStartOffsetRef.current = { ...zoomOffset };
+        setDragMode('pan');
+      }
+      return;
+    }
+
     if (pointerIds.length === 2) {
-      const p1 = activePointersRef.current[Number(pointerIds[0])];
-      const p2 = activePointersRef.current[Number(pointerIds[1])];
-      
-      const dist = distance(p1, p2);
-      lastPinchDistRef.current = dist;
-      lastPinchMidRef.current = {
-        x: (p1.x + p2.x) / 2,
-        y: (p1.y + p2.y) / 2
-      };
-      
-      setDragMode('zoom');
+      // Ignore zoom on other tools to prevent accidental canvas manipulation,
+      // as zoom tool is now dedicated.
       return;
     }
 
     const coords = getCanvasCoords(e);
     setCurrentCursorPos(coords);
+
+    // Check if we clicked on a Lasso Mesh Control Point!
+    if (selectedObjectId && objects[selectedObjectId]) {
+      const obj = objects[selectedObjectId];
+      if (obj.lassoControlPoints && obj.lassoControlPoints.length > 0) {
+        let clickedLcpIdx = -1;
+        let minLcpDist = 14 / zoomScale;
+        obj.lassoControlPoints.forEach((cp, idx) => {
+          const worldPt = localToWorld({ x: cp.currentX, y: cp.currentY }, obj.transform, obj.pivots[0]);
+          const d = distance(coords, worldPt);
+          if (d < minLcpDist) {
+            minLcpDist = d;
+            clickedLcpIdx = idx;
+          }
+        });
+        if (clickedLcpIdx !== -1) {
+          setDragMode('lassoControlPoint');
+          setDraggedMeshPointIndex(clickedLcpIdx);
+          setDragStartPoint(coords);
+          return;
+        }
+      }
+    }
 
     // DRIG and BON tool handlers removed to fully clear old bone skeletal rigging code.
 
@@ -1412,6 +1599,51 @@ export default function CanvasArea({
     const coords = getCanvasCoords(e);
     setCurrentCursorPos(coords);
 
+    if (activeTool === 'ZOM') {
+      const pointerIds = Object.keys(activePointersRef.current);
+      if (dragMode === 'zoom' && pointerIds.length === 2) {
+        const p1 = activePointersRef.current[Number(pointerIds[0])];
+        const p2 = activePointersRef.current[Number(pointerIds[1])];
+        
+        const dist = distance(p1, p2);
+        if (lastPinchDistRef.current > 0) {
+          const scaleChange = dist / lastPinchDistRef.current;
+          let nextScale = lastPinchScaleRef.current * scaleChange;
+          
+          // Clamp scale to standard limits
+          nextScale = Math.min(10.0, Math.max(0.15, nextScale));
+          
+          const midX = (p1.x + p2.x) / 2;
+          const midY = (p1.y + p2.y) / 2;
+          
+          const canvas = frontCanvasRef.current;
+          if (canvas) {
+            const rect = canvas.getBoundingClientRect();
+            const midCanvasX = midX - rect.left;
+            const midCanvasY = midY - rect.top;
+            
+            const worldX = (midCanvasX - lastPinchOffsetRef.current.x) / lastPinchScaleRef.current;
+            const worldY = (midCanvasY - lastPinchOffsetRef.current.y) / lastPinchScaleRef.current;
+            
+            const nextOffsetX = midCanvasX - worldX * nextScale;
+            const nextOffsetY = midCanvasY - worldY * nextScale;
+            
+            setZoomScale(nextScale);
+            setZoomOffset({ x: nextOffsetX, y: nextOffsetY });
+          }
+        }
+      } else if (dragMode === 'pan' && pointerIds.length === 1) {
+        const dx = e.clientX - dragStartScreenRef.current.x;
+        const dy = e.clientY - dragStartScreenRef.current.y;
+        
+        setZoomOffset({
+          x: dragStartOffsetRef.current.x + dx,
+          y: dragStartOffsetRef.current.y + dy
+        });
+      }
+      return;
+    }
+
     // directRigBone dragging handler removed.
 
     if (dragMode === 'meshGridPoint' && selectedObjectId && draggedMeshPointIndex !== null) {
@@ -1462,6 +1694,32 @@ export default function CanvasArea({
             [selectedObjectId]: {
               ...prev[selectedObjectId],
               pins: updatedPins
+            }
+          };
+        });
+      }
+      return;
+    }
+
+    if (dragMode === 'lassoControlPoint' && selectedObjectId && draggedMeshPointIndex !== null) {
+      const obj = objects[selectedObjectId];
+      if (obj && obj.lassoControlPoints) {
+        const localPos = worldToLocal(coords, obj.transform, obj.pivots[0]);
+        setObjects(prev => {
+          if (!prev[selectedObjectId]) return prev;
+          const updatedLcp = [...(prev[selectedObjectId].lassoControlPoints || [])];
+          if (updatedLcp[draggedMeshPointIndex]) {
+            updatedLcp[draggedMeshPointIndex] = {
+              ...updatedLcp[draggedMeshPointIndex],
+              currentX: Number(localPos.x.toFixed(2)),
+              currentY: Number(localPos.y.toFixed(2))
+            };
+          }
+          return {
+            ...prev,
+            [selectedObjectId]: {
+              ...prev[selectedObjectId],
+              lassoControlPoints: updatedLcp
             }
           };
         });
@@ -1799,7 +2057,17 @@ export default function CanvasArea({
     }
 
     if (dragMode === 'zoom' || dragMode === 'pan') {
-      setDragMode('none');
+      const pointerIds = Object.keys(activePointersRef.current);
+      if (pointerIds.length === 1 && activeTool === 'ZOM') {
+        const pt = activePointersRef.current[Number(pointerIds[0])];
+        if (pt) {
+          dragStartScreenRef.current = { x: pt.x, y: pt.y };
+          dragStartOffsetRef.current = { ...zoomOffset };
+          setDragMode('pan');
+        }
+      } else {
+        setDragMode('none');
+      }
       return;
     }
 
@@ -2038,7 +2306,7 @@ export default function CanvasArea({
       setElasticWarningId(null);
     }
 
-    if (dragMode === 'meshPoint' || dragMode === 'meshGridPoint' || dragMode === 'puppetPin') {
+    if (dragMode === 'meshPoint' || dragMode === 'meshGridPoint' || dragMode === 'puppetPin' || dragMode === 'lassoControlPoint') {
       setDragMode('none');
       setDraggedMeshPointIndex(null);
       historyPush();
@@ -2166,6 +2434,38 @@ export default function CanvasArea({
     setIsDrawingLasso(false);
   };
 
+  const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
+    // Only zoom on scroll wheel if the Zoom & Pan tool is active
+    if (activeTool !== 'ZOM') return;
+    
+    e.preventDefault();
+    
+    // Zoom amount depending on deltaY
+    const zoomFactor = 1.08;
+    const isZoomIn = e.deltaY < 0;
+    const currentScale = zoomScale;
+    let nextScale = isZoomIn ? currentScale * zoomFactor : currentScale / zoomFactor;
+    
+    // Clamp scale to limits (0.15 to 10.0)
+    nextScale = Math.min(10.0, Math.max(0.15, nextScale));
+    
+    const canvas = frontCanvasRef.current;
+    if (canvas) {
+      const rect = canvas.getBoundingClientRect();
+      const cursorX = e.clientX - rect.left;
+      const cursorY = e.clientY - rect.top;
+      
+      const worldX = (cursorX - zoomOffset.x) / currentScale;
+      const worldY = (cursorY - zoomOffset.y) / currentScale;
+      
+      const nextOffsetX = cursorX - worldX * nextScale;
+      const nextOffsetY = cursorY - worldY * nextScale;
+      
+      setZoomScale(nextScale);
+      setZoomOffset({ x: nextOffsetX, y: nextOffsetY });
+    }
+  };
+
   const updateObjectProperties = (id: string, updates: Partial<VectorObject>) => {
     setObjects(prev => {
       if (!prev[id]) return prev;
@@ -2280,7 +2580,15 @@ export default function CanvasArea({
       const bounds = calculateBoundingBox(drawObj.points);
       let localPoints = drawObj.points;
       
-      if (drawObj.lassoDeformState && drawObj.lassoDeformState.active) {
+      if (drawObj.lassoControlPoints && drawObj.lassoControlPoints.length > 0) {
+        localPoints = drawObj.points.map((p, idx) => {
+          const wasInsideLasso = drawObj.lassoControlPoints?.some(cp => cp.subPathIndex === undefined && cp.pointIndex === idx);
+          if (wasInsideLasso && drawObj.lassoControlPoints) {
+            return deformWithLassoControlPoints(p, drawObj.lassoControlPoints);
+          }
+          return p;
+        });
+      } else if (drawObj.lassoDeformState && drawObj.lassoDeformState.active) {
         localPoints = drawObj.points.map(p => deformWithLasso(p, drawObj));
       } else if (drawObj.meshState && drawObj.meshState.active) {
         localPoints = drawObj.points.map(p => getWarpedPoint(p, drawObj.meshState, bounds));
@@ -2304,7 +2612,15 @@ export default function CanvasArea({
         if (drawObj.subPaths && drawObj.subPaths.length > 0) {
           drawObj.subPaths.forEach((sub, subIdx) => {
             let localSubPoints = sub;
-            if (drawObj.lassoDeformState && drawObj.lassoDeformState.active) {
+            if (drawObj.lassoControlPoints && drawObj.lassoControlPoints.length > 0) {
+              localSubPoints = sub.map((p, idx) => {
+                const wasInsideLasso = drawObj.lassoControlPoints?.some(cp => cp.subPathIndex === subIdx && cp.pointIndex === idx);
+                if (wasInsideLasso && drawObj.lassoControlPoints) {
+                  return deformWithLassoControlPoints(p, drawObj.lassoControlPoints);
+                }
+                return p;
+              });
+            } else if (drawObj.lassoDeformState && drawObj.lassoDeformState.active) {
               localSubPoints = sub.map(p => deformWithLasso(p, drawObj));
             } else if (drawObj.meshState && drawObj.meshState.active) {
               const subBounds = calculateBoundingBox(sub);
@@ -2777,7 +3093,7 @@ export default function CanvasArea({
     });
 
     // Draw select overlay bounding boxes & 10+ handles
-    if (selectedObjectId && objects[selectedObjectId]) {
+    if (selectedObjectId && objects[selectedObjectId] && activeTool !== 'ZOM') {
       const rawObj = objects[selectedObjectId];
       const obj = resolve360Object(rawObj, objects);
       const box = calculateBoundingBox(getAllObjectPoints(rawObj));
@@ -2986,6 +3302,27 @@ export default function CanvasArea({
         ctx.fillStyle = 'rgba(245, 158, 11, 0.1)'; // Soft amber fill
         ctx.fill();
         
+        ctx.restore();
+      }
+    }
+
+    // Render Lasso Mesh Control Points overlay for selected object if present
+    if (selectedObjectId && objects[selectedObjectId]) {
+      const obj = objects[selectedObjectId];
+      if (obj.lassoControlPoints && obj.lassoControlPoints.length > 0) {
+        ctx.save();
+        const localPivot = obj.pivots[0] || { localX: 0, localY: 0 };
+        obj.lassoControlPoints.forEach((cp, idx) => {
+          const worldPt = localToWorld({ x: cp.currentX, y: cp.currentY }, obj.transform, localPivot);
+          
+          ctx.beginPath();
+          ctx.arc(worldPt.x, worldPt.y, 4.5, 0, Math.PI * 2);
+          ctx.fillStyle = (dragMode === 'lassoControlPoint' && draggedMeshPointIndex === idx) ? '#F59E0B' : '#3B82F6'; // Amber if dragging, else elegant blue
+          ctx.fill();
+          ctx.strokeStyle = '#FFFFFF';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        });
         ctx.restore();
       }
     }
@@ -3251,7 +3588,12 @@ export default function CanvasArea({
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
         onPointerLeave={handlePointerUp}
-        className="absolute inset-0 cursor-crosshair touch-none"
+        onWheel={handleWheel}
+        className={`absolute inset-0 touch-none ${
+          activeTool === 'ZOM' 
+            ? (dragMode === 'pan' ? 'cursor-grabbing' : 'cursor-grab') 
+            : 'cursor-crosshair'
+        }`}
       />
 
       {/* Floating Lasso Selection Mode HUD */}
@@ -3511,15 +3853,35 @@ export default function CanvasArea({
       )}
 
       {/* Floating Canvas controls HUD */}
-      <div id="canvas-zoom-hud" className="absolute bottom-4 right-4 flex items-center gap-2 bg-white/95 backdrop-blur-md px-3 py-1.5 rounded-full border border-gray-200 shadow-md pointer-events-auto z-50">
-        <span className="font-mono text-xs font-semibold text-gray-700 select-none">
+      <div id="canvas-zoom-hud" className="absolute bottom-4 right-4 flex items-center gap-1 bg-white/95 backdrop-blur-md px-2.5 py-1 rounded-full border border-gray-200 shadow-md pointer-events-auto z-50">
+        <button
+          id="btn-zoom-out"
+          onClick={zoomOut}
+          className="p-1.5 rounded-full hover:bg-gray-100 text-gray-500 hover:text-gray-900 transition-colors flex items-center justify-center cursor-pointer"
+          title="Zoom Out"
+        >
+          <ZoomOut className="h-3.5 w-3.5" />
+        </button>
+        
+        <span className="font-mono text-xs font-bold text-gray-700 select-none min-w-[40px] text-center">
           {Math.round(zoomScale * 100)}%
         </span>
-        <div className="h-3 w-[1px] bg-gray-200" />
+
+        <button
+          id="btn-zoom-in"
+          onClick={zoomIn}
+          className="p-1.5 rounded-full hover:bg-gray-100 text-gray-500 hover:text-gray-900 transition-colors flex items-center justify-center cursor-pointer"
+          title="Zoom In"
+        >
+          <ZoomIn className="h-3.5 w-3.5" />
+        </button>
+
+        <div className="h-4 w-[1px] bg-gray-200 mx-1" />
+
         <button
           id="btn-reset-zoom"
           onClick={recenterCanvas}
-          className="p-1 rounded-full hover:bg-gray-100 text-gray-500 hover:text-gray-900 transition-colors flex items-center justify-center cursor-pointer"
+          className="p-1.5 rounded-full hover:bg-gray-100 text-gray-500 hover:text-gray-900 transition-colors flex items-center justify-center cursor-pointer"
           title="Recenter & Fit Canvas to Viewport"
         >
           <RotateCcw className="h-3.5 w-3.5" />

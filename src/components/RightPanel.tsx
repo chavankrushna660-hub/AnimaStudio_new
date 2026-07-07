@@ -3023,96 +3023,165 @@ export default function RightPanel({
                     </div>
                   </div>
 
-                  {/* Slider: Rotate X (3D Flip X) */}
-                  <div className="space-y-1 pt-1 border-t border-neutral-800/30">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-neutral-400">Rotate X (3D Flip X)</span>
-                      <span className="text-white font-bold">{(currentTransformObj?.rotateX ?? 0)}°</span>
+                  {/* 🎥 3D VIEW & DUAL-AXIS ROTATION SECTION */}
+                  <div className="space-y-3 pt-2 border-t border-neutral-800/30">
+                    <div className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-amber-400">
+                      <span>🎥 3D View & Rotation System</span>
                     </div>
-                    <input
-                      type="range"
-                      min="-90"
-                      max="90"
-                      step="1"
-                      value={currentTransformObj?.rotateX ?? 0}
-                      onChange={(e) => handleSliderChange('rotateX', Number(e.target.value))}
-                      className="w-full accent-amber-500 cursor-pointer"
-                    />
-                    <div className="flex items-center justify-between gap-1.5 pt-0.5">
-                      <button
-                        onClick={() => handleNudge('rotateX', -5)}
-                        className="flex-1 py-1 rounded bg-neutral-800 text-neutral-300 text-[10px] font-bold hover:bg-neutral-700 active:scale-95 transition-transform"
-                      >
-                        -5°
-                      </button>
-                      <button
-                        onClick={() => handleNudge('rotateX', 5)}
-                        className="flex-1 py-1 rounded bg-neutral-800 text-neutral-300 text-[10px] font-bold hover:bg-neutral-700 active:scale-95 transition-transform"
-                      >
-                        +5°
-                      </button>
-                    </div>
-                  </div>
 
-                  {/* Slider: Rotate Y (3D Flip Y) */}
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-neutral-400">Rotate Y (3D Flip Y)</span>
-                      <span className="text-white font-bold">{(currentTransformObj?.rotateY ?? 0)}°</span>
+                    {/* Camera Angle X (Up/Down View) */}
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-neutral-400">Camera Angle View (Up-Down Tilt)</span>
+                        <span className="text-white font-bold">{(currentTransformObj?.cameraAngleX ?? 0)}°</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="-90"
+                        max="90"
+                        step="1"
+                        value={currentTransformObj?.cameraAngleX ?? 0}
+                        onChange={(e) => handleSliderChange('cameraAngleX', Number(e.target.value))}
+                        className="w-full accent-amber-500 cursor-pointer"
+                      />
+                      <div className="flex items-center justify-between gap-1.5 pt-0.5">
+                        <button
+                          onClick={() => handleNudge('cameraAngleX', -5)}
+                          className="flex-1 py-1 rounded bg-neutral-800 text-neutral-300 text-[10px] font-bold hover:bg-neutral-700 active:scale-95 transition-transform"
+                        >
+                          -5°
+                        </button>
+                        <button
+                          onClick={() => handleNudge('cameraAngleX', 5)}
+                          className="flex-1 py-1 rounded bg-neutral-800 text-neutral-300 text-[10px] font-bold hover:bg-neutral-700 active:scale-95 transition-transform"
+                        >
+                          +5°
+                        </button>
+                      </div>
                     </div>
-                    <input
-                      type="range"
-                      min="-90"
-                      max="90"
-                      step="1"
-                      value={currentTransformObj?.rotateY ?? 0}
-                      onChange={(e) => handleSliderChange('rotateY', Number(e.target.value))}
-                      className="w-full accent-amber-500 cursor-pointer"
-                    />
-                    <div className="flex items-center justify-between gap-1.5 pt-0.5">
-                      <button
-                        onClick={() => handleNudge('rotateY', -5)}
-                        className="flex-1 py-1 rounded bg-neutral-800 text-neutral-300 text-[10px] font-bold hover:bg-neutral-700 active:scale-95 transition-transform"
-                      >
-                        -5°
-                      </button>
-                      <button
-                        onClick={() => handleNudge('rotateY', 5)}
-                        className="flex-1 py-1 rounded bg-neutral-800 text-neutral-300 text-[10px] font-bold hover:bg-neutral-700 active:scale-95 transition-transform"
-                      >
-                        +5°
-                      </button>
-                    </div>
-                  </div>
 
-                  {/* Slider: Perspective */}
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-neutral-400">Perspective Depth</span>
-                      <span className="text-white font-bold">{(currentTransformObj?.perspective ?? 0)}px</span>
+                    {/* Camera Angle Y (Left/Right View) */}
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-neutral-400">Camera Angle View (Left-Right Parallax)</span>
+                        <span className="text-white font-bold">{(currentTransformObj?.cameraAngleY ?? 0)}°</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="-90"
+                        max="90"
+                        step="1"
+                        value={currentTransformObj?.cameraAngleY ?? 0}
+                        onChange={(e) => handleSliderChange('cameraAngleY', Number(e.target.value))}
+                        className="w-full accent-amber-500 cursor-pointer"
+                      />
+                      <div className="flex items-center justify-between gap-1.5 pt-0.5">
+                        <button
+                          onClick={() => handleNudge('cameraAngleY', -5)}
+                          className="flex-1 py-1 rounded bg-neutral-800 text-neutral-300 text-[10px] font-bold hover:bg-neutral-700 active:scale-95 transition-transform"
+                        >
+                          -5°
+                        </button>
+                        <button
+                          onClick={() => handleNudge('cameraAngleY', 5)}
+                          className="flex-1 py-1 rounded bg-neutral-800 text-neutral-300 text-[10px] font-bold hover:bg-neutral-700 active:scale-95 transition-transform"
+                        >
+                          +5°
+                        </button>
+                      </div>
                     </div>
-                    <input
-                      type="range"
-                      min="0"
-                      max="800"
-                      step="10"
-                      value={currentTransformObj?.perspective ?? 0}
-                      onChange={(e) => handleSliderChange('perspective', Number(e.target.value))}
-                      className="w-full accent-amber-500 cursor-pointer"
-                    />
-                    <div className="flex items-center justify-between gap-1.5 pt-0.5">
-                      <button
-                        onClick={() => handleSliderChange('perspective', 0)}
-                        className="flex-1 py-1 rounded bg-neutral-800 text-neutral-300 text-[10px] font-bold hover:bg-neutral-700 active:scale-95 transition-transform"
-                      >
-                        Disable
-                      </button>
-                      <button
-                        onClick={() => handleNudge('perspective', 50)}
-                        className="flex-1 py-1 rounded bg-neutral-800 text-neutral-300 text-[10px] font-bold hover:bg-neutral-700 active:scale-95 transition-transform"
-                      >
-                        +50px
-                      </button>
+
+                    {/* Rotate Vertical (0 to 360) */}
+                    <div className="space-y-1 pt-1.5 border-t border-neutral-800/20">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-neutral-400">Rotate Vertical (3D Pitch 0-360°)</span>
+                        <span className="text-white font-bold">{(currentTransformObj?.rotateX ?? 0)}°</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="360"
+                        step="1"
+                        value={currentTransformObj?.rotateX ?? 0}
+                        onChange={(e) => handleSliderChange('rotateX', Number(e.target.value))}
+                        className="w-full accent-amber-500 cursor-pointer"
+                      />
+                      <div className="flex items-center justify-between gap-1.5 pt-0.5">
+                        <button
+                          onClick={() => handleNudge('rotateX', -10)}
+                          className="flex-1 py-1 rounded bg-neutral-800 text-neutral-300 text-[10px] font-bold hover:bg-neutral-700 active:scale-95 transition-transform"
+                        >
+                          -10°
+                        </button>
+                        <button
+                          onClick={() => handleNudge('rotateX', 10)}
+                          className="flex-1 py-1 rounded bg-neutral-800 text-neutral-300 text-[10px] font-bold hover:bg-neutral-700 active:scale-95 transition-transform"
+                        >
+                          +10°
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Rotate Horizontal (0 to 360) */}
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-neutral-400">Rotate Horizontal (3D Yaw 0-360°)</span>
+                        <span className="text-white font-bold">{(currentTransformObj?.rotateY ?? 0)}°</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="360"
+                        step="1"
+                        value={currentTransformObj?.rotateY ?? 0}
+                        onChange={(e) => handleSliderChange('rotateY', Number(e.target.value))}
+                        className="w-full accent-amber-500 cursor-pointer"
+                      />
+                      <div className="flex items-center justify-between gap-1.5 pt-0.5">
+                        <button
+                          onClick={() => handleNudge('rotateY', -10)}
+                          className="flex-1 py-1 rounded bg-neutral-800 text-neutral-300 text-[10px] font-bold hover:bg-neutral-700 active:scale-95 transition-transform"
+                        >
+                          -10°
+                        </button>
+                        <button
+                          onClick={() => handleNudge('rotateY', 10)}
+                          className="flex-1 py-1 rounded bg-neutral-800 text-neutral-300 text-[10px] font-bold hover:bg-neutral-700 active:scale-95 transition-transform"
+                        >
+                          +10°
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Perspective Depth */}
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-neutral-400">Perspective Depth</span>
+                        <span className="text-white font-bold">{(currentTransformObj?.perspective ?? 0)}px</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="800"
+                        step="10"
+                        value={currentTransformObj?.perspective ?? 0}
+                        onChange={(e) => handleSliderChange('perspective', Number(e.target.value))}
+                        className="w-full accent-amber-500 cursor-pointer"
+                      />
+                      <div className="flex items-center justify-between gap-1.5 pt-0.5">
+                        <button
+                          onClick={() => handleSliderChange('perspective', 0)}
+                          className="flex-1 py-1 rounded bg-neutral-800 text-neutral-300 text-[10px] font-bold hover:bg-neutral-700 active:scale-95 transition-transform"
+                        >
+                          Disable
+                        </button>
+                        <button
+                          onClick={() => handleNudge('perspective', 50)}
+                          className="flex-1 py-1 rounded bg-neutral-800 text-neutral-300 text-[10px] font-bold hover:bg-neutral-700 active:scale-95 transition-transform"
+                        >
+                          +50px
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>

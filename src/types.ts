@@ -43,6 +43,8 @@ export interface Transform {
   rotateX?: number;
   rotateY?: number;
   perspective?: number;
+  cameraAngleX?: number;
+  cameraAngleY?: number;
 }
 
 export interface Pivot {
@@ -199,6 +201,19 @@ export interface VectorObject {
   activeViewId360?: string;
   lockAngle360?: boolean;
   lassoDeformState?: LassoDeformState;
+  lassoControlPoints?: LassoControlPoint[];
+  originalPointsBackup?: Point[];
+  originalSubPathsBackup?: Point[][];
+}
+
+export interface LassoControlPoint {
+  id: string;
+  originalX: number;
+  originalY: number;
+  currentX: number;
+  currentY: number;
+  pointIndex: number;
+  subPathIndex?: number; // if it belongs to subPaths
 }
 
 export interface Layer {

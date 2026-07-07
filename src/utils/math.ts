@@ -112,9 +112,18 @@ export function localToWorld(p: Point, transform: Transform, pivot?: { localX: n
   const scx = sx * transform.scaleX;
   const scy = sy * transform.scaleY;
 
-  // 4. Apply 3D Flips / Rotations
-  const rotXRad = ((transform.rotateX || 0) * Math.PI) / 180;
-  const rotYRad = ((transform.rotateY || 0) * Math.PI) / 180;
+  // 4. Apply 3D Flips / Rotations (including camera angles)
+  const effRotX = (transform.rotateX || 0) + (transform.cameraAngleX || 0);
+  const effRotY = (transform.rotateY || 0) + (transform.cameraAngleY || 0);
+
+  const rotXRad = (effRotX * Math.PI) / 180;
+  const rotYRad = (effRotY * Math.PI) / 180;
+  
+  // Parallax offset based on camera angle
+  const camXRad = ((transform.cameraAngleX || 0) * Math.PI) / 180;
+  const camYRad = ((transform.cameraAngleY || 0) * Math.PI) / 180;
+  const parallaxX = Math.sin(camYRad) * 80;
+  const parallaxY = Math.sin(camXRad) * 80;
   
   // Shrink factor based on rotateX / rotateY to simulate 3D rotation projection
   const r3x = scx * Math.cos(rotYRad);
@@ -138,10 +147,10 @@ export function localToWorld(p: Point, transform: Transform, pivot?: { localX: n
     pRotated = rotatePoint(pRotated, transform.rotation, { x: pivotX, y: pivotY });
   }
 
-  // 7. Translate
+  // 7. Translate (including parallax offset)
   return {
-    x: pRotated.x + transform.x,
-    y: pRotated.y + transform.y,
+    x: pRotated.x + transform.x + parallaxX,
+    y: pRotated.y + transform.y + parallaxY,
   };
 }
 
@@ -150,9 +159,15 @@ export function worldToLocal(p: Point, transform: Transform, pivot?: { localX: n
   const pivotX = pivot ? pivot.localX : 0;
   const pivotY = pivot ? pivot.localY : 0;
 
-  // 1. Translate back
-  const tx = p.x - transform.x;
-  const ty = p.y - transform.y;
+  // Parallax offset based on camera angle
+  const camXRad = ((transform.cameraAngleX || 0) * Math.PI) / 180;
+  const camYRad = ((transform.cameraAngleY || 0) * Math.PI) / 180;
+  const parallaxX = Math.sin(camYRad) * 80;
+  const parallaxY = Math.sin(camXRad) * 80;
+
+  // 1. Translate back (including camera parallax)
+  const tx = p.x - transform.x - parallaxX;
+  const ty = p.y - transform.y - parallaxY;
 
   // 2. Rotate back around pivot
   let pRotated = { x: tx, y: ty };
@@ -165,9 +180,12 @@ export function worldToLocal(p: Point, transform: Transform, pivot?: { localX: n
   const ry = pRotated.y - pivotY;
 
   // 3. Inverse Perspective
+  const effRotX = (transform.rotateX || 0) + (transform.cameraAngleX || 0);
+  const effRotY = (transform.rotateY || 0) + (transform.cameraAngleY || 0);
+
   const perspective = transform.perspective ? (transform.perspective / 1000) : 0;
-  const rotXRad = ((transform.rotateX || 0) * Math.PI) / 180;
-  const rotYRad = ((transform.rotateY || 0) * Math.PI) / 180;
+  const rotXRad = (effRotX * Math.PI) / 180;
+  const rotYRad = (effRotY * Math.PI) / 180;
   const sinRotX = Math.sin(rotXRad);
   const sinRotY = Math.sin(rotYRad);
   const cosRotX = Math.cos(rotXRad);
