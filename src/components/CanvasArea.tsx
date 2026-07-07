@@ -655,9 +655,13 @@ export default function CanvasArea({
     const resizeObserver = new ResizeObserver((entries) => {
       if (!entries || entries.length === 0) return;
       const { width, height } = entries[0].contentRect;
-      setDimensions({
-        width: Math.max(300, Math.floor(width)),
-        height: Math.max(300, Math.floor(height)),
+      const newW = Math.max(300, Math.floor(width));
+      const newH = Math.max(300, Math.floor(height));
+      setDimensions(prev => {
+        if (prev.width === newW && prev.height === newH) {
+          return prev;
+        }
+        return { width: newW, height: newH };
       });
     });
 
