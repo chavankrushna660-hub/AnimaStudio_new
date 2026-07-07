@@ -11,7 +11,8 @@ import {
   Settings, 
   Eye, 
   EyeOff,
-  GitPullRequest
+  GitPullRequest,
+  Maximize
 } from 'lucide-react';
 
 interface TimelineProps {
@@ -32,6 +33,8 @@ interface TimelineProps {
   setFps: (fps: number) => void;
   isPlaying: boolean;
   setIsPlaying: (playing: boolean) => void;
+  showCanvasSizePanel?: boolean;
+  setShowCanvasSizePanel?: (show: boolean) => void;
 }
 
 export default function Timeline({
@@ -52,6 +55,8 @@ export default function Timeline({
   setFps,
   isPlaying,
   setIsPlaying,
+  showCanvasSizePanel = false,
+  setShowCanvasSizePanel,
 }: TimelineProps) {
   const [loopEnabled, setLoopEnabled] = useState(true);
   const [copiedFrameIndex, setCopiedFrameIndex] = useState<number | null>(null);
@@ -234,6 +239,22 @@ export default function Timeline({
               <GitPullRequest className="w-3.5 h-3.5 shrink-0" />
               <span className="hidden sm:inline">{showBones ? 'HIDE BONES' : 'SHOW BONES'}</span>
               <span className="inline sm:hidden text-[10px]">{showBones ? 'HIDE BNS' : 'SHOW BNS'}</span>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-1 bg-neutral-900 border border-neutral-800/80 p-1 rounded-xl">
+            <button
+              onClick={() => setShowCanvasSizePanel?.(!showCanvasSizePanel)}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-black transition-colors ${
+                showCanvasSizePanel 
+                  ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' 
+                  : 'text-neutral-500 hover:bg-neutral-800/60'
+              }`}
+              title="Set custom canvas width and height"
+            >
+              <Maximize className="w-3.5 h-3.5 shrink-0 text-amber-400" />
+              <span className="hidden sm:inline">CANVAS SIZE</span>
+              <span className="inline sm:hidden text-[10px]">SIZE</span>
             </button>
           </div>
 

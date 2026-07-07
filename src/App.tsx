@@ -122,6 +122,11 @@ export default function App() {
   const [dbNotification, setDbNotification] = useState<{ type: 'success' | 'info' | 'error'; message: string } | null>(null);
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
 
+  // Canvas Size States
+  const [artboardW, setArtboardW] = useState<number>(1400);
+  const [artboardH, setArtboardH] = useState<number>(900);
+  const [showCanvasSizePanel, setShowCanvasSizePanel] = useState<boolean>(false);
+
   // Responsive default setups & exclusive sidebar triggers
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -1578,6 +1583,12 @@ export default function App() {
           is360WizardActive={is360WizardActive}
           draft360Views={draft360Views}
           onionSkinEnabled360={onionSkinEnabled360}
+          artboardW={artboardW}
+          setArtboardW={setArtboardW}
+          artboardH={artboardH}
+          setArtboardH={setArtboardH}
+          showCanvasSizePanel={showCanvasSizePanel}
+          setShowCanvasSizePanel={setShowCanvasSizePanel}
         />
 
         {/* Right Collapsible Properties, Sliders, Smart Pinned Controls */}
@@ -1636,6 +1647,8 @@ export default function App() {
         setFps={setFps}
         isPlaying={isPlaying}
         setIsPlaying={setIsPlaying}
+        showCanvasSizePanel={showCanvasSizePanel}
+        setShowCanvasSizePanel={setShowCanvasSizePanel}
       />
 
       {/* 4. NOTIFICATION & TOAST OVERLAYS */}
