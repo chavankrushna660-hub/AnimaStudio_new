@@ -1221,7 +1221,7 @@ export default function RightPanel({
 
   return (
     <div
-      className={`relative h-full transition-all duration-200 shrink-0 z-30 ${
+      className={`absolute right-0 lg:relative h-full transition-all duration-200 shrink-0 z-30 ${
         open ? 'w-80' : 'w-0'
       }`}
     >
@@ -1233,7 +1233,7 @@ export default function RightPanel({
         {open ? <ChevronRight className="w-3 h-3" /> : <ChevronLeft className="w-3 h-3" />}
       </button>
 
-      <div className={`w-full h-full bg-neutral-900/90 border-l border-neutral-800 flex flex-col overflow-hidden ${
+      <div className={`w-full h-full bg-neutral-900/95 backdrop-blur-md border-l border-neutral-800 flex flex-col overflow-hidden ${
         open ? 'w-80' : 'w-0 border-l-0'
       }`}>
         {open && (
@@ -1244,6 +1244,13 @@ export default function RightPanel({
               <Settings className="w-3.5 h-3.5 text-amber-500" />
               PROPERTIES PANEL
             </span>
+            <button
+              onClick={() => setOpen(false)}
+              className="p-1.5 rounded-lg border border-neutral-800 hover:border-neutral-700 hover:bg-neutral-850 text-neutral-400 hover:text-rose-400 transition-all lg:hidden"
+              title="Close Sidebar"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 space-y-6 scrollbar-thin">

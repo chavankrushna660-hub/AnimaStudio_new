@@ -391,7 +391,7 @@ export default function LeftPanel({
 
   return (
     <div
-      className={`relative h-full transition-all duration-200 shrink-0 z-30 ${
+      className={`absolute left-14 lg:relative h-full transition-all duration-200 shrink-0 z-30 ${
         open ? 'w-64' : 'w-0'
       }`}
     >
@@ -403,7 +403,7 @@ export default function LeftPanel({
         {open ? <ChevronLeft className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
       </button>
 
-      <div className={`w-full h-full bg-neutral-900/90 border-r border-neutral-800 flex flex-col overflow-hidden ${
+      <div className={`w-full h-full bg-neutral-900/95 backdrop-blur-md border-r border-neutral-800 flex flex-col overflow-hidden ${
         open ? 'w-64' : 'w-0 border-r-0'
       }`}>
         {open && (
@@ -414,16 +414,25 @@ export default function LeftPanel({
               <Folder className="w-3.5 h-3.5 text-amber-400" />
               HIERARCHY TREE
             </span>
-            <button
-              onClick={handleGroupSelected}
-              disabled={!selectedObjectId}
-              className={`p-1.5 rounded-lg border border-neutral-800 hover:border-neutral-700 hover:bg-neutral-800 text-neutral-400 hover:text-white transition-all ${
-                !selectedObjectId ? 'opacity-40 cursor-not-allowed' : ''
-              }`}
-              title="Add Selected to Group"
-            >
-              <FolderPlus className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={handleGroupSelected}
+                disabled={!selectedObjectId}
+                className={`p-1.5 rounded-lg border border-neutral-800 hover:border-neutral-700 hover:bg-neutral-800 text-neutral-400 hover:text-white transition-all ${
+                  !selectedObjectId ? 'opacity-40 cursor-not-allowed' : ''
+                }`}
+                title="Add Selected to Group"
+              >
+                <FolderPlus className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setOpen(false)}
+                className="p-1.5 rounded-lg border border-neutral-800 hover:border-neutral-700 hover:bg-neutral-850 text-neutral-400 hover:text-rose-400 transition-all lg:hidden"
+                title="Close Sidebar"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+            </div>
           </div>
 
           {/* Root-Level Drag-Drop Landing Box */}

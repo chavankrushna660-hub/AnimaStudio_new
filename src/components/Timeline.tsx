@@ -150,7 +150,7 @@ export default function Timeline({
 
         {/* Frame Actions (Copy, Paste, Duplicate, Delete) */}
         <div className="flex items-center gap-1.5 bg-neutral-900 border border-neutral-800/80 p-1.5 rounded-xl">
-          <span className="text-[10px] text-neutral-500 font-black tracking-wider uppercase px-1.5">FRAME #{currentFrameIndex + 1}</span>
+          <span className="text-[10px] text-neutral-500 font-black tracking-wider uppercase px-1.5">#{currentFrameIndex + 1}</span>
           <div className="w-[1px] h-4 bg-neutral-800 mx-1"></div>
           <button
             type="button"
@@ -159,7 +159,7 @@ export default function Timeline({
             title="Copy current frame nodes"
           >
             <Copy className="w-3.5 h-3.5" />
-            <span className="text-[11px] font-bold">Copy</span>
+            <span className="text-[11px] font-bold hidden sm:inline">Copy</span>
           </button>
           <button
             type="button"
@@ -171,7 +171,7 @@ export default function Timeline({
             title="Paste copied nodes into current frame"
           >
             <FileText className="w-3.5 h-3.5" />
-            <span className="text-[11px] font-bold">Paste</span>
+            <span className="text-[11px] font-bold hidden sm:inline">Paste</span>
           </button>
           <button
             type="button"
@@ -180,7 +180,7 @@ export default function Timeline({
             title="Duplicate current frame"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span className="text-[11px] font-bold">Duplicate</span>
+            <span className="text-[11px] font-bold hidden sm:inline">Duplicate</span>
           </button>
           {frames.length > 1 && (
             <button
@@ -190,24 +190,25 @@ export default function Timeline({
               title="Delete current frame"
             >
               <Trash2 className="w-3.5 h-3.5" />
-              <span className="text-[11px] font-bold">Delete</span>
+              <span className="text-[11px] font-bold hidden sm:inline">Delete</span>
             </button>
           )}
         </div>
 
         {/* Center: Onion Skinning & Advanced Controls */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 bg-neutral-900 border border-neutral-800/80 p-1 rounded-xl">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-1 bg-neutral-900 border border-neutral-800/80 p-1 rounded-xl">
             <button
               onClick={() => setOnionSkinEnabled(!onionSkinEnabled)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition-colors ${
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-black transition-colors ${
                 onionSkinEnabled 
                   ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
                   : 'text-neutral-500 hover:bg-neutral-800/60'
               }`}
             >
-              {onionSkinEnabled ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-              ONION SKIN
+              {onionSkinEnabled ? <Eye className="w-3.5 h-3.5 shrink-0" /> : <EyeOff className="w-3.5 h-3.5 shrink-0" />}
+              <span className="hidden sm:inline">ONION SKIN</span>
+              <span className="inline sm:hidden text-[10px]">ONION</span>
             </button>
             <button
               onClick={() => setOnionConfigOpen(!onionConfigOpen)}
@@ -220,18 +221,19 @@ export default function Timeline({
             </button>
           </div>
 
-          <div className="flex items-center gap-1.5 bg-neutral-900 border border-neutral-800/80 p-1 rounded-xl">
+          <div className="flex items-center gap-1 bg-neutral-900 border border-neutral-800/80 p-1 rounded-xl">
             <button
               onClick={() => setShowBones(!showBones)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition-colors ${
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-black transition-colors ${
                 showBones 
                   ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' 
                   : 'text-neutral-500 hover:bg-neutral-800/60'
               }`}
               title="Show or hide rigged bones skeleton overlay on canvas"
             >
-              <GitPullRequest className="w-3.5 h-3.5" />
-              {showBones ? 'HIDE BONES' : 'SHOW BONES'}
+              <GitPullRequest className="w-3.5 h-3.5 shrink-0" />
+              <span className="hidden sm:inline">{showBones ? 'HIDE BONES' : 'SHOW BONES'}</span>
+              <span className="inline sm:hidden text-[10px]">{showBones ? 'HIDE BNS' : 'SHOW BNS'}</span>
             </button>
           </div>
 
@@ -267,24 +269,24 @@ export default function Timeline({
         </div>
 
         {/* Right: FPS presets & slider */}
-        <div className="flex items-center gap-3 bg-neutral-900 border border-neutral-800/80 px-3 py-1.5 rounded-xl text-xs text-neutral-300">
-          <span className="text-neutral-500 font-black tracking-wider uppercase">SPEED</span>
+        <div className="flex items-center gap-2 sm:gap-3 bg-neutral-900 border border-neutral-800/80 px-2.5 py-1.5 rounded-xl text-xs text-neutral-300">
+          <span className="text-neutral-500 font-black tracking-wider uppercase hidden md:inline">SPEED</span>
           <div className="flex items-center gap-1">
             <button
               onClick={() => setFps(12)}
-              className={`px-2 py-1 rounded font-bold ${
+              className={`px-1.5 py-1 rounded font-bold text-[10px] sm:text-xs ${
                 fps === 12 ? 'bg-amber-500/20 text-amber-300 font-extrabold border border-amber-500/30' : 'hover:bg-neutral-800'
               }`}
             >
-              12 FPS
+              12
             </button>
             <button
               onClick={() => setFps(24)}
-              className={`px-2 py-1 rounded font-bold ${
+              className={`px-1.5 py-1 rounded font-bold text-[10px] sm:text-xs ${
                 fps === 24 ? 'bg-amber-500/20 text-amber-300 font-extrabold border border-amber-500/30' : 'hover:bg-neutral-800'
               }`}
             >
-              24 FPS
+              24
             </button>
           </div>
           <input
@@ -294,9 +296,9 @@ export default function Timeline({
             step="1"
             value={fps}
             onChange={(e) => setFps(Number(e.target.value))}
-            className="w-24 accent-amber-500 cursor-pointer"
+            className="w-16 sm:w-24 accent-amber-500 cursor-pointer"
           />
-          <span className="font-bold text-neutral-300 w-12 text-right">{fps} FPS</span>
+          <span className="font-bold text-neutral-300 w-10 text-right text-[10px] sm:text-xs">{fps} FPS</span>
         </div>
       </div>
 

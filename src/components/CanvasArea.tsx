@@ -530,6 +530,47 @@ export default function CanvasArea({
   const frontCanvasRef = useRef<HTMLCanvasElement>(null);
   const imagesCacheRef = useRef<{ [url: string]: HTMLImageElement }>({});
 
+  const [dimensions, setDimensions] = useState({ width: 1000, height: 700 });
+
+  const [artboardW, setArtboardW] = useState<number>(1400);
+  const [artboardH, setArtboardH] = useState<number>(900);
+  const [tempArtboardW, setTempArtboardW] = useState<string>('1400');
+  const [tempArtboardH, setTempArtboardH] = useState<string>('900');
+
+  const recenterCanvas = () => {
+    const scaleX = (dimensions.width - 48) / artboardW;
+    const scaleY = (dimensions.height - 48) / artboardH;
+    const bestScale = Math.min(2.0, Math.max(0.3, Math.min(scaleX, scaleY)));
+    const offsetX = (dimensions.width - artboardW * bestScale) / 2;
+    const offsetY = (dimensions.height - artboardH * bestScale) / 2;
+    setZoomScale(bestScale);
+    setZoomOffset({ x: offsetX, y: offsetY });
+  };
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      if (!entries || entries.length === 0) return;
+      const { width, height } = entries[0].contentRect;
+      setDimensions({
+        width: Math.max(300, Math.floor(width)),
+        height: Math.max(300, Math.floor(height)),
+      });
+    });
+
+    resizeObserver.observe(container);
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, []);
+
+  // Recenter automatically whenever dimensions, artboardW or artboardH change
+  useEffect(() => {
+    recenterCanvas();
+  }, [dimensions, artboardW, artboardH]);
+
   const resolve360Object = (obj: VectorObject, objectsList: { [id: string]: VectorObject }): VectorObject => {
     if (obj.type !== '360_container') return obj;
     const views = obj.views360 || [];
@@ -1313,16 +1354,9 @@ export default function CanvasArea({
         setDragStartPoint(coords);
         setInitialTransform({ ...clickedObj.transform });
       } else {
-        // Panning when clicking empty space
-        setDragMode('pan');
-        const canvas = frontCanvasRef.current;
-        if (canvas) {
-          const rect = canvas.getBoundingClientRect();
-          setDragStartPoint({
-            x: e.clientX - rect.left,
-            y: e.clientY - rect.top
-          });
-        }
+        // Clear selection and prevent canvas shifting
+        setSelectedObjectId(null);
+        setDragMode('none');
       }
       return;
     }
@@ -1343,15 +1377,7 @@ export default function CanvasArea({
         });
       } else {
         setSelectedObjectId(null);
-        setDragMode('pan');
-        const canvas = frontCanvasRef.current;
-        if (canvas) {
-          const rect = canvas.getBoundingClientRect();
-          setDragStartPoint({
-            x: e.clientX - rect.left,
-            y: e.clientY - rect.top
-          });
-        }
+        setDragMode('none');
       }
       return;
     }
@@ -1370,72 +1396,6 @@ export default function CanvasArea({
     // Update active pointer tracking coordinate
     if (activePointersRef.current[e.pointerId]) {
       activePointersRef.current[e.pointerId] = { x: e.clientX, y: e.clientY };
-    }
-
-    const pointerIds = Object.keys(activePointersRef.current);
-
-    // Multi-touch Zoom (Pinch) Mode
-    if (pointerIds.length === 2 && dragMode === 'zoom') {
-      const p1 = activePointersRef.current[Number(pointerIds[0])];
-      const p2 = activePointersRef.current[Number(pointerIds[1])];
-      
-      const dist = distance(p1, p2);
-      const mid = {
-        x: (p1.x + p2.x) / 2,
-        y: (p1.y + p2.y) / 2
-      };
-      
-      const factor = dist / (lastPinchDistRef.current || 1);
-      const nextScale = Math.min(100, Math.max(0.1, zoomScale * factor));
-      
-      const canvas = frontCanvasRef.current;
-      if (canvas) {
-        const rect = canvas.getBoundingClientRect();
-        const screenMidX = mid.x - rect.left;
-        const screenMidY = mid.y - rect.top;
-        
-        const worldMidX = (screenMidX - zoomOffset.x) / zoomScale;
-        const worldMidY = (screenMidY - zoomOffset.y) / zoomScale;
-        
-        const nextOffsetX = screenMidX - worldMidX * nextScale;
-        const nextOffsetY = screenMidY - worldMidY * nextScale;
-        
-        const panDx = mid.x - lastPinchMidRef.current.x;
-        const panDy = mid.y - lastPinchMidRef.current.y;
-        
-        setZoomScale(nextScale);
-        setZoomOffset({
-          x: nextOffsetX + panDx,
-          y: nextOffsetY + panDy
-        });
-      }
-      
-      lastPinchDistRef.current = dist;
-      lastPinchMidRef.current = mid;
-      return;
-    }
-
-    // Single-finger Pan Mode
-    if (dragMode === 'pan') {
-      const canvas = frontCanvasRef.current;
-      if (canvas) {
-        const rect = canvas.getBoundingClientRect();
-        const currentScreenX = e.clientX - rect.left;
-        const currentScreenY = e.clientY - rect.top;
-        const dx = currentScreenX - dragStartPoint.x;
-        const dy = currentScreenY - dragStartPoint.y;
-        
-        setZoomOffset(prev => ({
-          x: prev.x + dx,
-          y: prev.y + dy
-        }));
-        
-        setDragStartPoint({
-          x: currentScreenX,
-          y: currentScreenY
-        });
-      }
-      return;
     }
 
     const coords = getCanvasCoords(e);
@@ -2212,14 +2172,54 @@ export default function CanvasArea({
     const ctx = frontCanvas.getContext('2d');
     if (!ctx) return;
 
-    // Clear and Redraw with a solid white background so video capture doesn't record as black
-    ctx.fillStyle = '#FFFFFF';
+    // Clear and Redraw physical viewport with slate workspace background (pasteboard)
+    ctx.fillStyle = '#17171a';
     ctx.fillRect(0, 0, frontCanvas.width, frontCanvas.height);
 
     // Apply viewport zoom and pan offset transformation
     ctx.save();
     ctx.translate(zoomOffset.x, zoomOffset.y);
     ctx.scale(zoomScale, zoomScale);
+
+    // DRAW ARTBOARD (The active drawing and vector canvas sheet)
+    const artboardX = 0;
+    const artboardY = 0;
+
+    // Fill white page area representing the active animation stage
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(artboardX, artboardY, artboardW, artboardH);
+
+    // Draw active artboard boundaries (Border lines showing canvas start/end)
+    ctx.strokeStyle = '#f59e0b'; // Prominent Amber outline indicating the exact canvas boundary
+    ctx.lineWidth = 3;
+    ctx.strokeRect(artboardX, artboardY, artboardW, artboardH);
+
+    // High contrast canvas start/end label markings
+    ctx.fillStyle = '#fbbf24'; // High visibility amber labels
+    ctx.font = 'bold 12px monospace';
+    ctx.fillText('◀ CANVAS START (0, 0)', artboardX + 12, artboardY + 24);
+    ctx.fillText(`CANVAS END (${artboardW}, ${artboardH}) ▶`, artboardX + artboardW - 195, artboardY + artboardH - 12);
+
+    // Add visual crosshair corner marks to assist precision drawing alignment
+    ctx.strokeStyle = '#f59e0b';
+    ctx.lineWidth = 1.5;
+    // Top-Left Cross
+    ctx.beginPath();
+    ctx.moveTo(artboardX - 12, artboardY); ctx.lineTo(artboardX + 24, artboardY);
+    ctx.moveTo(artboardX, artboardY - 12); ctx.lineTo(artboardX, artboardY + 24);
+    ctx.stroke();
+
+    // Bottom-Right Cross
+    ctx.beginPath();
+    ctx.moveTo(artboardX + artboardW - 24, artboardY + artboardH); ctx.lineTo(artboardX + artboardW + 12, artboardY + artboardH);
+    ctx.moveTo(artboardX + artboardW, artboardY + artboardH - 24); ctx.lineTo(artboardX + artboardW, artboardY + artboardH + 12);
+    ctx.stroke();
+
+    // STRICT ARTBOARD CLIPPING - Prevents any artwork, deform, or other elements from leaking outside the canvas boundaries
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(artboardX, artboardY, artboardW, artboardH);
+    ctx.clip();
 
     // Sort layers by zIndex ascending
     const sortedLayers = [...(layers || [])].sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
@@ -3194,6 +3194,9 @@ export default function CanvasArea({
       ctx.restore();
     }
 
+    // Restore clipping path state
+    ctx.restore();
+
     // Restore top-level viewport zoom/pan transformation
     ctx.restore();
   }, [
@@ -3213,7 +3216,9 @@ export default function CanvasArea({
     zoomOffset,
     lassoPoints,
     lassoMode,
-    penLassoPoints
+    penLassoPoints,
+    artboardW,
+    artboardH
   ]);
 
   return (
@@ -3221,15 +3226,15 @@ export default function CanvasArea({
       {/* Double canvas layout for background / overlays optimization */}
       <canvas
         ref={backCanvasRef}
-        width={1000}
-        height={700}
+        width={dimensions.width}
+        height={dimensions.height}
         className="absolute inset-0 pointer-events-none"
       />
       <canvas
         ref={frontCanvasRef}
         id="front-vector-canvas"
-        width={1000}
-        height={700}
+        width={dimensions.width}
+        height={dimensions.height}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -3302,6 +3307,119 @@ export default function CanvasArea({
         </div>
       )}
 
+      {/* Floating Canvas Dimensions & Settings HUD */}
+      <div 
+        id="canvas-dimensions-panel" 
+        className="absolute bottom-4 left-4 bg-neutral-900/95 backdrop-blur-md px-4 py-3 rounded-2xl border border-neutral-800 shadow-xl pointer-events-auto z-50 text-white flex flex-col gap-2.5 w-64 animate-fade-in"
+      >
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] text-amber-500 font-black tracking-wider uppercase">Canvas Size</span>
+          <span className="text-[10px] font-bold text-neutral-400 bg-neutral-850 px-1.5 py-0.5 rounded font-mono border border-neutral-800">
+            {artboardW}x{artboardH}px
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          {/* Width Selector */}
+          <div className="flex flex-col gap-1">
+            <span className="text-[9px] text-neutral-400 uppercase font-black tracking-wide">Width (px)</span>
+            <div className="flex items-center bg-neutral-950 border border-neutral-800 rounded-lg overflow-hidden h-8">
+              <button
+                type="button"
+                onClick={() => {
+                  const val = Math.max(300, parseInt(tempArtboardW) - 100);
+                  setTempArtboardW(val.toString());
+                }}
+                className="w-7 h-full text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors font-bold text-xs shrink-0 cursor-pointer"
+              >
+                -
+              </button>
+              <input
+                type="text"
+                value={tempArtboardW}
+                onChange={(e) => {
+                  const val = e.target.value.replace(/[^0-9]/g, '');
+                  setTempArtboardW(val);
+                }}
+                className="w-full h-full bg-transparent text-center text-xs font-mono font-bold focus:outline-none text-amber-400"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  const val = Math.min(10000, (parseInt(tempArtboardW) || 0) + 100);
+                  setTempArtboardW(val.toString());
+                }}
+                className="w-7 h-full text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors font-bold text-xs shrink-0 cursor-pointer"
+              >
+                +
+              </button>
+            </div>
+          </div>
+
+          {/* Height Selector */}
+          <div className="flex flex-col gap-1">
+            <span className="text-[9px] text-neutral-400 uppercase font-black tracking-wide">Height (px)</span>
+            <div className="flex items-center bg-neutral-950 border border-neutral-800 rounded-lg overflow-hidden h-8">
+              <button
+                type="button"
+                onClick={() => {
+                  const val = Math.max(300, parseInt(tempArtboardH) - 100);
+                  setTempArtboardH(val.toString());
+                }}
+                className="w-7 h-full text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors font-bold text-xs shrink-0 cursor-pointer"
+              >
+                -
+              </button>
+              <input
+                type="text"
+                value={tempArtboardH}
+                onChange={(e) => {
+                  const val = e.target.value.replace(/[^0-9]/g, '');
+                  setTempArtboardH(val);
+                }}
+                className="w-full h-full bg-transparent text-center text-xs font-mono font-bold focus:outline-none text-amber-400"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  const val = Math.min(10000, (parseInt(tempArtboardH) || 0) + 100);
+                  setTempArtboardH(val.toString());
+                }}
+                className="w-7 h-full text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors font-bold text-xs shrink-0 cursor-pointer"
+              >
+                +
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => {
+            const w = Math.max(300, Math.min(10000, parseInt(tempArtboardW) || 1400));
+            const h = Math.max(300, Math.min(10000, parseInt(tempArtboardH) || 900));
+            setArtboardW(w);
+            setArtboardH(h);
+            setTempArtboardW(w.toString());
+            setTempArtboardH(h.toString());
+            
+            // Recenter instantly
+            setTimeout(() => {
+              const scaleX = (dimensions.width - 48) / w;
+              const scaleY = (dimensions.height - 48) / h;
+              const bestScale = Math.min(2.0, Math.max(0.3, Math.min(scaleX, scaleY)));
+              const offsetX = (dimensions.width - w * bestScale) / 2;
+              const offsetY = (dimensions.height - h * bestScale) / 2;
+              setZoomScale(bestScale);
+              setZoomOffset({ x: offsetX, y: offsetY });
+            }, 0);
+          }}
+          className="w-full py-1.5 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-600 hover:to-amber-500 text-neutral-950 font-black text-xs rounded-xl uppercase tracking-wider transition-all cursor-pointer shadow-md active:scale-[0.98]"
+        >
+          Apply & Fit
+        </button>
+      </div>
+
       {/* Floating Canvas controls HUD */}
       <div id="canvas-zoom-hud" className="absolute bottom-4 right-4 flex items-center gap-2 bg-white/95 backdrop-blur-md px-3 py-1.5 rounded-full border border-gray-200 shadow-md pointer-events-auto z-50">
         <span className="font-mono text-xs font-semibold text-gray-700 select-none">
@@ -3310,12 +3428,9 @@ export default function CanvasArea({
         <div className="h-3 w-[1px] bg-gray-200" />
         <button
           id="btn-reset-zoom"
-          onClick={() => {
-            setZoomScale(1);
-            setZoomOffset({ x: 0, y: 0 });
-          }}
+          onClick={recenterCanvas}
           className="p-1 rounded-full hover:bg-gray-100 text-gray-500 hover:text-gray-900 transition-colors flex items-center justify-center cursor-pointer"
-          title="Reset Canvas Zoom & Pan (100%)"
+          title="Recenter & Fit Canvas to Viewport"
         >
           <RotateCcw className="h-3.5 w-3.5" />
         </button>
