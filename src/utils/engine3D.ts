@@ -609,7 +609,7 @@ export function getDailyLimitStatus(email: string): { count: number; allowed: bo
     const current = Number(localStorage.getItem(storageKey) || '0');
     return {
       count: current,
-      allowed: current < 10, // Max 10 3D models per day
+      allowed: current < 5, // Strict rule: Max 5 3D models per day
     };
   } catch {
     return { count: 0, allowed: true };
@@ -625,4 +625,136 @@ export function incrementDailyLimit(email: string) {
   } catch (e) {
     console.error('Failed to update daily 3D counter', e);
   }
+}
+
+/**
+ * Extrudes 2D vector drawing points to generate a real 3D solid wireframe geometry prism
+ */
+export function extrude2DTo3D(
+  points: Point[],
+  fillColor: string,
+  strokeColor: string,
+  depth: number = 40
+): { vertices: Vertex3D[]; faces: Face3D[]; center: { x: number; y: number } } {
+  const vertices: Vertex3D[] = [];
+  const faces: Face3D[] = [];
+
+  if (!points || points.length < 2) {
+    // Fallback cube if no valid points
+    return {
+      vertices: [
+        { x: -20, y: -20, z: -20 }, { x: 20, y: -20, z: -20 }, { x: 20, y: 20, z: -20 }, { x: -20, y: 20, z: -20 },
+        { x: -20, y: -20, z: 20 }, { x: 20, y: -20, z: 20 }, { x: 20, y: 20, z: 20 }, { x: -20, y: 20, z: 20 }
+      ],
+      faces: [
+        { indices: [0, 1, 2, 3], fillColor: '#F59E0B', baseColor: '#F59E0B' },
+        { indices: [5, 4, 7, 6], fillColor: '#F59E0B', baseColor: '#F59E0B' },
+        { indices: [0, 3, 7, 4], fillColor: '#D97706', baseColor: '#D97706' },
+        { indices: [1, 5, 6, 2], fillColor: '#D97706', baseColor: '#D97706' },
+        { indices: [3, 2, 6, 7], fillColor: '#B45309', baseColor: '#B45309' },
+        { indices: [4, 5, 1, 0], fillColor: '#B45309', baseColor: '#B45309' }
+      ],
+      center: { x: 0, y: 0 }
+    };
+  }
+
+  // Filter duplicate consecutive points to prevent degenerate geometry
+  let cleanPts = points.filter((p, i) => {
+    if (i === 0) return true;
+    const prev = points[i - 1];
+    return Math.hypot(p.x - prev.x, p.y - prev.y) > 0.5;
+  });
+
+  if (cleanPts.length < 2) {
+    cleanPts = [{ x: -20, y: 0 }, { x: 20, y: 0 }];
+  }
+
+  // For 2 points, expand to a thin 2D rectangle to extrude as a solid slab
+  if (cleanPts.length === 2) {
+    const p1 = cleanPts[0];
+    const p2 = cleanPts[1];
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len * 10; // normal offset of 10px
+    const ny = dx / len * 10;
+    cleanPts = [
+      { x: p1.x - nx, y: p1.y - ny },
+      { x: p2.x - nx, y: p2.y - ny },
+      { x: p2.x + nx, y: p2.y + ny },
+      { x: p1.x + nx, y: p1.y + ny }
+    ];
+  }
+
+  // Compute Centroid
+  let sumX = 0;
+  let sumY = 0;
+  cleanPts.forEach(p => {
+    sumX += p.x;
+    sumY += p.y;
+  });
+  const cx = sumX / cleanPts.length;
+  const cy = sumY / cleanPts.length;
+
+  // Check if path is closed, if not close it
+  const first = cleanPts[0];
+  const last = cleanPts[cleanPts.length - 1];
+  const isClosed = Math.hypot(last.x - first.x, last.y - first.y) < 5;
+  if (!isClosed && cleanPts.length > 2) {
+    cleanPts.push({ ...first });
+  }
+
+  const N = cleanPts.length;
+
+  // Create 3D vertices
+  // Front ring (at z = -depth / 2)
+  for (let i = 0; i < N; i++) {
+    vertices.push({
+      x: cleanPts[i].x - cx,
+      y: cleanPts[i].y - cy,
+      z: -depth / 2
+    });
+  }
+
+  // Back ring (at z = depth / 2)
+  for (let i = 0; i < N; i++) {
+    vertices.push({
+      x: cleanPts[i].x - cx,
+      y: cleanPts[i].y - cy,
+      z: depth / 2
+    });
+  }
+
+  // Define Colors (Aesthetic shading colors)
+  const baseCol = fillColor && fillColor !== 'transparent' ? fillColor : (strokeColor && strokeColor !== 'transparent' ? strokeColor : '#F59E0B');
+  const sideCol = baseCol; 
+  
+  // Front face
+  const frontIndices = Array.from({ length: N }, (_, i) => i);
+  faces.push({
+    indices: frontIndices,
+    fillColor: baseCol,
+    baseColor: baseCol
+  });
+
+  // Back face (reverse orientation to face out)
+  const backIndices = Array.from({ length: N }, (_, i) => (N - 1 - i) + N);
+  faces.push({
+    indices: backIndices,
+    fillColor: baseCol,
+    baseColor: baseCol
+  });
+
+  // Side quad faces connecting front and back loops
+  for (let i = 0; i < N; i++) {
+    const next = (i + 1) % N;
+    // quad connecting front_i, front_next, back_next, back_i
+    faces.push({
+      indices: [i, next, next + N, i + N],
+      fillColor: sideCol,
+      baseColor: sideCol
+    });
+  }
+
+  return { vertices, faces, center: { x: cx, y: cy } };
 }

@@ -39,7 +39,8 @@ import {
 import { 
   generate3DGeometry, 
   getDailyLimitStatus, 
-  incrementDailyLimit 
+  incrementDailyLimit,
+  extrude2DTo3D
 } from './utils/engine3D';
 import { parse3DModelFile } from './utils/custom3DLoader';
 
@@ -1064,6 +1065,72 @@ export default function App() {
     setSelectedObjectId(modelId);
   };
 
+  // Convert 2D Vector Drawing instantly into a real 3D solid wireframe geometry prism
+  const convertTo3D = (id: string) => {
+    const obj = objects[id];
+    if (!obj) return;
+
+    if (obj.type !== 'stroke' && obj.type !== 'shape') {
+      alert("Please select a 2D drawing or shape to convert.");
+      return;
+    }
+
+    const email = currentUser || 'guest';
+    const limitStatus = getDailyLimitStatus(email);
+    if (!limitStatus.allowed) {
+      alert(`Daily Safety Limit: You have reached your daily allowance of 5 3D model creations for "${email}". Please try again tomorrow to preserve application performance.`);
+      return;
+    }
+
+    historyPush();
+    incrementDailyLimit(email);
+
+    // Run extrusion algorithm
+    const result = extrude2DTo3D(obj.points, obj.fillColor, obj.strokeColor);
+
+    const updatedObj: VectorObject = {
+      ...obj,
+      type: '3d',
+      shape3DType: 'box', // Extrusion uses box shading logic
+      points: [
+        { x: -50, y: -50 },
+        { x: 50, y: -50 },
+        { x: 50, y: 50 },
+        { x: -50, y: 50 },
+        { x: -50, y: -50 }
+      ], // 2D projection footprint box
+      strokeColor: obj.strokeColor !== 'transparent' ? obj.strokeColor : '#F59E0B',
+      strokeWidth: 2.0,
+      fillColor: obj.fillColor !== 'transparent' ? obj.fillColor : '#F59E0B',
+      transform: {
+        ...obj.transform,
+        x: obj.transform.x + result.center.x,
+        y: obj.transform.y + result.center.y,
+      },
+      transform3D: {
+        x: 0,
+        y: 0,
+        z: 0,
+        rx: 15,
+        ry: 45,
+        rz: 0,
+        sx: 1.0,
+        sy: 1.0,
+        sz: 1.0,
+      },
+      vertices3D: result.vertices,
+      faces3D: result.faces,
+      bones3D: [],
+      pivots: [{ id: `pvt_${Date.now()}_3d`, name: 'CenterJoint', localX: 0, localY: 0, locked: false }],
+    };
+
+    setObjects(prev => ({
+      ...prev,
+      [id]: updatedObj
+    }));
+    setSelectedObjectId(id);
+  };
+
   // Object and Canvas operations
   const deleteObject = (id: string) => {
     historyPush();
@@ -1600,7 +1667,18 @@ export default function App() {
           objects={objects}
           bones={bones}
           addBone={(bone) => setBones(prev => [...prev, bone])}
-          deleteBone={(id) => setBones(prev => prev.filter(b => b.id !== id))}
+          deleteBone={(id) => {
+            const targetBone = bones.find(b => b.id === id);
+            if (targetBone) {
+              const startObj = objects[targetBone.startObjectId];
+              const endObj = objects[targetBone.endObjectId];
+              if ((startObj && startObj.type === '3d') || (endObj && endObj.type === '3d')) {
+                alert("Rigged 3D bone structures are permanently unified for structural integrity to prevent skeleton decoupling.");
+                return;
+              }
+            }
+            setBones(prev => prev.filter(b => b.id !== id));
+          }}
           updateBone={(id, updates) => {
             setBones(prev => prev.map(b => b.id === id ? { ...b, ...updates } : b));
           }}
@@ -1625,6 +1703,7 @@ export default function App() {
           setFps={setFps}
           realismSettings={realismSettings}
           setRealismSettings={setRealismSettings}
+          convertTo3D={convertTo3D}
         />
       </div>
 

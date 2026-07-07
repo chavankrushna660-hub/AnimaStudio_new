@@ -947,7 +947,7 @@ export default function CanvasArea({
   // Enforce locked bone rigid distance constraints!
   const enforceBoneConstraints = (updatedObjects: { [id: string]: VectorObject }) => {
     let resolved = true;
-    for (let iter = 0; iter < 3; iter++) {
+    for (let iter = 0; iter < 5; iter++) {
       for (const bone of bones) {
         const startObj = updatedObjects[bone.startObjectId];
         const endObj = updatedObjects[bone.endObjectId];
@@ -957,7 +957,8 @@ export default function CanvasArea({
         const endWorld = localToWorld({ x: bone.endLocalX, y: bone.endLocalY }, endObj.transform, endObj.pivots[0]);
 
         const dist = distance(startWorld, endWorld);
-        if (Math.abs(dist - bone.lockedDistance) > 0.01 && !bone.allowDetach) {
+        // Force rigid non-detachable constraint under all circumstances to ensure solid connection
+        if (Math.abs(dist - bone.lockedDistance) > 0.01) {
           const dx = endWorld.x - startWorld.x;
           const dy = endWorld.y - startWorld.y;
           const ratio = bone.lockedDistance / (dist || 1);
@@ -1050,20 +1051,21 @@ export default function CanvasArea({
       }
 
       // Enforce rigid joint connection: child joint must perfectly attach to parent joint
-      if (bone && !bone.allowDetach) {
-        const pJoint = localToWorld({ x: bone.startLocalX, y: bone.startLocalY }, parent.transform, parent.pivots[0]);
-        const cJoint = localToWorld({ x: bone.endLocalX, y: bone.endLocalY }, child.transform, child.pivots[0]);
-        
-        const dx = pJoint.x - cJoint.x;
-        const dy = pJoint.y - cJoint.y;
+      const pJoint = localToWorld({ x: bone ? bone.startLocalX : 0, y: bone ? bone.startLocalY : 0 }, parent.transform, parent.pivots[0]);
+      const cJoint = localToWorld({ x: bone ? bone.endLocalX : 0, y: bone ? bone.endLocalY : 0 }, child.transform, child.pivots[0]);
+      
+      const dx_joint = pJoint.x - cJoint.x;
+      const dy_joint = pJoint.y - cJoint.y;
 
-        child.transform.x = Number((child.transform.x + dx).toFixed(2));
-        child.transform.y = Number((child.transform.y + dy).toFixed(2));
-      }
+      child.transform.x = Number((child.transform.x + dx_joint).toFixed(2));
+      child.transform.y = Number((child.transform.y + dy_joint).toFixed(2));
 
       // Recursively propagate to grandchild objects!
       propagateRigTransforms(updatedObjects, childId, deltaX, deltaY, deltaRot);
     }
+    
+    // Always enforce top-level strict skeletal constraints on final propagation output
+    enforceBoneConstraints(updatedObjects);
   };
 
   // Generate 10 interactive handles for scaling, rotation, and pivot anchoring
@@ -2718,7 +2720,10 @@ export default function CanvasArea({
           const v0 = transformed3D[face.indices[0]] || { x: 0, y: 0, z: 0 };
           const v1 = transformed3D[face.indices[1]] || { x: 0, y: 0, z: 0 };
           const v2 = transformed3D[face.indices[2]] || { x: 0, y: 0, z: 0 };
-          const litColor = getFaceLightColor(v0, v1, v2, face.baseColor || '#8D6E63', 45);
+          
+          // Use dynamic real-time fillColor or fall back to pre-defined face baseColor
+          const rawBaseColor = (drawObj.fillColor && drawObj.fillColor !== 'transparent') ? drawObj.fillColor : (face.baseColor || '#8D6E63');
+          const litColor = getFaceLightColor(v0, v1, v2, rawBaseColor, 45);
 
           ctx.fillStyle = litColor;
           ctx.fill();

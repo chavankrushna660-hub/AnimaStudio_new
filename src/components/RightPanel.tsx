@@ -25,7 +25,8 @@ import {
   Unlink,
   Play,
   Zap,
-  Info
+  Info,
+  Box
 } from 'lucide-react';
 import { VectorObject, Bone, Layer, Pivot, Transform, Point, Frame, RealismSettings } from '../types';
 import { distance, localToWorld, worldToLocal, calculateBoundingBox, isPointInPolygon, findClosestView360 } from '../utils/math';
@@ -61,6 +62,7 @@ interface RightPanelProps {
   setFps: (fps: number) => void;
   realismSettings?: RealismSettings;
   setRealismSettings?: React.Dispatch<React.SetStateAction<RealismSettings>>;
+  convertTo3D?: (id: string) => void;
 }
 
 const isChildInsideParent = (
@@ -114,6 +116,7 @@ export default function RightPanel({
   setFps,
   realismSettings,
   setRealismSettings,
+  convertTo3D,
 }: RightPanelProps) {
   // Batch/Smart Controls check state
   const [smartCheckedIds, setSmartCheckedIds] = useState<{ [id: string]: boolean }>({});
@@ -237,6 +240,10 @@ export default function RightPanel({
 
   const handleDetachObject = () => {
     if (!selectedObject) return;
+    if (selectedObject.type === '3d' || (selectedObject.parentId && objects[selectedObject.parentId]?.type === '3d')) {
+      alert("Rigged 3D objects are permanently locked for safety and performance to prevent physics and skinning decoupling.");
+      return;
+    }
     updateObject(selectedObject.id, { attachedGroupId: undefined });
     alert(`Successfully detached ${selectedObject.name}.`);
   };
@@ -706,6 +713,12 @@ export default function RightPanel({
     if (!child) return;
     const pId = child.parentId;
     
+    // Once a 3D model is rigged or has parent-child relationships, they cannot be detached!
+    if (child.type === '3d' || (pId && objects[pId]?.type === '3d')) {
+      alert("Rigged 3D objects are permanently locked for safety and performance to prevent physics and skinning decoupling.");
+      return;
+    }
+    
     // Update child
     updateObject(childId, { parentId: null });
 
@@ -1053,7 +1066,7 @@ export default function RightPanel({
             </button>
 
             {/* Break Relationship Action (if not a root parent) */}
-            {obj.parentId && (
+            {obj.parentId && obj.type !== '3d' && objects[obj.parentId]?.type !== '3d' && (
               <button
                 type="button"
                 onClick={(e) => {
@@ -2123,6 +2136,28 @@ export default function RightPanel({
                           </div>
                         </div>
                       </div>
+                    </div>
+                  )}
+
+                  {/* CONVERT SELECTED DRAWING TO 3D PROXY */}
+                  {(selectedObject.type === 'stroke' || selectedObject.type === 'shape') && (
+                    <div className="bg-gradient-to-r from-amber-500/10 to-orange-500/10 p-4 rounded-2xl border border-amber-500/30 shadow-lg mt-3 space-y-2.5 animate-fade-in">
+                      <div className="flex items-center gap-2">
+                        <Box className="w-5 h-5 text-amber-400" />
+                        <span className="text-xs font-black uppercase tracking-wider text-amber-300">
+                          ✨ 2D to 3D Extrusion Engine
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-neutral-300 leading-relaxed font-medium">
+                        Instantly convert this 2D vector drawing into a fully-functional <b>3D wireframe mesh</b> based on its outline coordinates!
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => convertTo3D && convertTo3D(selectedObject.id)}
+                        className="w-full bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-500 hover:to-amber-600 text-black text-xs font-black py-2.5 px-4 rounded-xl shadow-md transition-all duration-200 flex items-center justify-center gap-1.5 active:scale-[0.98] cursor-pointer uppercase tracking-wider font-sans"
+                      >
+                        💫 Convert to 3D Object
+                      </button>
                     </div>
                   )}
 
@@ -3292,14 +3327,9 @@ export default function RightPanel({
                           {/* Detachment Constraints Toggle */}
                           <div className="flex items-center justify-between pt-2 mt-2 border-t border-neutral-800/50">
                             <span className="text-[10px] text-neutral-400 uppercase font-black">Allow Detachments</span>
-                            <button
-                              onClick={() => updateBone(bone.id, { allowDetach: !bone.allowDetach })}
-                              className={`text-[9px] font-bold px-2 py-0.5 rounded ${
-                                bone.allowDetach ? 'bg-amber-500/20 text-amber-400' : 'bg-neutral-800 text-neutral-500'
-                              }`}
-                            >
-                              {bone.allowDetach ? 'ON (STRETCHY)' : 'OFF (RIGID)'}
-                            </button>
+                            <span className="text-[9px] font-black text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                              LOCKED (RIGID)
+                            </span>
                           </div>
                         </div>
                       ))}

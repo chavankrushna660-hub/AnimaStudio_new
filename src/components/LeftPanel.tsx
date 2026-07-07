@@ -18,7 +18,6 @@ import {
   Sparkles,
   Layers as LayerIcon,
   Box,
-  Upload,
   Circle,
   Car,
   Smile,
@@ -26,6 +25,7 @@ import {
 } from 'lucide-react';
 import { VectorObject, Layer } from '../types';
 import { parse3DModelFile } from '../utils/custom3DLoader';
+import { getDailyLimitStatus } from '../utils/engine3D';
 
 interface LeftPanelProps {
   objects: { [id: string]: VectorObject };
@@ -88,47 +88,11 @@ export default function LeftPanel({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameText, setRenamingText] = useState('');
   const [draggedId, setDraggedId] = useState<string | null>(null);
-  const [isUploadingModel, setIsUploadingModel] = useState(false);
   const [selected360Ids, setSelected360Ids] = useState<string[]>([]);
   const [customViewName, setCustomViewName] = useState('Front View');
   const [customViewAngle, setCustomViewAngle] = useState(0);
   const [masterContainerName, setMasterContainerName] = useState('Master_360_Character');
   const [is3DLibraryOpen, setIs3DLibraryOpen] = useState(true);
-
-  const handleCustom3DUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setIsUploadingModel(true);
-    try {
-      const parsed = await parse3DModelFile(file);
-      if (parsed && addCustom3DModel) {
-        addCustom3DModel(parsed, file.name);
-      }
-    } catch (err) {
-      console.error(err);
-      alert('Error parsing custom 3D model. Make sure it is a valid OBJ, GLTF, FBX, or ZIP file.');
-    } finally {
-      setIsUploadingModel(false);
-    }
-  };
-
-  const handleCustom3DDrop = async (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    const file = e.dataTransfer.files?.[0];
-    if (!file) return;
-    setIsUploadingModel(true);
-    try {
-      const parsed = await parse3DModelFile(file);
-      if (parsed && addCustom3DModel) {
-        addCustom3DModel(parsed, file.name);
-      }
-    } catch (err) {
-      console.error(err);
-      alert('Error parsing custom 3D model. Make sure it is a valid OBJ, GLTF, FBX, or ZIP file.');
-    } finally {
-      setIsUploadingModel(false);
-    }
-  };
 
 
   // Toggle node expansion
@@ -740,7 +704,7 @@ export default function LeftPanel({
               >
                 <div className="flex items-center gap-1.5">
                   <Box className="w-3.5 h-3.5" />
-                  <span>📦 3D Models & Shapes Library</span>
+                  <span>💫 2D to 3D Extrusion Engine</span>
                 </div>
                 <span>{is3DLibraryOpen ? '▼' : '▶'}</span>
               </button>
@@ -748,71 +712,26 @@ export default function LeftPanel({
               {is3DLibraryOpen && (
                 <div className="space-y-3.5 animate-fade-in">
                   <p className="text-[10px] text-neutral-400 leading-normal">
-                    Insert prebuilt high-fidelity 3D models or upload your own <b>OBJ, GLTF, FBX, or ZIP</b> model.
+                    Draw freely on the canvas using our 2D brush or pen tool, select your drawing, and instantly convert it into a solid 3D mesh proxy!
                   </p>
 
-                  {/* Prebuilt Library Grid */}
-                  <div className="space-y-1.5">
-                    <span className="text-[9px] text-neutral-500 font-extrabold uppercase tracking-wider block">Prebuilt Shapes</span>
-                    <div className="grid grid-cols-3 gap-1.5">
-                      {[
-                        { type: 'box', label: 'Cube', icon: Box },
-                        { type: 'sphere', label: 'Sphere', icon: Circle },
-                        { type: 'car', label: 'Car', icon: Car },
-                        { type: 'character', label: 'Character', icon: Smile },
-                        { type: 'chair', label: 'Chair', icon: Armchair },
-                        { type: 'sword', label: 'Sword', icon: Sparkles },
-                      ].map((item) => {
-                        const Icon = item.icon;
-                        return (
-                          <button
-                            key={item.type}
-                            type="button"
-                            onClick={() => add3DModel && add3DModel(item.type as any)}
-                            className="flex flex-col items-center gap-1 p-2 rounded-xl border border-neutral-850 bg-neutral-950/80 hover:bg-amber-500/5 hover:border-amber-500/50 text-neutral-300 hover:text-amber-300 transition-all cursor-pointer group active:scale-95"
-                          >
-                            <Icon className="w-4 h-4 text-neutral-500 group-hover:text-amber-400 transition-colors" />
-                            <span className="text-[9px] font-extrabold tracking-tight">{item.label}</span>
-                          </button>
-                        );
-                      })}
+                  {/* Daily Conversion Limit & Info Card */}
+                  <div className="bg-neutral-950 rounded-xl p-3 border border-neutral-850 space-y-2">
+                    <div className="flex items-center justify-between text-[9px] font-extrabold uppercase tracking-wider text-neutral-400">
+                      <span>💫 Daily 3D Limit</span>
+                      <span className="text-amber-400 font-mono text-[10px] font-bold">
+                        {getDailyLimitStatus(currentUser || 'guest').count} / 5 Used
+                      </span>
                     </div>
-                  </div>
-
-                  {/* Custom 3D Model Upload Area */}
-                  <div className="space-y-1.5">
-                    <span className="text-[9px] text-neutral-500 font-extrabold uppercase tracking-wider block">Custom 3D Import</span>
-                    <div
-                      onDragOver={(e) => e.preventDefault()}
-                      onDrop={handleCustom3DDrop}
-                      className="border border-dashed border-neutral-800 hover:border-amber-500/50 bg-neutral-950 hover:bg-amber-500/[0.02] rounded-xl p-3 text-center transition-all cursor-pointer relative group flex flex-col items-center justify-center min-h-[70px]"
-                      onClick={() => document.getElementById('custom-3d-file-input')?.click()}
-                    >
-                      <input
-                        id="custom-3d-file-input"
-                        type="file"
-                        accept=".obj,.gltf,.json,.fbx,.zip"
-                        onChange={handleCustom3DUpload}
-                        className="hidden"
+                    <div className="h-1 bg-neutral-850 rounded-full overflow-hidden">
+                      <div 
+                        className="bg-gradient-to-r from-amber-400 to-amber-500 h-full transition-all"
+                        style={{ width: `${Math.min(100, (getDailyLimitStatus(currentUser || 'guest').count / 5) * 100)}%` }}
                       />
-                      
-                      {isUploadingModel ? (
-                        <div className="flex flex-col items-center gap-1.5">
-                          <div className="w-4 h-4 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
-                          <span className="text-[9px] text-amber-400 font-bold uppercase animate-pulse">Parsing Mesh...</span>
-                        </div>
-                      ) : (
-                        <div className="flex flex-col items-center gap-1">
-                          <Upload className="w-4 h-4 text-neutral-500 group-hover:text-amber-400 transition-colors" />
-                          <span className="text-[9px] text-neutral-400 font-bold uppercase tracking-wide">
-                            Drag & Drop File
-                          </span>
-                          <span className="text-[8px] text-neutral-500 leading-none">
-                            Supports OBJ, GLTF, FBX, ZIP (with texture)
-                          </span>
-                        </div>
-                      )}
                     </div>
+                    <p className="text-[9px] text-neutral-500 leading-normal">
+                      Select any drawing or custom shape and click <b>💫 Convert to 3D</b> in the properties panel to convert it into a real 3D solid model.
+                    </p>
                   </div>
                 </div>
               )}
