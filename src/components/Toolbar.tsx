@@ -49,6 +49,8 @@ export default function Toolbar({
     { id: '360', name: '360° Studio', label: '360° Pseudo-3D (360)', icon: CompassIcon, desc: 'Create and animate 360-degree pseudo-3D objects' },
     { id: 'SHP', name: 'Shape', label: 'Shapes Tool (SHP)', icon: ShapesIcon },
     { id: 'MSH', name: 'Mesh Wrap', label: 'Geometry Deform (MSH)', icon: CropIcon, desc: 'Deform drawing geometry by dragging individual vertices deeply' },
+    { id: 'MCL', name: 'Mesh Coloring', label: 'Smart Mesh Color (MCL)', icon: PaletteIcon, desc: 'Paint directly on simplified mesh cells or points to color your drawing' },
+    { id: 'SWP', name: 'Smart Warp', label: 'Smart Pin Warp (SWP)', icon: PinIcon, desc: 'Add large clickable pins to easily deform drawing geometry' },
     { id: 'CON', name: 'Constraint', label: 'Constraints (CON)', icon: AlignCenterIcon },
     { id: 'MOT', name: 'Motion Path', label: 'Motion Path (MOT)', icon: TrendingUpIcon },
     { id: 'EYE', name: 'Eyedropper', label: 'Eyedropper (EYE)', icon: EyedropperIcon },
@@ -127,6 +129,7 @@ function AnchorIcon(props: any) { return <CircleDot {...props} /> }
 function BoneIcon(props: any) { return <GitFork {...props} /> }
 function ZapIcon(props: any) { return <Zap {...props} /> }
 function PaintBucketIcon(props: any) { return <Palette {...props} /> }
+function PaletteIcon(props: any) { return <Palette {...props} /> }
 function ShapesIcon(props: any) { return <LayoutGrid {...props} /> }
 function CropIcon(props: any) { return <Crop {...props} /> }
 function AlignCenterIcon(props: any) { return <GitCommit {...props} /> }

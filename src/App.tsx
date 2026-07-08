@@ -141,6 +141,10 @@ export default function App() {
   const [artboardH, setArtboardH] = useState<number>(900);
   const [showCanvasSizePanel, setShowCanvasSizePanel] = useState<boolean>(false);
 
+  // Adaptive subdivision control
+  const [adaptiveSubdivisionEnabled, setAdaptiveSubdivisionEnabled] = useState<boolean>(true);
+  const [adaptiveSubdivisionPoints, setAdaptiveSubdivisionPoints] = useState<number>(3);
+
   // Responsive default setups & exclusive sidebar triggers
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -353,6 +357,7 @@ export default function App() {
       if (targetFrame) {
         const frameObjects = targetFrame.objects || {};
         if (Object.keys(frameObjects).length > 0) {
+          loadedFrameIndexRef.current = currentFrameIndex;
           setObjects(prev => {
             if (JSON.stringify(prev) !== JSON.stringify(frameObjects)) {
               return JSON.parse(JSON.stringify(frameObjects));
@@ -364,10 +369,20 @@ export default function App() {
           const prevFrame = frames[currentFrameIndex - 1];
           if (prevFrame && prevFrame.objects && Object.keys(prevFrame.objects).length > 0) {
             const copiedObjects = JSON.parse(JSON.stringify(prevFrame.objects));
-            setObjects(copiedObjects);
+            loadedFrameIndexRef.current = currentFrameIndex;
+            
+            setObjects(prev => {
+              if (JSON.stringify(prev) !== JSON.stringify(copiedObjects)) {
+                return copiedObjects;
+              }
+              return prev;
+            });
+            
             setFrames(prev => {
-              const updated = [...prev];
-              if (updated[currentFrameIndex]) {
+              if (!prev[currentFrameIndex]) return prev;
+              const currentFrameObjectsInState = prev[currentFrameIndex].objects || {};
+              if (JSON.stringify(currentFrameObjectsInState) !== JSON.stringify(copiedObjects)) {
+                const updated = [...prev];
                 updated[currentFrameIndex] = {
                   ...updated[currentFrameIndex],
                   objects: copiedObjects
@@ -377,19 +392,23 @@ export default function App() {
               return prev;
             });
           } else {
+            loadedFrameIndexRef.current = currentFrameIndex;
             setObjects(prev => Object.keys(prev).length > 0 ? {} : prev);
           }
         } else {
+          loadedFrameIndexRef.current = currentFrameIndex;
           setObjects(prev => Object.keys(prev).length > 0 ? {} : prev);
         }
+      } else {
+        loadedFrameIndexRef.current = currentFrameIndex;
       }
-      loadedFrameIndexRef.current = currentFrameIndex;
     } else {
       // 2. Otherwise, we are on the same frame, so sync any changes in 'objects' back to 'frames'
       setFrames(prev => {
         if (!prev[currentFrameIndex]) return prev;
-        const currentFrameObjects = prev[currentFrameIndex].objects || {};
-        if (JSON.stringify(currentFrameObjects) !== JSON.stringify(objects)) {
+        const currentFrameObjectsInState = prev[currentFrameIndex].objects || {};
+        if (Object.keys(currentFrameObjectsInState).length !== Object.keys(objects).length || 
+            JSON.stringify(currentFrameObjectsInState) !== JSON.stringify(objects)) {
           const updated = [...prev];
           updated[currentFrameIndex] = {
             ...updated[currentFrameIndex],
@@ -1240,6 +1259,9 @@ export default function App() {
         updated[index].objects = parsed;
         return updated;
       });
+      if (index === currentFrameIndex) {
+        setObjects(parsed);
+      }
     }
   };
 
@@ -1656,6 +1678,10 @@ export default function App() {
           addDraft360View={addDraft360View}
           cancel360Wizard={cancel360Wizard}
           compile360Wizard={compile360Wizard}
+          adaptiveSubdivisionEnabled={adaptiveSubdivisionEnabled}
+          setAdaptiveSubdivisionEnabled={setAdaptiveSubdivisionEnabled}
+          adaptiveSubdivisionPoints={adaptiveSubdivisionPoints}
+          setAdaptiveSubdivisionPoints={setAdaptiveSubdivisionPoints}
         />
 
         {/* Central Vector Canvas Area */}
@@ -1692,6 +1718,8 @@ export default function App() {
           setArtboardH={setArtboardH}
           showCanvasSizePanel={showCanvasSizePanel}
           setShowCanvasSizePanel={setShowCanvasSizePanel}
+          adaptiveSubdivisionEnabled={adaptiveSubdivisionEnabled}
+          adaptiveSubdivisionPoints={adaptiveSubdivisionPoints}
         />
 
         {/* Right Collapsible Properties, Sliders, Smart Pinned Controls */}

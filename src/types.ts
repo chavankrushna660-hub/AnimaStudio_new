@@ -204,6 +204,62 @@ export interface VectorObject {
   lassoControlPoints?: LassoControlPoint[];
   originalPointsBackup?: Point[];
   originalSubPathsBackup?: Point[][];
+  smartMeshColor?: SmartMeshColorState;
+  smartWarp?: SmartWarpState;
+}
+
+export interface ColorMeshPoint {
+  id: string;
+  originalX: number;
+  originalY: number;
+  currentX: number;
+  currentY: number;
+  color: string | null;
+  opacity: number;
+}
+
+export interface ColorMeshCell {
+  id: string;
+  pointIds: string[]; // 4 point IDs forming the quad
+  color: string | null;
+  opacity: number;
+}
+
+export interface SmartMeshColorState {
+  densityX: number;
+  densityY: number;
+  points: ColorMeshPoint[];
+  cells: ColorMeshCell[];
+  pointSize: number;
+  paintMode: 'cell' | 'point';
+  brushSize: number;
+  brushOpacity: number;
+  brushColor?: string;
+  activeLayerIndex: number;
+  previewMode: boolean;
+  layers: { id: string; name: string; visible: boolean; locked: boolean }[];
+}
+
+export interface SmartWarpPin {
+  id: string;
+  originalX: number;
+  originalY: number;
+  currentX: number;
+  currentY: number;
+  size: number;
+  color: string;
+  locked: boolean;
+  influenceRadius: number;
+  influenceFalloff: 'linear' | 'smooth' | 'sharp';
+}
+
+export interface SmartWarpState {
+  pins: SmartWarpPin[];
+  pinSize: number;
+  influenceRadius: number;
+  influenceFalloff: 'linear' | 'smooth' | 'sharp';
+  showInfluenceArea: boolean;
+  previewMode: boolean;
 }
 
 export interface LassoControlPoint {

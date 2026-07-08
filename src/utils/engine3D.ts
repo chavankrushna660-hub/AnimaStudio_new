@@ -627,6 +627,131 @@ export function incrementDailyLimit(email: string) {
   }
 }
 
+interface Triangle {
+  a: number;
+  b: number;
+  c: number;
+}
+
+function distanceToSegment(p: { x: number; y: number }, a: Point, b: Point): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  if (dx === 0 && dy === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+  let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy);
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+function distanceToPolygon(p: { x: number; y: number }, poly: Point[]): number {
+  let minDist = Infinity;
+  for (let i = 0; i < poly.length; i++) {
+    const next = poly[(i + 1) % poly.length];
+    const d = distanceToSegment(p, poly[i], next);
+    if (d < minDist) minDist = d;
+  }
+  return minDist;
+}
+
+function delaunayTriangulate(points: { x: number; y: number }[]): Triangle[] {
+  if (points.length < 3) return [];
+
+  let minX = Infinity, maxX = -Infinity;
+  let minY = Infinity, maxY = -Infinity;
+  points.forEach(p => {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  });
+
+  const dx = maxX - minX;
+  const dy = maxY - minY;
+  const deltaMax = Math.max(dx, dy) || 100;
+  const midX = (minX + maxX) / 2;
+  const midY = (minY + maxY) / 2;
+
+  const st0 = { x: midX - 20 * deltaMax, y: midY - deltaMax };
+  const st1 = { x: midX, y: midY + 20 * deltaMax };
+  const st2 = { x: midX + 20 * deltaMax, y: midY - deltaMax };
+
+  const allPts = [...points, st0, st1, st2];
+  const nPoints = points.length;
+  const ist0 = nPoints;
+  const ist1 = nPoints + 1;
+  const ist2 = nPoints + 2;
+
+  let triangles: Triangle[] = [{ a: ist0, b: ist1, c: ist2 }];
+
+  function inCircumcircle(p: { x: number; y: number }, t: Triangle): boolean {
+    const pa = allPts[t.a];
+    const pb = allPts[t.b];
+    const pc = allPts[t.c];
+
+    const d = 2 * (pa.x * (pb.y - pc.y) + pb.x * (pc.y - pa.y) + pc.x * (pa.y - pb.y));
+    if (Math.abs(d) < 1e-9) return false;
+
+    const ux = ((pa.x * pa.x + pa.y * pa.y) * (pb.y - pc.y) + (pb.x * pb.x + pb.y * pb.y) * (pc.y - pa.y) + (pc.x * pc.x + pc.y * pc.y) * (pa.y - pb.y)) / d;
+    const uy = ((pa.x * pa.x + pa.y * pa.y) * (pc.x - pb.x) + (pb.x * pb.x + pb.y * pb.y) * (pa.x - pc.x) + (pc.x * pc.x + pc.y * pc.y) * (pb.x - pa.x)) / d;
+
+    const r2 = (pa.x - ux) * (pa.x - ux) + (pa.y - uy) * (pa.y - uy);
+    const dist2 = (p.x - ux) * (p.x - ux) + (p.y - uy) * (p.y - uy);
+
+    return dist2 < r2 + 1e-9;
+  }
+
+  for (let i = 0; i < nPoints; i++) {
+    const p = points[i];
+    const badTriangles: Triangle[] = [];
+
+    triangles.forEach(t => {
+      if (inCircumcircle(p, t)) {
+        badTriangles.push(t);
+      }
+    });
+
+    const polygon: { edgeStart: number; edgeEnd: number }[] = [];
+    badTriangles.forEach(t => {
+      const edges = [
+        { edgeStart: t.a, edgeEnd: t.b },
+        { edgeStart: t.b, edgeEnd: t.c },
+        { edgeStart: t.c, edgeEnd: t.a }
+      ];
+
+      edges.forEach(edge => {
+        let shared = false;
+        badTriangles.forEach(other => {
+          if (other === t) return;
+          const otherEdges = [
+            { edgeStart: other.a, edgeEnd: other.b },
+            { edgeStart: other.b, edgeEnd: other.c },
+            { edgeStart: other.c, edgeEnd: other.a }
+          ];
+          if (otherEdges.some(oe => 
+            (oe.edgeStart === edge.edgeStart && oe.edgeEnd === edge.edgeEnd) ||
+            (oe.edgeStart === edge.edgeEnd && oe.edgeEnd === edge.edgeStart)
+          )) {
+            shared = true;
+          }
+        });
+
+        if (!shared) {
+          polygon.push(edge);
+        }
+      });
+    });
+
+    triangles = triangles.filter(t => !badTriangles.includes(t));
+
+    polygon.forEach(edge => {
+      triangles.push({ a: edge.edgeStart, b: edge.edgeEnd, c: i });
+    });
+  }
+
+  triangles = triangles.filter(t => t.a < nPoints && t.b < nPoints && t.c < nPoints);
+
+  return triangles;
+}
+
 /**
  * Extrudes 2D vector drawing points to generate a real 3D solid wireframe geometry prism
  */
@@ -705,52 +830,171 @@ export function extrude2DTo3D(
   }
 
   const N = cleanPts.length;
+  const baseCol = fillColor && fillColor !== 'transparent' ? fillColor : (strokeColor && strokeColor !== 'transparent' ? strokeColor : '#F59E0B');
+  const sideCol = baseCol;
 
-  // Create 3D vertices
-  // Front ring (at z = -depth / 2)
-  for (let i = 0; i < N; i++) {
+  // Triangulation & inner points generation
+  const uniquePts = cleanPts.slice(0, N - 1);
+  const M_bound = uniquePts.length;
+
+  // Compute Bounding Box
+  let minX = Infinity, maxX = -Infinity;
+  let minY = Infinity, maxY = -Infinity;
+  uniquePts.forEach(p => {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  });
+
+  const width = maxX - minX;
+  const height = maxY - minY;
+  const maxDim = Math.max(width, height) || 100;
+  
+  // Grid step size: dynamic based on size to keep vertex count sensible and high quality
+  const step = Math.max(16, Math.min(32, maxDim / 10));
+
+  const innerPts: Point[] = [];
+  // Generate internal points
+  for (let gx = minX + step; gx < maxX; gx += step) {
+    for (let gy = minY + step; gy < maxY; gy += step) {
+      const pt = { x: gx, y: gy };
+      if (isPointInPolygon(pt, cleanPts)) {
+        if (distanceToPolygon(pt, uniquePts) > step * 0.45) {
+          innerPts.push(pt);
+        }
+      }
+    }
+  }
+
+  const v2D = [...uniquePts, ...innerPts];
+  const M = v2D.length;
+
+  // Triangulate
+  let triangles = delaunayTriangulate(v2D);
+
+  // Filter triangles whose centroid is inside the polygon
+  triangles = triangles.filter(tri => {
+    const pa = v2D[tri.a];
+    const pb = v2D[tri.b];
+    const pc = v2D[tri.c];
+    const centroid = {
+      x: (pa.x + pb.x + pc.x) / 3,
+      y: (pa.y + pb.y + pc.y) / 3
+    };
+    return isPointInPolygon(centroid, cleanPts);
+  });
+
+  // If triangulation failed or is too sparse, fall back to simple extrusion
+  if (triangles.length === 0) {
+    // Front ring
+    for (let i = 0; i < N; i++) {
+      vertices.push({
+        x: cleanPts[i].x - cx,
+        y: cleanPts[i].y - cy,
+        z: -depth / 2
+      });
+    }
+    // Back ring
+    for (let i = 0; i < N; i++) {
+      vertices.push({
+        x: cleanPts[i].x - cx,
+        y: cleanPts[i].y - cy,
+        z: depth / 2
+      });
+    }
+
+    // Front face
+    faces.push({
+      indices: Array.from({ length: N }, (_, i) => i),
+      fillColor: baseCol,
+      baseColor: baseCol
+    });
+    // Back face
+    faces.push({
+      indices: Array.from({ length: N }, (_, i) => (N - 1 - i) + N),
+      fillColor: baseCol,
+      baseColor: baseCol
+    });
+    // Side faces
+    for (let i = 0; i < N; i++) {
+      const next = (i + 1) % N;
+      faces.push({
+        indices: [i, next, next + N, i + N],
+        fillColor: sideCol,
+        baseColor: sideCol
+      });
+    }
+    return { vertices, faces, center: { x: cx, y: cy } };
+  }
+
+  // Create 3D vertices based on robust triangulation
+  // Front vertices
+  for (let i = 0; i < M; i++) {
     vertices.push({
-      x: cleanPts[i].x - cx,
-      y: cleanPts[i].y - cy,
+      x: v2D[i].x - cx,
+      y: v2D[i].y - cy,
       z: -depth / 2
     });
   }
-
-  // Back ring (at z = depth / 2)
-  for (let i = 0; i < N; i++) {
+  // Back vertices
+  for (let i = 0; i < M; i++) {
     vertices.push({
-      x: cleanPts[i].x - cx,
-      y: cleanPts[i].y - cy,
+      x: v2D[i].x - cx,
+      y: v2D[i].y - cy,
       z: depth / 2
     });
   }
 
-  // Define Colors (Aesthetic shading colors)
-  const baseCol = fillColor && fillColor !== 'transparent' ? fillColor : (strokeColor && strokeColor !== 'transparent' ? strokeColor : '#F59E0B');
-  const sideCol = baseCol; 
-  
-  // Front face
-  const frontIndices = Array.from({ length: N }, (_, i) => i);
-  faces.push({
-    indices: frontIndices,
-    fillColor: baseCol,
-    baseColor: baseCol
+  // Front face triangles
+  triangles.forEach(tri => {
+    const { a, b, c } = tri;
+    const pa = v2D[a];
+    const pb = v2D[b];
+    const pc = v2D[c];
+    const cross = (pb.x - pa.x) * (pc.y - pa.y) - (pb.y - pa.y) * (pc.x - pa.x);
+    if (cross < 0) {
+      faces.push({
+        indices: [a, b, c],
+        fillColor: baseCol,
+        baseColor: baseCol
+      });
+    } else {
+      faces.push({
+        indices: [a, c, b],
+        fillColor: baseCol,
+        baseColor: baseCol
+      });
+    }
   });
 
-  // Back face (reverse orientation to face out)
-  const backIndices = Array.from({ length: N }, (_, i) => (N - 1 - i) + N);
-  faces.push({
-    indices: backIndices,
-    fillColor: baseCol,
-    baseColor: baseCol
+  // Back face triangles
+  triangles.forEach(tri => {
+    const { a, b, c } = tri;
+    const pa = v2D[a];
+    const pb = v2D[b];
+    const pc = v2D[c];
+    const cross = (pb.x - pa.x) * (pc.y - pa.y) - (pb.y - pa.y) * (pc.x - pa.x);
+    if (cross > 0) {
+      faces.push({
+        indices: [a + M, b + M, c + M],
+        fillColor: baseCol,
+        baseColor: baseCol
+      });
+    } else {
+      faces.push({
+        indices: [a + M, c + M, b + M],
+        fillColor: baseCol,
+        baseColor: baseCol
+      });
+    }
   });
 
-  // Side quad faces connecting front and back loops
-  for (let i = 0; i < N; i++) {
-    const next = (i + 1) % N;
-    // quad connecting front_i, front_next, back_next, back_i
+  // Side quad faces connecting boundary vertices of front and back loops
+  for (let i = 0; i < M_bound; i++) {
+    const next = (i + 1) % M_bound;
     faces.push({
-      indices: [i, next, next + N, i + N],
+      indices: [i, next, next + M, i + M],
       fillColor: sideCol,
       baseColor: sideCol
     });

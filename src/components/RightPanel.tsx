@@ -26,9 +26,11 @@ import {
   Play,
   Zap,
   Info,
-  Box
+  Box,
+  Palette,
+  MapPin
 } from 'lucide-react';
-import { VectorObject, Bone, Layer, Pivot, Transform, Point, Frame, RealismSettings } from '../types';
+import { VectorObject, Bone, Layer, Pivot, Transform, Point, Frame, RealismSettings, SmartMeshColorState, SmartWarpState, ColorMeshPoint, ColorMeshCell } from '../types';
 import { distance, localToWorld, worldToLocal, calculateBoundingBox, isPointInPolygon, findClosestView360 } from '../utils/math';
 
 interface RightPanelProps {
@@ -159,6 +161,185 @@ export default function RightPanel({
 
   // Lasso Color Fill state
   const [lassoColor, setLassoColor] = useState('#E53935');
+
+  // Smart Mesh Coloring State
+  const [brushColor, setBrushColor] = useState('#10b981');
+
+  const handleInitMeshColor = (obj: VectorObject, densityX: number, densityY: number) => {
+    const bounds = calculateBoundingBox(obj.points.length > 0 ? obj.points : [{ x: -100, y: -100 }, { x: 100, y: 100 }]);
+    const w = bounds.width || 200;
+    const h = bounds.height || 200;
+    const bx = bounds.x;
+    const by = bounds.y;
+
+    const cellWidth = w / (densityX - 1);
+    const cellHeight = h / (densityY - 1);
+
+    const points: ColorMeshPoint[] = [];
+    const cells: ColorMeshCell[] = [];
+
+    for (let y = 0; y < densityY; y++) {
+      for (let x = 0; x < densityX; x++) {
+        const px = bx + x * cellWidth;
+        const py = by + y * cellHeight;
+        points.push({
+          id: `mcl_pt_${x}_${y}`,
+          originalX: px,
+          originalY: py,
+          currentX: px,
+          currentY: py,
+          color: null,
+          opacity: 1
+        });
+      }
+    }
+
+    for (let y = 0; y < densityY - 1; y++) {
+      for (let x = 0; x < densityX - 1; x++) {
+        const topLeftIdx = y * densityX + x;
+        const topRightIdx = y * densityX + (x + 1);
+        const bottomRightIdx = (y + 1) * densityX + (x + 1);
+        const bottomLeftIdx = (y + 1) * densityX + x;
+
+        cells.push({
+          id: `mcl_cell_${x}_${y}`,
+          pointIds: [
+            points[topLeftIdx].id,
+            points[topRightIdx].id,
+            points[bottomRightIdx].id,
+            points[bottomLeftIdx].id
+          ],
+          color: null,
+          opacity: 1
+        });
+      }
+    }
+
+    const smartMeshColor: SmartMeshColorState = {
+      densityX,
+      densityY,
+      points,
+      cells,
+      pointSize: 20,
+      paintMode: 'cell',
+      brushSize: 40,
+      brushOpacity: 1.0,
+      brushColor: '#10b981',
+      activeLayerIndex: 0,
+      previewMode: true,
+      layers: [
+        { id: 'mcl_layer_0', name: 'Base Color Layer', visible: true, locked: false }
+      ]
+    };
+
+    updateObject(obj.id, { smartMeshColor });
+  };
+
+  const handleUpdateMeshColorConfig = (updates: Partial<SmartMeshColorState>) => {
+    if (!selectedObject || !selectedObject.smartMeshColor) return;
+    updateObject(selectedObject.id, {
+      smartMeshColor: {
+        ...selectedObject.smartMeshColor,
+        ...updates
+      }
+    });
+  };
+
+  const handleAddMeshColorLayer = () => {
+    if (!selectedObject || !selectedObject.smartMeshColor) return;
+    const layers = [...selectedObject.smartMeshColor.layers];
+    const newIdx = layers.length;
+    layers.push({
+      id: `mcl_layer_${Date.now()}`,
+      name: `Layer ${newIdx + 1}`,
+      visible: true,
+      locked: false
+    });
+    handleUpdateMeshColorConfig({
+      layers,
+      activeLayerIndex: newIdx
+    });
+  };
+
+  const handleDeleteMeshColorLayer = (idx: number) => {
+    if (!selectedObject || !selectedObject.smartMeshColor) return;
+    const layers = selectedObject.smartMeshColor.layers.filter((_, i) => i !== idx);
+    const activeLayerIndex = Math.min(selectedObject.smartMeshColor.activeLayerIndex, layers.length - 1);
+    handleUpdateMeshColorConfig({
+      layers,
+      activeLayerIndex
+    });
+  };
+
+  const handleToggleMeshColorLayerVis = (idx: number) => {
+    if (!selectedObject || !selectedObject.smartMeshColor) return;
+    const layers = selectedObject.smartMeshColor.layers.map((l, i) => i === idx ? { ...l, visible: !l.visible } : l);
+    handleUpdateMeshColorConfig({ layers });
+  };
+
+  const handleClearMeshColors = (obj: VectorObject) => {
+    if (!obj.smartMeshColor) return;
+    const points = obj.smartMeshColor.points.map(p => ({ ...p, color: null }));
+    const cells = obj.smartMeshColor.cells.map(c => ({ ...c, color: null }));
+    updateObject(obj.id, {
+      smartMeshColor: {
+        ...obj.smartMeshColor,
+        points,
+        cells
+      }
+    });
+  };
+
+  const handleInitSmartWarp = (obj: VectorObject) => {
+    const smartWarp: SmartWarpState = {
+      pins: [],
+      pinSize: 30,
+      influenceRadius: 120,
+      influenceFalloff: 'smooth',
+      showInfluenceArea: true,
+      previewMode: true
+    };
+    updateObject(obj.id, { smartWarp });
+  };
+
+  const handleUpdateSmartWarpConfig = (updates: Partial<SmartWarpState>) => {
+    if (!selectedObject || !selectedObject.smartWarp) return;
+    updateObject(selectedObject.id, {
+      smartWarp: {
+        ...selectedObject.smartWarp,
+        ...updates
+      }
+    });
+  };
+
+  const handleTogglePinLock = (pinId: string) => {
+    if (!selectedObject || !selectedObject.smartWarp) return;
+    const pins = selectedObject.smartWarp.pins.map(p => p.id === pinId ? { ...p, locked: !p.locked } : p);
+    handleUpdateSmartWarpConfig({ pins });
+  };
+
+  const handleDeletePin = (pinId: string) => {
+    if (!selectedObject || !selectedObject.smartWarp) return;
+    const pins = selectedObject.smartWarp.pins.filter(p => p.id !== pinId);
+    handleUpdateSmartWarpConfig({ pins });
+  };
+
+  const handleResetWarpPins = (obj: VectorObject) => {
+    if (!obj.smartWarp) return;
+    const updates: Partial<VectorObject> = {
+      smartWarp: {
+        ...obj.smartWarp,
+        pins: []
+      }
+    };
+    if (obj.originalPointsBackup) {
+      updates.points = [...obj.originalPointsBackup];
+    }
+    if (obj.originalSubPathsBackup) {
+      updates.subPaths = [...obj.originalSubPathsBackup];
+    }
+    updateObject(obj.id, updates);
+  };
 
   // Permanent Attachment state
   const [attachmentPieces, setAttachmentPieces] = useState<string[]>([]);
@@ -1570,6 +1751,362 @@ export default function RightPanel({
                           >
                             Discard
                           </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* SMART MESH COLORING OPTIONS */}
+                {activeTool === 'MCL' && (
+                  <div className="space-y-4 bg-emerald-500/5 p-4 rounded-2xl border border-emerald-400/20 shadow-lg shadow-black/20">
+                    <div className="flex items-center justify-between border-b border-emerald-500/10 pb-2.5">
+                      <span className="text-xs font-black uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                        <Palette className="w-4 h-4 text-emerald-500 animate-pulse" />
+                        SMART MESH COLORING
+                      </span>
+                    </div>
+
+                    {!selectedObject ? (
+                      <p className="text-[10px] text-neutral-400 font-bold leading-normal">
+                        Select a drawing on the canvas first to paint on its mesh!
+                      </p>
+                    ) : !selectedObject.smartMeshColor ? (
+                      <div className="space-y-3">
+                        <p className="text-[10px] text-neutral-400 leading-normal font-bold">
+                          Create a simplified mesh grid over this drawing. You can directly brush color onto mesh cells or points, and colors will warp automatically with your deformations!
+                        </p>
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] text-neutral-400 block font-black uppercase tracking-wide">Grid Density Preset:</label>
+                          <div className="grid grid-cols-3 gap-1.5">
+                            <button
+                              onClick={() => handleInitMeshColor(selectedObject, 6, 6)}
+                              className="py-1.5 bg-neutral-800 hover:bg-emerald-500 hover:text-neutral-950 text-neutral-300 text-[10px] font-black rounded-lg transition-all"
+                            >
+                              LOW (6x6)
+                            </button>
+                            <button
+                              onClick={() => handleInitMeshColor(selectedObject, 10, 10)}
+                              className="py-1.5 bg-neutral-800 hover:bg-emerald-500 hover:text-neutral-950 text-neutral-300 text-[10px] font-black rounded-lg transition-all"
+                            >
+                              MED (10x10)
+                            </button>
+                            <button
+                              onClick={() => handleInitMeshColor(selectedObject, 16, 16)}
+                              className="py-1.5 bg-neutral-800 hover:bg-emerald-500 hover:text-neutral-950 text-neutral-300 text-[10px] font-black rounded-lg transition-all"
+                            >
+                              HIGH (16x16)
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-4 text-xs">
+                        {/* Color Picker & Mode */}
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] text-neutral-400 uppercase tracking-wider font-black">Brush Color</span>
+                            <span className="text-[10px] text-emerald-400 font-bold">Mode</span>
+                          </div>
+                          
+                          <div className="flex gap-2">
+                            <input 
+                              type="color" 
+                              value={brushColor} 
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setBrushColor(val);
+                                handleUpdateMeshColorConfig({ brushColor: val });
+                              }}
+                              className="w-10 h-8 rounded-lg border border-neutral-700 bg-transparent cursor-pointer shrink-0" 
+                            />
+                            <div className="flex-1 grid grid-cols-2 gap-1 bg-neutral-950 p-0.5 rounded-lg border border-neutral-800/40">
+                              <button
+                                onClick={() => handleUpdateMeshColorConfig({ paintMode: 'cell' })}
+                                className={`py-1 text-[10px] font-bold rounded-md transition-all ${
+                                  selectedObject.smartMeshColor.paintMode === 'cell' 
+                                    ? 'bg-emerald-500 text-neutral-950' 
+                                    : 'text-neutral-400 hover:text-white'
+                                }`}
+                              >
+                                Fill Cell
+                              </button>
+                              <button
+                                onClick={() => handleUpdateMeshColorConfig({ paintMode: 'point' })}
+                                className={`py-1 text-[10px] font-bold rounded-md transition-all ${
+                                  selectedObject.smartMeshColor.paintMode === 'point' 
+                                    ? 'bg-emerald-500 text-neutral-950' 
+                                    : 'text-neutral-400 hover:text-white'
+                                }`}
+                              >
+                                Glow Point
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Brush Settings */}
+                        <div className="space-y-2 border-t border-neutral-800/40 pt-2.5">
+                          <div className="flex items-center justify-between text-[10px] text-neutral-400">
+                            <span className="font-bold uppercase tracking-wider">Brush Radius</span>
+                            <span className="text-emerald-400 font-bold font-mono">{selectedObject.smartMeshColor.brushSize}px</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="10"
+                            max="120"
+                            value={selectedObject.smartMeshColor.brushSize}
+                            onChange={(e) => handleUpdateMeshColorConfig({ brushSize: parseInt(e.target.value) })}
+                            className="w-full accent-emerald-500"
+                          />
+
+                          <div className="flex items-center justify-between text-[10px] text-neutral-400 mt-2">
+                            <span className="font-bold uppercase tracking-wider">Paint Opacity</span>
+                            <span className="text-emerald-400 font-bold font-mono">{Math.round(selectedObject.smartMeshColor.brushOpacity * 100)}%</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="10"
+                            max="100"
+                            value={Math.round(selectedObject.smartMeshColor.brushOpacity * 100)}
+                            onChange={(e) => handleUpdateMeshColorConfig({ brushOpacity: parseFloat(e.target.value) / 100 })}
+                            className="w-full accent-emerald-500"
+                          />
+                        </div>
+
+                        {/* Layers & View Settings */}
+                        <div className="space-y-2 border-t border-neutral-800/40 pt-2.5">
+                          <div className="flex items-center justify-between text-[10px] text-neutral-400">
+                            <span className="font-bold uppercase tracking-wider">Color Layers</span>
+                            <button 
+                              onClick={handleAddMeshColorLayer}
+                              className="px-2 py-0.5 bg-neutral-800 hover:bg-emerald-500 hover:text-neutral-950 text-[9px] font-bold rounded transition-all flex items-center gap-1"
+                            >
+                              <Plus className="w-2.5 h-2.5" /> Add Layer
+                            </button>
+                          </div>
+                          
+                          <div className="space-y-1 max-h-28 overflow-y-auto bg-neutral-950/60 rounded-xl border border-neutral-800/40 p-1.5 scrollbar-thin">
+                            {selectedObject.smartMeshColor.layers.map((layer, idx) => (
+                              <div 
+                                key={layer.id} 
+                                onClick={() => handleUpdateMeshColorConfig({ activeLayerIndex: idx })}
+                                className={`flex items-center justify-between px-2 py-1.5 rounded-lg cursor-pointer transition-all ${
+                                  selectedObject.smartMeshColor?.activeLayerIndex === idx 
+                                    ? 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-bold' 
+                                    : 'text-neutral-400 hover:text-white border border-transparent hover:bg-neutral-800/40'
+                                }`}
+                              >
+                                <span className="text-[10px] truncate">{layer.name}</span>
+                                <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+                                  <button 
+                                    onClick={() => handleToggleMeshColorLayerVis(idx)}
+                                    className="p-0.5 hover:text-emerald-400 text-neutral-500 transition-colors"
+                                  >
+                                    {layer.visible ? '👁' : '👁‍c'}
+                                  </button>
+                                  {selectedObject.smartMeshColor.layers.length > 1 && (
+                                    <button 
+                                      onClick={() => handleDeleteMeshColorLayer(idx)}
+                                      className="p-0.5 hover:text-rose-400 text-neutral-500 transition-colors"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Action Controls */}
+                        <div className="space-y-1.5 border-t border-neutral-800/40 pt-2.5">
+                          <label className="flex items-center gap-2 text-xs text-neutral-300 select-none cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={selectedObject.smartMeshColor.previewMode}
+                              onChange={(e) => handleUpdateMeshColorConfig({ previewMode: e.target.checked })}
+                              className="accent-emerald-500 rounded border-neutral-800"
+                            />
+                            <span>Mesh Live Overlay Preview</span>
+                          </label>
+
+                          <div className="grid grid-cols-2 gap-2 pt-1">
+                            <button
+                              onClick={() => {
+                                if (window.confirm("Clear all mesh colors on this object?")) {
+                                  handleClearMeshColors(selectedObject);
+                                }
+                              }}
+                              className="py-1.5 bg-neutral-900 hover:bg-rose-950 text-neutral-400 hover:text-rose-300 text-[10px] font-black rounded-lg border border-neutral-800 hover:border-rose-900 transition-all uppercase tracking-wider"
+                            >
+                              Clear Colors
+                            </button>
+                            <button
+                              onClick={() => {
+                                setActiveTool('SEL');
+                              }}
+                              className="py-1.5 bg-emerald-500 text-neutral-950 hover:bg-emerald-400 text-[10px] font-black rounded-lg transition-all uppercase tracking-wider text-center"
+                            >
+                              ✓ Complete
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* SMART PIN WARP */}
+                {activeTool === 'SWP' && (
+                  <div className="space-y-4 bg-sky-500/5 p-4 rounded-2xl border border-sky-400/20 shadow-lg shadow-black/20">
+                    <div className="flex items-center justify-between border-b border-sky-500/10 pb-2.5">
+                      <span className="text-xs font-black uppercase tracking-wider text-sky-400 flex items-center gap-1.5">
+                        <MapPin className="w-4 h-4 text-sky-500 animate-pulse" />
+                        SMART PIN WARPING
+                      </span>
+                    </div>
+
+                    {!selectedObject ? (
+                      <p className="text-[10px] text-neutral-400 font-bold leading-normal">
+                        Select a drawing on the canvas first to place deformation pins!
+                      </p>
+                    ) : !selectedObject.smartWarp ? (
+                      <div className="space-y-3">
+                        <p className="text-[10px] text-neutral-400 leading-normal font-bold">
+                          Add custom warp pins directly onto your drawing! Drag pins to deform the body part smoothly. This offers extremely precise puppet-like control with zero mesh clutter.
+                        </p>
+                        <button
+                          onClick={() => handleInitSmartWarp(selectedObject)}
+                          className="w-full py-2 bg-sky-500 text-neutral-950 hover:bg-sky-400 text-[10px] font-black rounded-lg transition-all uppercase tracking-wider"
+                        >
+                          Initialize Smart Warp Pins
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-4 text-xs">
+                        {/* Pin Options */}
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between text-[10px] text-neutral-400">
+                            <span className="font-bold uppercase tracking-wider">Pin Grab Size</span>
+                            <span className="text-sky-400 font-bold font-mono">{selectedObject.smartWarp.pinSize}px</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="20"
+                            max="60"
+                            value={selectedObject.smartWarp.pinSize}
+                            onChange={(e) => handleUpdateSmartWarpConfig({ pinSize: parseInt(e.target.value) })}
+                            className="w-full accent-sky-500"
+                          />
+                        </div>
+
+                        {/* Influence Area Settings */}
+                        <div className="space-y-2 border-t border-neutral-800/40 pt-2.5">
+                          <div className="flex items-center justify-between text-[10px] text-neutral-400">
+                            <span className="font-bold uppercase tracking-wider">Influence Radius</span>
+                            <span className="text-sky-400 font-bold font-mono">{selectedObject.smartWarp.influenceRadius}px</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="30"
+                            max="300"
+                            value={selectedObject.smartWarp.influenceRadius}
+                            onChange={(e) => handleUpdateSmartWarpConfig({ influenceRadius: parseInt(e.target.value) })}
+                            className="w-full accent-sky-500"
+                          />
+
+                          <div className="space-y-1 mt-2">
+                            <label className="text-[10px] text-neutral-400 block font-black uppercase tracking-wide">Deformation Falloff:</label>
+                            <div className="grid grid-cols-3 gap-1">
+                              {(['linear', 'smooth', 'sharp'] as const).map((falloff) => (
+                                <button
+                                  key={falloff}
+                                  onClick={() => handleUpdateSmartWarpConfig({ influenceFalloff: falloff })}
+                                  className={`py-1 text-[9px] font-black rounded-md uppercase transition-all ${
+                                    selectedObject.smartWarp?.influenceFalloff === falloff
+                                      ? 'bg-sky-500 text-neutral-950'
+                                      : 'bg-neutral-800 text-neutral-400 hover:text-white'
+                                  }`}
+                                >
+                                  {falloff}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Active Pins List */}
+                        <div className="space-y-2 border-t border-neutral-800/40 pt-2.5">
+                          <div className="flex items-center justify-between text-[10px] text-neutral-400">
+                            <span className="font-bold uppercase tracking-wider">Active Warp Pins ({selectedObject.smartWarp.pins.length})</span>
+                          </div>
+                          {selectedObject.smartWarp.pins.length === 0 ? (
+                            <p className="text-[10px] text-neutral-500 italic">
+                              Click anywhere directly on the drawing to add warp pins!
+                            </p>
+                          ) : (
+                            <div className="space-y-1 max-h-24 overflow-y-auto bg-neutral-950/60 rounded-xl border border-neutral-800/40 p-1.5 scrollbar-thin">
+                              {selectedObject.smartWarp.pins.map((pin, pIdx) => (
+                                <div
+                                  key={pin.id}
+                                  className="flex items-center justify-between px-2 py-1.5 rounded-lg text-neutral-300 bg-neutral-900/40 border border-neutral-800/40"
+                                >
+                                  <span className="text-[10px] font-mono">Pin #{pIdx + 1} ({Math.round(pin.currentX)}, {Math.round(pin.currentY)})</span>
+                                  <div className="flex items-center gap-1.5">
+                                    <button
+                                      onClick={() => handleTogglePinLock(pin.id)}
+                                      className="p-0.5 hover:text-sky-400 text-neutral-500 transition-colors"
+                                      title={pin.locked ? "Unlock Pin" : "Lock Pin Position"}
+                                    >
+                                      {pin.locked ? '🔒' : '🔓'}
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeletePin(pin.id)}
+                                      className="p-0.5 hover:text-rose-400 text-neutral-500 transition-colors"
+                                      title="Delete Pin"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Controls */}
+                        <div className="space-y-1.5 border-t border-neutral-800/40 pt-2.5">
+                          <label className="flex items-center gap-2 text-xs text-neutral-300 select-none cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={selectedObject.smartWarp.showInfluenceArea}
+                              onChange={(e) => handleUpdateSmartWarpConfig({ showInfluenceArea: e.target.checked })}
+                              className="accent-sky-500 rounded border-neutral-800"
+                            />
+                            <span>Show Influence Radii Overlays</span>
+                          </label>
+
+                          <div className="grid grid-cols-2 gap-2 pt-1">
+                            <button
+                              onClick={() => {
+                                if (window.confirm("Reset all warp pins on this object?")) {
+                                  handleResetWarpPins(selectedObject);
+                                }
+                              }}
+                              className="py-1.5 bg-neutral-900 hover:bg-rose-950 text-neutral-400 hover:text-rose-300 text-[10px] font-black rounded-lg border border-neutral-800 hover:border-rose-900 transition-all uppercase tracking-wider"
+                            >
+                              Reset Pins
+                            </button>
+                            <button
+                              onClick={() => {
+                                setActiveTool('SEL');
+                              }}
+                              className="py-1.5 bg-sky-500 text-neutral-950 hover:bg-sky-400 text-[10px] font-black rounded-lg transition-all uppercase tracking-wider text-center"
+                            >
+                              ✓ Complete
+                            </button>
+                          </div>
                         </div>
                       </div>
                     )}

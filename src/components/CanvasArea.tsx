@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { RotateCcw, Sparkles, Feather, ZoomIn, ZoomOut } from 'lucide-react';
-import { Point, VectorObject, Bone, Pivot, Frame, Transform, RealismSettings, LassoControlPoint } from '../types';
+import { Point, VectorObject, Bone, Pivot, Frame, Transform, RealismSettings, LassoControlPoint, SmartWarpPin } from '../types';
 import { transform3DVertex, project3DVertex, getFaceLightColor, deformVertices3D } from '../utils/engine3D';
 import { 
   distance, 
@@ -216,6 +216,40 @@ const deformWithPuppetPins = (p: Point, pins: Pivot[]) => {
   }
   
   return p;
+};
+
+// Smart Warp Pin deformation helper (based on customizable radius, falloff curve, non-destructive)
+const deformWithSmartWarp = (p: Point, smartWarp: any): Point => {
+  if (!smartWarp || !smartWarp.pins || smartWarp.pins.length === 0) return p;
+  
+  const pins = smartWarp.pins;
+  const influenceRadius = smartWarp.influenceRadius || 120;
+  const influenceFalloff = smartWarp.influenceFalloff || 'smooth';
+
+  let dx = 0;
+  let dy = 0;
+
+  for (const pin of pins) {
+    const dist = distance(p, { x: pin.originalX, y: pin.originalY });
+    if (dist < influenceRadius) {
+      let weight = 0;
+      const ratio = dist / influenceRadius;
+      if (influenceFalloff === 'linear') {
+        weight = 1 - ratio;
+      } else if (influenceFalloff === 'sharp') {
+        weight = Math.pow(1 - ratio, 2);
+      } else { // smooth
+        weight = (1 + Math.cos(Math.PI * ratio)) / 2;
+      }
+      dx += (pin.currentX - pin.originalX) * weight;
+      dy += (pin.currentY - pin.originalY) * weight;
+    }
+  }
+
+  return {
+    x: p.x + dx,
+    y: p.y + dy
+  };
 };
 
 // Textured triangle renderer for 2D HTML5 Canvas
@@ -547,6 +581,8 @@ interface CanvasAreaProps {
   setArtboardH: React.Dispatch<React.SetStateAction<number>>;
   showCanvasSizePanel: boolean;
   setShowCanvasSizePanel: React.Dispatch<React.SetStateAction<boolean>>;
+  adaptiveSubdivisionEnabled: boolean;
+  adaptiveSubdivisionPoints: number;
 }
 
 export default function CanvasArea({
@@ -582,6 +618,8 @@ export default function CanvasArea({
   setArtboardH,
   showCanvasSizePanel,
   setShowCanvasSizePanel,
+  adaptiveSubdivisionEnabled,
+  adaptiveSubdivisionPoints,
 }: CanvasAreaProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const backCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -609,6 +647,88 @@ export default function CanvasArea({
       setZoomOffset({ x: offsetX, y: offsetY });
     } catch (err) {
       console.error("Recenter canvas failed", err);
+    }
+  };
+
+  const paintColorAt = (worldCoords: Point, obj: VectorObject) => {
+    if (!obj.smartMeshColor) return;
+    
+    const localPivot = obj.pivots[0] || { localX: 0, localY: 0 };
+    const localPos = worldToLocal(worldCoords, obj.transform, localPivot);
+    const smc = obj.smartMeshColor;
+    const brushSize = smc.brushSize || 40;
+    const brushColor = smc.brushColor || '#10b981';
+    const brushOpacity = smc.brushOpacity !== undefined ? smc.brushOpacity : 1.0;
+    
+    let pointsChanged = false;
+    let cellsChanged = false;
+
+    // 1. If paintMode is 'point', update colors of vertices close to the local brush coordinate
+    const updatedPoints = smc.points.map(pt => {
+      // Warp point dynamically if pins are present so we check distance to where the point is currently deformed!
+      const deformedLocal = deformWithSmartWarp({ x: pt.originalX, y: pt.originalY }, obj.smartWarp);
+      const dist = distance(localPos, deformedLocal);
+      
+      if (dist <= brushSize) {
+        pointsChanged = true;
+        return {
+          ...pt,
+          color: brushColor,
+          opacity: brushOpacity
+        };
+      }
+      return pt;
+    });
+
+    // 2. If paintMode is 'cell', find cells whose center point is close to the local brush coordinate
+    const updatedCells = smc.cells.map(cell => {
+      // Compute the average center point of cell's 4 corner vertices
+      let sumX = 0;
+      let sumY = 0;
+      let valid = true;
+      
+      cell.pointIds.forEach(pId => {
+        const pt = smc.points.find(p => p.id === pId);
+        if (pt) {
+          const deformedLocal = deformWithSmartWarp({ x: pt.originalX, y: pt.originalY }, obj.smartWarp);
+          sumX += deformedLocal.x;
+          sumY += deformedLocal.y;
+        } else {
+          valid = false;
+        }
+      });
+      
+      if (valid) {
+        const center = { x: sumX / cell.pointIds.length, y: sumY / cell.pointIds.length };
+        const dist = distance(localPos, center);
+        if (dist <= brushSize) {
+          cellsChanged = true;
+          return {
+            ...cell,
+            color: brushColor,
+            opacity: brushOpacity
+          };
+        }
+      }
+      return cell;
+    });
+
+    if (pointsChanged || cellsChanged) {
+      setObjects(prev => {
+        const curObj = prev[obj.id];
+        if (!curObj || !curObj.smartMeshColor) return prev;
+        return {
+          ...prev,
+          [obj.id]: {
+            ...curObj,
+            smartMeshColor: {
+              ...curObj.smartMeshColor,
+              points: updatedPoints,
+              cells: updatedCells
+            }
+          }
+        };
+      });
     }
   };
 
@@ -802,7 +922,7 @@ export default function CanvasArea({
   const [isDrawingLasso, setIsDrawingLasso] = useState(false);
   
   // Transform & drag gesture state
-  const [dragMode, setDragMode] = useState<'none' | 'move' | 'rotate' | 'scale' | 'pivot' | 'pin' | 'meshPoint' | 'meshGridPoint' | 'puppetPin' | 'lassoControlPoint' | 'directRigBone' | 'zoom' | 'pan'>('none');
+  const [dragMode, setDragMode] = useState<'none' | 'move' | 'rotate' | 'scale' | 'pivot' | 'pin' | 'meshPoint' | 'meshGridPoint' | 'puppetPin' | 'lassoControlPoint' | 'directRigBone' | 'zoom' | 'pan' | 'paintColor' | 'smartWarpPin'>('none');
   const [dragStartPoint, setDragStartPoint] = useState<Point>({ x: 0, y: 0 });
   const [initialTransform, setInitialTransform] = useState<any>(null);
   const [activeHandleIndex, setActiveHandleIndex] = useState<number | null>(null);
@@ -1540,6 +1660,92 @@ export default function CanvasArea({
       return;
     }
 
+    // MCL (Mesh Coloring) tool pointer down logic
+    if (activeTool === 'MCL') {
+      if (selectedObjectId && objects[selectedObjectId]) {
+        const obj = objects[selectedObjectId];
+        if (obj.smartMeshColor) {
+          setIsPlayingState(true); // set flag to indicate active painting
+          setDragMode('paintColor');
+          // Paint immediately at first click
+          paintColorAt(coords, obj);
+          return;
+        }
+      }
+      // If we didn't paint, check if clicking another object
+      const clickedObj = performHitTest(coords);
+      if (clickedObj) {
+        setSelectedObjectId(clickedObj.id);
+      }
+      return;
+    }
+
+    // SWP (Smart Warp Pin) tool pointer down logic
+    if (activeTool === 'SWP') {
+      if (selectedObjectId && objects[selectedObjectId]) {
+        const obj = objects[selectedObjectId];
+        if (obj.smartWarp) {
+          // 1. Check if we clicked on an existing smart warp pin to drag it!
+          let clickedPinIdx = -1;
+          let minPinDist = obj.smartWarp.pinSize || 30;
+          obj.smartWarp.pins.forEach((pin, idx) => {
+            const worldPin = localToWorld({ x: pin.currentX, y: pin.currentY }, obj.transform, obj.pivots[0]);
+            const d = distance(coords, worldPin);
+            if (d < minPinDist) {
+              minPinDist = d;
+              clickedPinIdx = idx;
+            }
+          });
+
+          if (clickedPinIdx !== -1) {
+            setDragMode('smartWarpPin');
+            setDraggedMeshPointIndex(clickedPinIdx);
+            setDragStartPoint(coords);
+            return;
+          }
+
+          // 2. Otherwise, check if we clicked on the drawing to add a new pin!
+          const localPos = worldToLocal(coords, obj.transform, obj.pivots[0]);
+          const newPin: SmartWarpPin = {
+            id: `swp_pin_${Date.now()}`,
+            originalX: Number(localPos.x.toFixed(2)),
+            originalY: Number(localPos.y.toFixed(2)),
+            currentX: Number(localPos.x.toFixed(2)),
+            currentY: Number(localPos.y.toFixed(2)),
+            locked: false,
+            size: obj.smartWarp.pinSize || 16,
+            color: '#0EA5E9',
+            influenceRadius: obj.smartWarp.influenceRadius || 120,
+            influenceFalloff: obj.smartWarp.influenceFalloff || 'smooth'
+          };
+
+          const updatedPins = [...(obj.smartWarp.pins || []), newPin];
+          setObjects(prev => {
+            const curObj = prev[selectedObjectId];
+            if (!curObj) return prev;
+            return {
+              ...prev,
+              [selectedObjectId]: {
+                ...curObj,
+                smartWarp: {
+                  ...curObj.smartWarp!,
+                  pins: updatedPins
+                }
+              }
+            };
+          });
+          historyPush();
+          return;
+        }
+      }
+      // If we clicked outside, select another drawing
+      const clickedObj = performHitTest(coords);
+      if (clickedObj) {
+        setSelectedObjectId(clickedObj.id);
+      }
+      return;
+    }
+
     // 10. Select & Transform Logic
     if (activeTool === 'SEL') {
       if (selectedObjectId) {
@@ -1770,6 +1976,45 @@ export default function CanvasArea({
       return;
     }
 
+    if (dragMode === 'paintColor' && selectedObjectId) {
+      const obj = objects[selectedObjectId];
+      if (obj && obj.smartMeshColor) {
+        paintColorAt(coords, obj);
+      }
+      return;
+    }
+
+    if (dragMode === 'smartWarpPin' && selectedObjectId && draggedMeshPointIndex !== null) {
+      const obj = objects[selectedObjectId];
+      if (obj && obj.smartWarp) {
+        const localPos = worldToLocal(coords, obj.transform, obj.pivots[0]);
+        setObjects(prev => {
+          if (!prev[selectedObjectId]) return prev;
+          const sw = prev[selectedObjectId].smartWarp;
+          if (!sw) return prev;
+          const updatedPins = [...sw.pins];
+          if (updatedPins[draggedMeshPointIndex]) {
+            updatedPins[draggedMeshPointIndex] = {
+              ...updatedPins[draggedMeshPointIndex],
+              currentX: Number(localPos.x.toFixed(2)),
+              currentY: Number(localPos.y.toFixed(2))
+            };
+          }
+          return {
+            ...prev,
+            [selectedObjectId]: {
+              ...prev[selectedObjectId],
+              smartWarp: {
+                ...sw,
+                pins: updatedPins
+              }
+            }
+          };
+        });
+      }
+      return;
+    }
+
     if (dragMode === ('rotate3D' as any) && selectedObjectId) {
       const obj = objects[selectedObjectId];
       if (obj && obj.type === '3d' && obj.transform3D) {
@@ -1808,34 +2053,196 @@ export default function CanvasArea({
             const updatedVtx = [...(prev[selectedObjectId].vertices3D || [])];
             if (updatedVtx[draggedMeshPointIndex]) {
               const scaleFactor = 1.0 / (obj.transform3D?.sx || 1.0);
-              updatedVtx[draggedMeshPointIndex] = {
+              const P_curr = {
                 x: Number((updatedVtx[draggedMeshPointIndex].x + dx * scaleFactor).toFixed(2)),
                 y: Number((updatedVtx[draggedMeshPointIndex].y + dy * scaleFactor).toFixed(2)),
                 z: updatedVtx[draggedMeshPointIndex].z
               };
-            }
-            return {
-              ...prev,
-              [selectedObjectId]: {
-                ...prev[selectedObjectId],
-                vertices3D: updatedVtx
+              updatedVtx[draggedMeshPointIndex] = P_curr;
+
+              // --- Adaptive Subdivision for 3D Models ---
+              // If an edge exceeds 40.0 local units, dynamically split it and insert new vertices!
+              const THRESHOLD_3D = 40.0;
+              const faces = prev[selectedObjectId].faces3D || [];
+              
+              // Find neighbors of dragged vertex
+              const neighborIndices = new Set<number>();
+              faces.forEach(face => {
+                const len = face.indices.length;
+                for (let i = 0; i < len; i++) {
+                  const cur = face.indices[i];
+                  const next = face.indices[(i + 1) % len];
+                  if (cur === draggedMeshPointIndex) {
+                    neighborIndices.add(next);
+                  } else if (next === draggedMeshPointIndex) {
+                    neighborIndices.add(cur);
+                  }
+                }
+              });
+
+              let nextFaces = [...faces];
+              let nextVtx = [...updatedVtx];
+
+              if (adaptiveSubdivisionEnabled) {
+                neighborIndices.forEach(neighIdx => {
+                  const P_neigh = nextVtx[neighIdx];
+                  if (P_neigh) {
+                    const dist = Math.sqrt(
+                      Math.pow(P_curr.x - P_neigh.x, 2) +
+                      Math.pow(P_curr.y - P_neigh.y, 2) +
+                      Math.pow(P_curr.z - P_neigh.z, 2)
+                    );
+                    if (dist > THRESHOLD_3D) {
+                      const numPoints = adaptiveSubdivisionPoints; // strictly 1 to 10
+                      const newVtxIndices: number[] = [];
+                      for (let k = 1; k <= numPoints; k++) {
+                        const t = k / (numPoints + 1);
+                        const newV = {
+                          x: Number((P_curr.x * (1 - t) + P_neigh.x * t).toFixed(2)),
+                          y: Number((P_curr.y * (1 - t) + P_neigh.y * t).toFixed(2)),
+                          z: Number((P_curr.z * (1 - t) + P_neigh.z * t).toFixed(2))
+                        };
+                        newVtxIndices.push(nextVtx.length);
+                        nextVtx.push(newV);
+                      }
+
+                      // Update all faces containing this split edge
+                      nextFaces = nextFaces.map(face => {
+                        const indices = face.indices;
+                        const len = indices.length;
+                        let containsBoth = false;
+                        let isForward = true;
+
+                        for (let i = 0; i < len; i++) {
+                          const cur = indices[i];
+                          const next = indices[(i + 1) % len];
+                          if (cur === draggedMeshPointIndex && next === neighIdx) {
+                            containsBoth = true;
+                            isForward = true;
+                            break;
+                          } else if (cur === neighIdx && next === draggedMeshPointIndex) {
+                            containsBoth = true;
+                            isForward = false;
+                            break;
+                          }
+                        }
+
+                        if (containsBoth) {
+                          const nextIndices: number[] = [];
+                          for (let i = 0; i < len; i++) {
+                            const cur = indices[i];
+                            const next = indices[(i + 1) % len];
+                            nextIndices.push(cur);
+                            if (cur === draggedMeshPointIndex && next === neighIdx) {
+                              nextIndices.push(...newVtxIndices);
+                            } else if (cur === neighIdx && next === draggedMeshPointIndex) {
+                              nextIndices.push(...[...newVtxIndices].reverse());
+                            }
+                          }
+                          return {
+                            ...face,
+                            indices: nextIndices
+                          };
+                        }
+                        return face;
+                      });
+                    }
+                  }
+                });
               }
-            };
+
+              return {
+                ...prev,
+                [selectedObjectId]: {
+                  ...prev[selectedObjectId],
+                  vertices3D: nextVtx,
+                  faces3D: nextFaces
+                }
+              };
+            }
+            return prev;
           });
         } else {
           const localPos = worldToLocal(coords, obj.transform, obj.pivots[0]);
           setObjects(prev => {
             if (!prev[selectedObjectId]) return prev;
             const updatedPoints = [...prev[selectedObjectId].points];
-            updatedPoints[draggedMeshPointIndex] = {
+            const P_curr = {
               x: Number(localPos.x.toFixed(2)),
               y: Number(localPos.y.toFixed(2))
             };
+            updatedPoints[draggedMeshPointIndex] = P_curr;
+
+            // --- Adaptive Subdivision for 2D Drawings ---
+            // If an edge exceeds 55.0 pixels, dynamically split it and insert new points!
+            const N = updatedPoints.length;
+            const THRESHOLD_2D = 55.0;
+            let finalPoints = [...updatedPoints];
+            let nextDraggedIndex = draggedMeshPointIndex;
+
+            if (adaptiveSubdivisionEnabled && N >= 2) {
+              const numPoints = adaptiveSubdivisionPoints; // strictly 1 to 10
+              const leftIdx = (draggedMeshPointIndex - 1 + N) % N;
+              const rightIdx = (draggedMeshPointIndex + 1) % N;
+
+              const P_left = updatedPoints[leftIdx];
+              const P_right = updatedPoints[rightIdx];
+
+              const distLeft = distance(P_curr, P_left);
+
+              // 1. Check Left Edge
+              if (distLeft > THRESHOLD_2D) {
+                const newPoints: { x: number, y: number }[] = [];
+                for (let k = 1; k <= numPoints; k++) {
+                  const t = k / (numPoints + 1);
+                  newPoints.push({
+                    x: Number((P_left.x * (1 - t) + P_curr.x * t).toFixed(2)),
+                    y: Number((P_left.y * (1 - t) + P_curr.y * t).toFixed(2))
+                  });
+                }
+
+                if (leftIdx === N - 1 && draggedMeshPointIndex === 0) {
+                  finalPoints.push(...newPoints);
+                } else {
+                  finalPoints.splice(draggedMeshPointIndex, 0, ...newPoints);
+                  nextDraggedIndex += numPoints;
+                }
+              }
+
+              // 2. Check Right Edge
+              const N2 = finalPoints.length;
+              const currentP = finalPoints[nextDraggedIndex];
+              const curRightIdx = (nextDraggedIndex + 1) % N2;
+              const P_curRight = finalPoints[curRightIdx];
+              const distRightSec = distance(currentP, P_curRight);
+
+              if (distRightSec > THRESHOLD_2D) {
+                const newPoints: { x: number, y: number }[] = [];
+                for (let k = 1; k <= numPoints; k++) {
+                  const t = k / (numPoints + 1);
+                  newPoints.push({
+                    x: Number((currentP.x * (1 - t) + P_curRight.x * t).toFixed(2)),
+                    y: Number((currentP.y * (1 - t) + P_curRight.y * t).toFixed(2))
+                  });
+                }
+
+                if (nextDraggedIndex === N2 - 1 && curRightIdx === 0) {
+                  finalPoints.push(...newPoints);
+                } else {
+                  finalPoints.splice(nextDraggedIndex + 1, 0, ...newPoints);
+                }
+              }
+            }
+
+            if (nextDraggedIndex !== draggedMeshPointIndex) {
+              setTimeout(() => setDraggedMeshPointIndex(nextDraggedIndex), 0);
+            }
+
             return {
               ...prev,
               [selectedObjectId]: {
                 ...prev[selectedObjectId],
-                points: updatedPoints
+                points: finalPoints
               }
             };
           });
@@ -2346,9 +2753,10 @@ export default function CanvasArea({
       setElasticWarningId(null);
     }
 
-    if (dragMode === 'meshPoint' || dragMode === 'meshGridPoint' || dragMode === 'puppetPin' || dragMode === 'lassoControlPoint') {
+    if (dragMode === 'meshPoint' || dragMode === 'meshGridPoint' || dragMode === 'puppetPin' || dragMode === 'lassoControlPoint' || dragMode === 'smartWarpPin' || dragMode === 'paintColor') {
       setDragMode('none');
       setDraggedMeshPointIndex(null);
+      setIsPlayingState(false);
       historyPush();
     }
 
@@ -2631,6 +3039,8 @@ export default function CanvasArea({
         localPoints = drawObj.points.map(p => getWarpedPoint(p, drawObj.meshState, bounds));
       } else if (drawObj.pins && drawObj.pins.length > 0) {
         localPoints = drawObj.points.map(p => deformWithPuppetPins(p, drawObj.pins));
+      } else if (drawObj.smartWarp && drawObj.smartWarp.pins && drawObj.smartWarp.pins.length > 0) {
+        localPoints = drawObj.points.map(p => deformWithSmartWarp(p, drawObj.smartWarp));
       }
 
       // Get pivot and project points to world space
@@ -2664,6 +3074,8 @@ export default function CanvasArea({
               localSubPoints = sub.map(p => getWarpedPoint(p, drawObj.meshState, subBounds));
             } else if (drawObj.pins && drawObj.pins.length > 0) {
               localSubPoints = sub.map(p => deformWithPuppetPins(p, drawObj.pins));
+            } else if (drawObj.smartWarp && drawObj.smartWarp.pins && drawObj.smartWarp.pins.length > 0) {
+              localSubPoints = sub.map(p => deformWithSmartWarp(p, drawObj.smartWarp));
             }
             const worldSubPoints = localSubPoints.map(p => localToWorld(p, drawObj.transform, pivot));
             if (worldSubPoints.length > 0) {
@@ -3168,6 +3580,69 @@ export default function CanvasArea({
         });
       }
 
+      // 4.6 Smart Mesh Coloring
+      if (obj.smartMeshColor && obj.type !== 'image') {
+        const smc = obj.smartMeshColor;
+        const localPivot = obj.pivots[0] || { localX: 0, localY: 0 };
+        
+        ctx.save();
+        // Clip to the shape boundary so paint doesn't bleed outside the drawing
+        drawAllPaths();
+        ctx.clip();
+
+        // 1. Draw each cell that has a color
+        smc.cells.forEach(cell => {
+          if (!cell.color) return;
+          
+          // Get the 4 corners of the cell
+          const cellPoints = cell.pointIds.map(pId => {
+            const pt = smc.points.find(p => p.id === pId);
+            if (!pt) return null;
+            // Apply warp pins to point positions dynamically if present!
+            const finalLocal = deformWithSmartWarp({ x: pt.originalX, y: pt.originalY }, obj.smartWarp);
+            return localToWorld(finalLocal, obj.transform, localPivot);
+          });
+
+          if (cellPoints.every(p => p !== null)) {
+            ctx.save();
+            ctx.globalAlpha = cell.opacity !== undefined ? cell.opacity : 1.0;
+            ctx.beginPath();
+            ctx.moveTo(cellPoints[0]!.x, cellPoints[0]!.y);
+            for (let i = 1; i < cellPoints.length; i++) {
+              ctx.lineTo(cellPoints[i]!.x, cellPoints[i]!.y);
+            }
+            ctx.closePath();
+            ctx.fillStyle = cell.color;
+            ctx.fill();
+            ctx.restore();
+          }
+        });
+
+        // 2. Draw each point that has a color (soft radial glow bleed)
+        smc.points.forEach(pt => {
+          if (!pt.color) return;
+
+          // Apply warp pins to point position dynamically if present!
+          const finalLocal = deformWithSmartWarp({ x: pt.originalX, y: pt.originalY }, obj.smartWarp);
+          const worldPt = localToWorld(finalLocal, obj.transform, localPivot);
+          const brushSize = smc.brushSize || 40;
+
+          ctx.save();
+          ctx.globalAlpha = pt.opacity !== undefined ? pt.opacity : 1.0;
+          const grad = ctx.createRadialGradient(worldPt.x, worldPt.y, 0, worldPt.x, worldPt.y, brushSize);
+          grad.addColorStop(0, pt.color);
+          grad.addColorStop(1, 'transparent');
+          
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          ctx.arc(worldPt.x, worldPt.y, brushSize, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        });
+
+        ctx.restore();
+      }
+
       ctx.restore();
     });
 
@@ -3323,6 +3798,127 @@ export default function CanvasArea({
           ctx.beginPath();
           ctx.arc(pt.x, pt.y, 1.8, 0, Math.PI * 2);
           ctx.fillStyle = '#FFFFFF';
+          ctx.fill();
+        });
+        ctx.restore();
+      }
+    }
+
+    // Render active Smart Mesh Coloring overlay (mesh grid, dots, brush cursor preview)
+    if (activeTool === 'MCL' && selectedObjectId && objects[selectedObjectId]) {
+      const obj = objects[selectedObjectId];
+      if (obj.smartMeshColor) {
+        const { densityX, densityY, points } = obj.smartMeshColor;
+        const localPivot = obj.pivots[0] || { localX: 0, localY: 0 };
+        ctx.save();
+        
+        // 1. Draw Mesh Grid lines
+        ctx.beginPath();
+        ctx.strokeStyle = 'rgba(16, 185, 129, 0.55)'; // Emerald line
+        ctx.lineWidth = 1.2;
+        
+        // Convert all points to world space
+        const worldPoints = points.map(pt => {
+          // Deform with smartWarp pins if present
+          const localWarped = deformWithSmartWarp({ x: pt.originalX, y: pt.originalY }, obj.smartWarp);
+          return localToWorld(localWarped, obj.transform, localPivot);
+        });
+
+        // Horizontal lines
+        for (let y = 0; y < densityY; y++) {
+          for (let x = 0; x < densityX - 1; x++) {
+            const p1 = worldPoints[y * densityX + x];
+            const p2 = worldPoints[y * densityX + (x + 1)];
+            if (p1 && p2) {
+              ctx.moveTo(p1.x, p1.y);
+              ctx.lineTo(p2.x, p2.y);
+            }
+          }
+        }
+        
+        // Vertical lines
+        for (let x = 0; x < densityX; x++) {
+          for (let y = 0; y < densityY - 1; y++) {
+            const p1 = worldPoints[y * densityX + x];
+            const p2 = worldPoints[(y + 1) * densityX + x];
+            if (p1 && p2) {
+              ctx.moveTo(p1.x, p1.y);
+              ctx.lineTo(p2.x, p2.y);
+            }
+          }
+        }
+        ctx.stroke();
+
+        // 2. Draw points
+        worldPoints.forEach(pt => {
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, 4, 0, Math.PI * 2);
+          ctx.fillStyle = '#10b981'; // Emerald
+          ctx.fill();
+          ctx.strokeStyle = '#FFFFFF';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        });
+
+        // 3. Draw Brush circle overlay cursor preview
+        if (currentCursorPos) {
+          ctx.beginPath();
+          ctx.arc(currentCursorPos.x, currentCursorPos.y, obj.smartMeshColor.brushSize || 40, 0, Math.PI * 2);
+          ctx.strokeStyle = 'rgba(16, 185, 129, 0.8)';
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([4, 4]);
+          ctx.stroke();
+          
+          // Draw center tiny crosshair
+          ctx.beginPath();
+          ctx.moveTo(currentCursorPos.x - 5, currentCursorPos.y);
+          ctx.lineTo(currentCursorPos.x + 5, currentCursorPos.y);
+          ctx.moveTo(currentCursorPos.x, currentCursorPos.y - 5);
+          ctx.lineTo(currentCursorPos.x, currentCursorPos.y + 5);
+          ctx.strokeStyle = 'rgba(16, 185, 129, 0.8)';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
+
+    // Render active Smart Pin Warp overlay (selectable/draggable puppet-like deformation pins)
+    if (activeTool === 'SWP' && selectedObjectId && objects[selectedObjectId]) {
+      const obj = objects[selectedObjectId];
+      if (obj.smartWarp) {
+        const { pins, pinSize, influenceRadius, showInfluenceArea } = obj.smartWarp;
+        const localPivot = obj.pivots[0] || { localX: 0, localY: 0 };
+        ctx.save();
+
+        pins.forEach((pin, idx) => {
+          const worldPin = localToWorld({ x: pin.currentX, y: pin.currentY }, obj.transform, localPivot);
+
+          // 1. Draw Influence Radius Overlay
+          if (showInfluenceArea !== false) {
+            ctx.beginPath();
+            ctx.arc(worldPin.x, worldPin.y, influenceRadius, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(14, 165, 233, 0.25)'; // Sky blue soft circle
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([6, 6]);
+            ctx.stroke();
+            ctx.fillStyle = 'rgba(14, 165, 233, 0.03)';
+            ctx.fill();
+          }
+
+          // 2. Draw Pin handle
+          ctx.beginPath();
+          ctx.arc(worldPin.x, worldPin.y, 8, 0, Math.PI * 2);
+          ctx.fillStyle = (dragMode === 'smartWarpPin' && draggedMeshPointIndex === idx) ? '#F59E0B' : '#0EA5E9'; // Amber if dragged, Sky blue otherwise
+          ctx.fill();
+          ctx.strokeStyle = '#FFFFFF';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+
+          // Inner pin center dot
+          ctx.beginPath();
+          ctx.arc(worldPin.x, worldPin.y, 3, 0, Math.PI * 2);
+          ctx.fillStyle = pin.locked ? '#000000' : '#FFFFFF'; // Black dot if locked
           ctx.fill();
         });
         ctx.restore();

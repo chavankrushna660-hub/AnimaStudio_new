@@ -54,6 +54,10 @@ interface LeftPanelProps {
   addDraft360View?: (drawingId: string, name: string, angle: number) => void;
   cancel360Wizard?: () => void;
   compile360Wizard?: (containerName: string) => void;
+  adaptiveSubdivisionEnabled: boolean;
+  setAdaptiveSubdivisionEnabled: (val: boolean) => void;
+  adaptiveSubdivisionPoints: number;
+  setAdaptiveSubdivisionPoints: (val: number) => void;
 }
 
 export default function LeftPanel({
@@ -83,6 +87,10 @@ export default function LeftPanel({
   addDraft360View,
   cancel360Wizard,
   compile360Wizard,
+  adaptiveSubdivisionEnabled,
+  setAdaptiveSubdivisionEnabled,
+  adaptiveSubdivisionPoints,
+  setAdaptiveSubdivisionPoints,
 }: LeftPanelProps) {
   const [expandedNodes, setExpandedNodes] = useState<{ [id: string]: boolean }>({});
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -410,6 +418,65 @@ export default function LeftPanel({
             onDrop={(e) => handleDrop(null, e)}
             className="flex-1 overflow-y-auto p-3 space-y-3 scrollbar-thin select-none"
           >
+            {/* 🎯 Adaptive Geometry Deformation Controller */}
+            <div className="border border-amber-500/30 bg-neutral-950/90 rounded-2xl p-3 space-y-3 shrink-0 shadow-lg" id="adaptive-subdivision-panel">
+              <div className="flex items-center gap-1.5 text-amber-400">
+                <Sparkles className="w-3.5 h-3.5 animate-pulse" />
+                <span className="text-[10px] font-black uppercase tracking-wider">Deformation Points Control</span>
+              </div>
+              <p className="text-[9px] text-neutral-400 leading-normal">
+                Control dynamic point generation when stretching edges of 3D models & 2D drawings.
+              </p>
+              
+              <div className="flex items-center gap-2">
+                <button
+                  id="btn-start-adaptive"
+                  onClick={() => setAdaptiveSubdivisionEnabled(true)}
+                  className={`flex-1 py-1.5 px-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all duration-200 cursor-pointer ${
+                    adaptiveSubdivisionEnabled
+                      ? 'bg-amber-500 text-neutral-950 shadow-md shadow-amber-500/10 scale-105'
+                      : 'bg-neutral-900 border border-neutral-800 text-neutral-400 hover:text-white'
+                  }`}
+                >
+                  ▶ START
+                </button>
+                <button
+                  id="btn-stop-adaptive"
+                  onClick={() => setAdaptiveSubdivisionEnabled(false)}
+                  className={`flex-1 py-1.5 px-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all duration-200 cursor-pointer ${
+                    !adaptiveSubdivisionEnabled
+                      ? 'bg-rose-600 text-white shadow-md shadow-rose-600/10 scale-105'
+                      : 'bg-neutral-900 border border-neutral-800 text-neutral-400 hover:text-rose-400'
+                  }`}
+                >
+                  ■ STOP
+                </button>
+              </div>
+
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] text-neutral-500 font-extrabold uppercase tracking-widest">Points Per Split</span>
+                  <span className="text-[10px] text-amber-400 font-mono font-black bg-neutral-900 px-1.5 py-0.5 rounded border border-neutral-800">{adaptiveSubdivisionPoints}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[9px] font-bold text-neutral-500 font-mono">1</span>
+                  <input
+                    id="slider-adaptive-points"
+                    type="range"
+                    min="1"
+                    max="10"
+                    step="1"
+                    value={adaptiveSubdivisionPoints}
+                    onChange={(e) => setAdaptiveSubdivisionPoints(parseInt(e.target.value))}
+                    className="flex-1 h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                  />
+                  <span className="text-[9px] font-bold text-neutral-500 font-mono">10</span>
+                </div>
+                <div className="text-[8px] text-neutral-500 leading-snug">
+                  Strictly 1 to 10 points can be generated dynamically during edge elongation.
+                </div>
+              </div>
+            </div>
             {/* 360° Studio Creation Center */}
             {activeTool === '360' && (
               <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-3 space-y-3.5 animate-fade-in shrink-0">
