@@ -43,6 +43,7 @@ import {
   extrude2DTo3D
 } from './utils/engine3D';
 import { parse3DModelFile } from './utils/custom3DLoader';
+import { BottomAdBar, AdTheaterModal, TopAdBar } from './components/AdSystem';
 
 export default function App() {
   // Topbar Collapse States
@@ -135,6 +136,7 @@ export default function App() {
   };
 
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
+  const [isAdTheaterOpen, setIsAdTheaterOpen] = useState(false);
 
   // Canvas Size States
   const [artboardW, setArtboardW] = useState<number>(1400);
@@ -1176,6 +1178,10 @@ export default function App() {
       vertices3D: result.vertices,
       faces3D: result.faces,
       bones3D: [],
+      originalPointsBackup: obj.points,
+      hollowEnabled: false,
+      innerSpace3D: 10,
+      depth3D: 40,
       pivots: [{ id: `pvt_${Date.now()}_3d`, name: 'CenterJoint', localX: 0, localY: 0, locked: false }],
     };
 
@@ -1419,6 +1425,9 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-screen bg-neutral-950 text-white font-sans text-sm antialiased overflow-hidden select-none">
+      {/* SYSTEM AD BANNER BAR TOP (Solid Black bar completely separate from tools/canvas) */}
+      <TopAdBar />
+
       {/* 1. TOP NAVIGATION BAR */}
       <header className="h-14 bg-neutral-900 border-b border-neutral-800 px-3 sm:px-4 flex items-center justify-between shrink-0 select-none z-10">
         <div className="flex items-center gap-2 sm:gap-3">
@@ -1794,6 +1803,9 @@ export default function App() {
         setShowCanvasSizePanel={setShowCanvasSizePanel}
       />
 
+      {/* 3.1 SYSTEM AD BANNER BAR (Solid Black bar separate from tools/canvas) */}
+      <BottomAdBar onOpenTheater={() => setIsAdTheaterOpen(true)} />
+
       {/* 4. NOTIFICATION & TOAST OVERLAYS */}
       {dbNotification && (
         <div 
@@ -1934,6 +1946,9 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* 6. AD THEATER INTERACTIVE MODAL OVERLAY */}
+      <AdTheaterModal isOpen={isAdTheaterOpen} onClose={() => setIsAdTheaterOpen(false)} />
     </div>
   );
 }

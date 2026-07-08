@@ -181,6 +181,12 @@ export interface VectorObject {
   rimLight?: ObjectRimLight;
   overlay?: ObjectOverlay;
   meshState?: MeshState;
+  hide3DGrid?: boolean;
+  hollowEnabled?: boolean;
+  innerSpace3D?: number;
+  depth3D?: number;
+  selectedFaceIndex?: number;
+  selectedEdgeIndex?: number;
   shape3DType?: 'car' | 'character' | 'chair' | 'sphere' | 'box' | 'sword';
   transform3D?: {
     x: number; // 3D Translation X

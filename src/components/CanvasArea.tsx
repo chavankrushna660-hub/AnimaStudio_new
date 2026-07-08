@@ -1550,6 +1550,7 @@ export default function CanvasArea({
                 fillColor: paintColor
               };
               updatedObj.faces3D = updatedFaces;
+              updatedObj.selectedFaceIndex = targetFaceIdx;
               return {
                 ...prev,
                 [clickedObj.id]: updatedObj
@@ -2060,103 +2061,11 @@ export default function CanvasArea({
               };
               updatedVtx[draggedMeshPointIndex] = P_curr;
 
-              // --- Adaptive Subdivision for 3D Models ---
-              // If an edge exceeds 40.0 local units, dynamically split it and insert new vertices!
-              const THRESHOLD_3D = 40.0;
-              const faces = prev[selectedObjectId].faces3D || [];
-              
-              // Find neighbors of dragged vertex
-              const neighborIndices = new Set<number>();
-              faces.forEach(face => {
-                const len = face.indices.length;
-                for (let i = 0; i < len; i++) {
-                  const cur = face.indices[i];
-                  const next = face.indices[(i + 1) % len];
-                  if (cur === draggedMeshPointIndex) {
-                    neighborIndices.add(next);
-                  } else if (next === draggedMeshPointIndex) {
-                    neighborIndices.add(cur);
-                  }
-                }
-              });
-
-              let nextFaces = [...faces];
-              let nextVtx = [...updatedVtx];
-
-              if (adaptiveSubdivisionEnabled) {
-                neighborIndices.forEach(neighIdx => {
-                  const P_neigh = nextVtx[neighIdx];
-                  if (P_neigh) {
-                    const dist = Math.sqrt(
-                      Math.pow(P_curr.x - P_neigh.x, 2) +
-                      Math.pow(P_curr.y - P_neigh.y, 2) +
-                      Math.pow(P_curr.z - P_neigh.z, 2)
-                    );
-                    if (dist > THRESHOLD_3D) {
-                      const numPoints = adaptiveSubdivisionPoints; // strictly 1 to 10
-                      const newVtxIndices: number[] = [];
-                      for (let k = 1; k <= numPoints; k++) {
-                        const t = k / (numPoints + 1);
-                        const newV = {
-                          x: Number((P_curr.x * (1 - t) + P_neigh.x * t).toFixed(2)),
-                          y: Number((P_curr.y * (1 - t) + P_neigh.y * t).toFixed(2)),
-                          z: Number((P_curr.z * (1 - t) + P_neigh.z * t).toFixed(2))
-                        };
-                        newVtxIndices.push(nextVtx.length);
-                        nextVtx.push(newV);
-                      }
-
-                      // Update all faces containing this split edge
-                      nextFaces = nextFaces.map(face => {
-                        const indices = face.indices;
-                        const len = indices.length;
-                        let containsBoth = false;
-                        let isForward = true;
-
-                        for (let i = 0; i < len; i++) {
-                          const cur = indices[i];
-                          const next = indices[(i + 1) % len];
-                          if (cur === draggedMeshPointIndex && next === neighIdx) {
-                            containsBoth = true;
-                            isForward = true;
-                            break;
-                          } else if (cur === neighIdx && next === draggedMeshPointIndex) {
-                            containsBoth = true;
-                            isForward = false;
-                            break;
-                          }
-                        }
-
-                        if (containsBoth) {
-                          const nextIndices: number[] = [];
-                          for (let i = 0; i < len; i++) {
-                            const cur = indices[i];
-                            const next = indices[(i + 1) % len];
-                            nextIndices.push(cur);
-                            if (cur === draggedMeshPointIndex && next === neighIdx) {
-                              nextIndices.push(...newVtxIndices);
-                            } else if (cur === neighIdx && next === draggedMeshPointIndex) {
-                              nextIndices.push(...[...newVtxIndices].reverse());
-                            }
-                          }
-                          return {
-                            ...face,
-                            indices: nextIndices
-                          };
-                        }
-                        return face;
-                      });
-                    }
-                  }
-                });
-              }
-
               return {
                 ...prev,
                 [selectedObjectId]: {
                   ...prev[selectedObjectId],
-                  vertices3D: nextVtx,
-                  faces3D: nextFaces
+                  vertices3D: updatedVtx
                 }
               };
             }
@@ -2181,7 +2090,7 @@ export default function CanvasArea({
             let nextDraggedIndex = draggedMeshPointIndex;
 
             if (adaptiveSubdivisionEnabled && N >= 2) {
-              const numPoints = adaptiveSubdivisionPoints; // strictly 1 to 10
+              const numPoints = Math.min(adaptiveSubdivisionPoints, 3); // strictly 1 to 3
               const leftIdx = (draggedMeshPointIndex - 1 + N) % N;
               const rightIdx = (draggedMeshPointIndex + 1) % N;
 
@@ -2754,6 +2663,112 @@ export default function CanvasArea({
     }
 
     if (dragMode === 'meshPoint' || dragMode === 'meshGridPoint' || dragMode === 'puppetPin' || dragMode === 'lassoControlPoint' || dragMode === 'smartWarpPin' || dragMode === 'paintColor') {
+      if (dragMode === 'meshPoint' && selectedObjectId && draggedMeshPointIndex !== null) {
+        const obj = objects[selectedObjectId];
+        if (obj && obj.type === '3d' && obj.vertices3D && adaptiveSubdivisionEnabled) {
+          const updatedVtx = [...obj.vertices3D];
+          const P_curr = updatedVtx[draggedMeshPointIndex];
+          if (P_curr) {
+            const THRESHOLD_3D = 40.0;
+            const faces = obj.faces3D || [];
+            
+            // Find neighbors of dragged vertex
+            const neighborIndices = new Set<number>();
+            faces.forEach(face => {
+              const len = face.indices.length;
+              for (let i = 0; i < len; i++) {
+                const cur = face.indices[i];
+                const next = face.indices[(i + 1) % len];
+                if (cur === draggedMeshPointIndex) {
+                  neighborIndices.add(next);
+                } else if (next === draggedMeshPointIndex) {
+                  neighborIndices.add(cur);
+                }
+              }
+            });
+
+            let nextFaces = [...faces];
+            let nextVtx = [...updatedVtx];
+            let changed = false;
+
+            neighborIndices.forEach(neighIdx => {
+              const P_neigh = nextVtx[neighIdx];
+              if (P_neigh) {
+                const dist = Math.sqrt(
+                  Math.pow(P_curr.x - P_neigh.x, 2) +
+                  Math.pow(P_curr.y - P_neigh.y, 2) +
+                  Math.pow(P_curr.z - P_neigh.z, 2)
+                );
+                if (dist > THRESHOLD_3D) {
+                  const numPoints = Math.min(adaptiveSubdivisionPoints, 2); // strictly max 2 points for 3D deformation as requested
+                  const newVtxIndices: number[] = [];
+                  for (let k = 1; k <= numPoints; k++) {
+                    const t = k / (numPoints + 1);
+                    const newV = {
+                      x: Number((P_curr.x * (1 - t) + P_neigh.x * t).toFixed(2)),
+                      y: Number((P_curr.y * (1 - t) + P_neigh.y * t).toFixed(2)),
+                      z: Number((P_curr.z * (1 - t) + P_neigh.z * t).toFixed(2))
+                    };
+                    newVtxIndices.push(nextVtx.length);
+                    nextVtx.push(newV);
+                  }
+
+                  // Update all faces containing this split edge
+                  nextFaces = nextFaces.map(face => {
+                    const indices = face.indices;
+                    const len = indices.length;
+                    let containsBoth = false;
+
+                    for (let i = 0; i < len; i++) {
+                      const cur = indices[i];
+                      const next = indices[(i + 1) % len];
+                      if (cur === draggedMeshPointIndex && next === neighIdx) {
+                        containsBoth = true;
+                        break;
+                      } else if (cur === neighIdx && next === draggedMeshPointIndex) {
+                        containsBoth = true;
+                        break;
+                      }
+                    }
+
+                    if (containsBoth) {
+                      const nextIndices: number[] = [];
+                      for (let i = 0; i < len; i++) {
+                        const cur = indices[i];
+                        const next = indices[(i + 1) % len];
+                        nextIndices.push(cur);
+                        if (cur === draggedMeshPointIndex && next === neighIdx) {
+                          nextIndices.push(...newVtxIndices);
+                        } else if (cur === neighIdx && next === draggedMeshPointIndex) {
+                          nextIndices.push(...[...newVtxIndices].reverse());
+                        }
+                      }
+                      return {
+                        ...face,
+                        indices: nextIndices
+                      };
+                    }
+                    return face;
+                  });
+                  changed = true;
+                }
+              }
+            });
+
+            if (changed) {
+              setObjects(prev => ({
+                ...prev,
+                [selectedObjectId]: {
+                  ...prev[selectedObjectId],
+                  vertices3D: nextVtx,
+                  faces3D: nextFaces
+                }
+              }));
+            }
+          }
+        }
+      }
+
       setDragMode('none');
       setDraggedMeshPointIndex(null);
       setIsPlayingState(false);
@@ -3146,7 +3161,25 @@ export default function CanvasArea({
 
         facesWithDepth.sort((a, b) => b.avgZ - a.avgZ);
 
-        facesWithDepth.forEach(({ face }) => {
+        // Build unique edges list for rendering and highlight tracking
+        const edgesList: [number, number][] = [];
+        const edgeSet = new Set<string>();
+        drawObj.faces3D.forEach(face => {
+          const len = face.indices.length;
+          for (let i = 0; i < len; i++) {
+            const v0 = face.indices[i];
+            const v1 = face.indices[(i + 1) % len];
+            const min = Math.min(v0, v1);
+            const max = Math.max(v0, v1);
+            const key = `${min}_${max}`;
+            if (!edgeSet.has(key)) {
+              edgeSet.add(key);
+              edgesList.push([min, max]);
+            }
+          }
+        });
+
+        facesWithDepth.forEach(({ face, index }) => {
           if (face.indices.length < 3) return;
           
           ctx.beginPath();
@@ -3174,8 +3207,36 @@ export default function CanvasArea({
 
           ctx.lineWidth = drawObj.strokeWidth || 1.2;
           ctx.strokeStyle = drawObj.strokeColor || 'rgba(0,0,0,0.2)';
-          ctx.stroke();
+          if (!drawObj.hide3DGrid) {
+            ctx.stroke();
+          }
+
+          // Golden face highlight overlay
+          if (drawObj.selectedFaceIndex === index) {
+            ctx.lineWidth = 3.0;
+            ctx.strokeStyle = '#F59E0B'; // Bright Amber/Gold
+            ctx.stroke();
+          }
         });
+
+        // Golden edge highlight overlay
+        if (drawObj.selectedEdgeIndex !== undefined && drawObj.selectedEdgeIndex >= 0 && drawObj.selectedEdgeIndex < edgesList.length) {
+          const [v0Idx, v1Idx] = edgesList[drawObj.selectedEdgeIndex];
+          const p0 = projected[v0Idx];
+          const p1 = projected[v1Idx];
+          if (p0 && p1) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.moveTo(p0.x, p0.y);
+            ctx.lineTo(p1.x, p1.y);
+            ctx.lineWidth = 4.0;
+            ctx.strokeStyle = '#F59E0B'; // Glowing Gold
+            ctx.shadowColor = '#F59E0B';
+            ctx.shadowBlur = 4;
+            ctx.stroke();
+            ctx.restore();
+          }
+        }
 
         // Draw lasso fills for 3D model!
         if (drawObj.lassoFills && drawObj.lassoFills.length > 0) {

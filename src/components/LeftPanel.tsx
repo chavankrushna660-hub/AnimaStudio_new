@@ -464,16 +464,16 @@ export default function LeftPanel({
                     id="slider-adaptive-points"
                     type="range"
                     min="1"
-                    max="10"
+                    max="3"
                     step="1"
                     value={adaptiveSubdivisionPoints}
                     onChange={(e) => setAdaptiveSubdivisionPoints(parseInt(e.target.value))}
                     className="flex-1 h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
                   />
-                  <span className="text-[9px] font-bold text-neutral-500 font-mono">10</span>
+                  <span className="text-[9px] font-bold text-neutral-500 font-mono">3</span>
                 </div>
                 <div className="text-[8px] text-neutral-500 leading-snug">
-                  Strictly 1 to 10 points can be generated dynamically during edge elongation.
+                  Strictly 1 to 3 points can be generated dynamically during edge elongation.
                 </div>
               </div>
             </div>

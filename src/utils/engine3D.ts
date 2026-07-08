@@ -759,7 +759,9 @@ export function extrude2DTo3D(
   points: Point[],
   fillColor: string,
   strokeColor: string,
-  depth: number = 40
+  depth: number = 40,
+  hollowEnabled: boolean = false,
+  innerSpace: number = 10
 ): { vertices: Vertex3D[]; faces: Face3D[]; center: { x: number; y: number } } {
   const vertices: Vertex3D[] = [];
   const faces: Face3D[] = [];
@@ -867,7 +869,11 @@ export function extrude2DTo3D(
     }
   }
 
-  const v2D = [...uniquePts, ...innerPts];
+  // Sort candidate inner points so we keep the most central, high-quality ones
+  innerPts.sort((a, b) => distanceToPolygon(b, uniquePts) - distanceToPolygon(a, uniquePts));
+  const limitedInnerPts = innerPts.slice(0, 3); // Strictly limit to a maximum of 3 internal points
+
+  const v2D = [...uniquePts, ...limitedInnerPts];
   const M = v2D.length;
 
   // Triangulate
@@ -887,6 +893,102 @@ export function extrude2DTo3D(
 
   // If triangulation failed or is too sparse, fall back to simple extrusion
   if (triangles.length === 0) {
+    if (hollowEnabled) {
+      // Outer Front ring
+      for (let i = 0; i < N; i++) {
+        vertices.push({
+          x: cleanPts[i].x - cx,
+          y: cleanPts[i].y - cy,
+          z: -depth / 2
+        });
+      }
+      // Outer Back ring
+      for (let i = 0; i < N; i++) {
+        vertices.push({
+          x: cleanPts[i].x - cx,
+          y: cleanPts[i].y - cy,
+          z: depth / 2
+        });
+      }
+
+      const innerZ_front = -depth / 2 + Math.min(innerSpace, depth * 0.4);
+      const innerZ_back = depth / 2 - Math.min(innerSpace, depth * 0.4);
+
+      // Inner Front ring (at index 2*N to 3*N - 1)
+      for (let i = 0; i < N; i++) {
+        const dx = cleanPts[i].x - cx;
+        const dy = cleanPts[i].y - cy;
+        const dist = Math.hypot(dx, dy) || 1;
+        const offsetAmount = Math.min(innerSpace, dist * 0.8);
+        const shrinkFactor = (dist - offsetAmount) / dist;
+        vertices.push({
+          x: (cleanPts[i].x - cx) * shrinkFactor,
+          y: (cleanPts[i].y - cy) * shrinkFactor,
+          z: innerZ_front
+        });
+      }
+
+      // Inner Back ring (at index 3*N to 4*N - 1)
+      for (let i = 0; i < N; i++) {
+        const dx = cleanPts[i].x - cx;
+        const dy = cleanPts[i].y - cy;
+        const dist = Math.hypot(dx, dy) || 1;
+        const offsetAmount = Math.min(innerSpace, dist * 0.8);
+        const shrinkFactor = (dist - offsetAmount) / dist;
+        vertices.push({
+          x: (cleanPts[i].x - cx) * shrinkFactor,
+          y: (cleanPts[i].y - cy) * shrinkFactor,
+          z: innerZ_back
+        });
+      }
+
+      // Outer Front face
+      faces.push({
+        indices: Array.from({ length: N }, (_, i) => i),
+        fillColor: baseCol,
+        baseColor: baseCol
+      });
+      // Outer Back face
+      faces.push({
+        indices: Array.from({ length: N }, (_, i) => (N - 1 - i) + N),
+        fillColor: baseCol,
+        baseColor: baseCol
+      });
+      // Outer Side faces
+      for (let i = 0; i < N; i++) {
+        const next = (i + 1) % N;
+        faces.push({
+          indices: [i, next, next + N, i + N],
+          fillColor: sideCol,
+          baseColor: sideCol
+        });
+      }
+
+      // Inner Front face (flipped)
+      faces.push({
+        indices: Array.from({ length: N }, (_, i) => (N - 1 - i) + 2 * N),
+        fillColor: baseCol,
+        baseColor: baseCol
+      });
+      // Inner Back face (flipped)
+      faces.push({
+        indices: Array.from({ length: N }, (_, i) => i + 3 * N),
+        fillColor: baseCol,
+        baseColor: baseCol
+      });
+      // Inner Side faces
+      for (let i = 0; i < N; i++) {
+        const next = (i + 1) % N;
+        faces.push({
+          indices: [i + 2 * N, i + 3 * N, next + 3 * N, next + 2 * N],
+          fillColor: sideCol,
+          baseColor: sideCol
+        });
+      }
+
+      return { vertices, faces, center: { x: cx, y: cy } };
+    }
+
     // Front ring
     for (let i = 0; i < N; i++) {
       vertices.push({
@@ -925,6 +1027,136 @@ export function extrude2DTo3D(
         baseColor: sideCol
       });
     }
+    return { vertices, faces, center: { x: cx, y: cy } };
+  }
+
+  // Triangulation Hollow Path
+  if (hollowEnabled) {
+    // Front outer vertices
+    for (let i = 0; i < M; i++) {
+      vertices.push({
+        x: v2D[i].x - cx,
+        y: v2D[i].y - cy,
+        z: -depth / 2
+      });
+    }
+    // Back outer vertices
+    for (let i = 0; i < M; i++) {
+      vertices.push({
+        x: v2D[i].x - cx,
+        y: v2D[i].y - cy,
+        z: depth / 2
+      });
+    }
+
+    // Shrink vertices towards centroid for the inner shell
+    const innerZ_front = -depth / 2 + Math.min(innerSpace, depth * 0.4);
+    const innerZ_back = depth / 2 - Math.min(innerSpace, depth * 0.4);
+
+    // Front inner vertices (at index 2*M to 3*M - 1)
+    for (let i = 0; i < M; i++) {
+      const dx = v2D[i].x - cx;
+      const dy = v2D[i].y - cy;
+      const dist = Math.hypot(dx, dy) || 1;
+      const offsetAmount = Math.min(innerSpace, dist * 0.8);
+      const shrinkFactor = (dist - offsetAmount) / dist;
+      vertices.push({
+        x: (v2D[i].x - cx) * shrinkFactor,
+        y: (v2D[i].y - cy) * shrinkFactor,
+        z: innerZ_front
+      });
+    }
+
+    // Back inner vertices (at index 3*M to 4*M - 1)
+    for (let i = 0; i < M; i++) {
+      const dx = v2D[i].x - cx;
+      const dy = v2D[i].y - cy;
+      const dist = Math.hypot(dx, dy) || 1;
+      const offsetAmount = Math.min(innerSpace, dist * 0.8);
+      const shrinkFactor = (dist - offsetAmount) / dist;
+      vertices.push({
+        x: (v2D[i].x - cx) * shrinkFactor,
+        y: (v2D[i].y - cy) * shrinkFactor,
+        z: innerZ_back
+      });
+    }
+
+    // Front OUTER faces
+    triangles.forEach(tri => {
+      const { a, b, c } = tri;
+      const pa = v2D[a];
+      const pb = v2D[b];
+      const pc = v2D[c];
+      const cross = (pb.x - pa.x) * (pc.y - pa.y) - (pb.y - pa.y) * (pc.x - pa.x);
+      if (cross < 0) {
+        faces.push({ indices: [a, b, c], fillColor: baseCol, baseColor: baseCol });
+      } else {
+        faces.push({ indices: [a, c, b], fillColor: baseCol, baseColor: baseCol });
+      }
+    });
+
+    // Back OUTER faces
+    triangles.forEach(tri => {
+      const { a, b, c } = tri;
+      const pa = v2D[a];
+      const pb = v2D[b];
+      const pc = v2D[c];
+      const cross = (pb.x - pa.x) * (pc.y - pa.y) - (pb.y - pa.y) * (pc.x - pa.x);
+      if (cross > 0) {
+        faces.push({ indices: [a + M, b + M, c + M], fillColor: baseCol, baseColor: baseCol });
+      } else {
+        faces.push({ indices: [a + M, c + M, b + M], fillColor: baseCol, baseColor: baseCol });
+      }
+    });
+
+    // Side OUTER faces
+    for (let i = 0; i < M_bound; i++) {
+      const next = (i + 1) % M_bound;
+      faces.push({
+        indices: [i, next, next + M, i + M],
+        fillColor: sideCol,
+        baseColor: sideCol
+      });
+    }
+
+    // Front INNER faces (winding order reversed)
+    triangles.forEach(tri => {
+      const { a, b, c } = tri;
+      const pa = v2D[a];
+      const pb = v2D[b];
+      const pc = v2D[c];
+      const cross = (pb.x - pa.x) * (pc.y - pa.y) - (pb.y - pa.y) * (pc.x - pa.x);
+      if (cross < 0) {
+        faces.push({ indices: [a + 2*M, c + 2*M, b + 2*M], fillColor: baseCol, baseColor: baseCol });
+      } else {
+        faces.push({ indices: [a + 2*M, b + 2*M, c + 2*M], fillColor: baseCol, baseColor: baseCol });
+      }
+    });
+
+    // Back INNER faces (winding order reversed)
+    triangles.forEach(tri => {
+      const { a, b, c } = tri;
+      const pa = v2D[a];
+      const pb = v2D[b];
+      const pc = v2D[c];
+      const cross = (pb.x - pa.x) * (pc.y - pa.y) - (pb.y - pa.y) * (pc.x - pa.x);
+      if (cross > 0) {
+        faces.push({ indices: [a + 3*M, c + 3*M, b + 3*M], fillColor: baseCol, baseColor: baseCol });
+      } else {
+        faces.push({ indices: [a + 3*M, b + 3*M, c + 3*M], fillColor: baseCol, baseColor: baseCol });
+      }
+    });
+
+    // Side INNER faces (winding order reversed)
+    for (let i = 0; i < M_bound; i++) {
+      const next = (i + 1) % M_bound;
+      faces.push({
+        indices: [i + 2*M, i + 3*M, next + 3*M, next + 2*M],
+        fillColor: sideCol,
+        baseColor: sideCol
+      });
+    }
+
     return { vertices, faces, center: { x: cx, y: cy } };
   }
 
@@ -1001,4 +1233,137 @@ export function extrude2DTo3D(
   }
 
   return { vertices, faces, center: { x: cx, y: cy } };
+}
+
+export function deleteFace3D(faces: Face3D[], index: number): Face3D[] {
+  return faces.filter((_, idx) => idx !== index);
+}
+
+export function extrudeFace3D(
+  vertices: Vertex3D[],
+  faces: Face3D[],
+  faceIndex: number,
+  distance: number = 30
+): { vertices: Vertex3D[]; faces: Face3D[] } {
+  if (faceIndex < 0 || faceIndex >= faces.length) return { vertices, faces };
+  
+  const targetFace = faces[faceIndex];
+  const indices = targetFace.indices;
+  if (indices.length < 3) return { vertices, faces };
+  
+  // 1. Calculate face normal direction
+  const v0 = vertices[indices[0]];
+  const v1 = vertices[indices[1]];
+  const v2 = vertices[indices[2]];
+  
+  const ax = v1.x - v0.x;
+  const ay = v1.y - v0.y;
+  const az = v1.z - v0.z;
+  
+  const bx = v2.x - v0.x;
+  const by = v2.y - v0.y;
+  const bz = v2.z - v0.z;
+  
+  let nx = ay * bz - az * by;
+  let ny = az * bx - ax * bz;
+  let nz = ax * by - ay * bx;
+  
+  const len = Math.hypot(nx, ny, nz) || 1;
+  nx /= len;
+  ny /= len;
+  nz /= len;
+  
+  // 2. Duplicate indices and translate along normal
+  const newVtxIndices: number[] = [];
+  const nextVertices = [...vertices];
+  
+  indices.forEach(idx => {
+    const v = vertices[idx];
+    newVtxIndices.push(nextVertices.length);
+    nextVertices.push({
+      x: Number((v.x + nx * distance).toFixed(2)),
+      y: Number((v.y + ny * distance).toFixed(2)),
+      z: Number((v.z + nz * distance).toFixed(2))
+    });
+  });
+  
+  const nextFaces = [...faces];
+  const n = indices.length;
+  
+  // Update the original face to the new "cap" face indices
+  nextFaces[faceIndex] = {
+    ...targetFace,
+    indices: newVtxIndices
+  };
+  
+  // Add side bridge faces
+  for (let i = 0; i < n; i++) {
+    const currOrig = indices[i];
+    const nextOrig = indices[(i + 1) % n];
+    
+    const currNew = newVtxIndices[i];
+    const nextNew = newVtxIndices[(i + 1) % n];
+    
+    nextFaces.push({
+      indices: [currOrig, nextOrig, nextNew, currNew],
+      fillColor: targetFace.fillColor,
+      baseColor: targetFace.baseColor
+    });
+  }
+  
+  return { vertices: nextVertices, faces: nextFaces };
+}
+
+export function extrudeEdge3D(
+  vertices: Vertex3D[],
+  faces: Face3D[],
+  v0Idx: number,
+  v1Idx: number,
+  distance: number = 30,
+  fillColor: string = '#F59E0B'
+): { vertices: Vertex3D[]; faces: Face3D[] } {
+  if (v0Idx < 0 || v0Idx >= vertices.length || v1Idx < 0 || v1Idx >= vertices.length) {
+    return { vertices, faces };
+  }
+  
+  const v0 = vertices[v0Idx];
+  const v1 = vertices[v1Idx];
+  
+  // Calculate push direction: away from local origin
+  const mx = (v0.x + v1.x) / 2;
+  const my = (v0.y + v1.y) / 2;
+  const mz = (v0.z + v1.z) / 2;
+  
+  let dx = mx;
+  let dy = my;
+  let dz = mz;
+  
+  const len = Math.hypot(dx, dy, dz) || 1;
+  dx /= len;
+  dy /= len;
+  dz /= len;
+  
+  const nextVertices = [...vertices];
+  const v0NewIdx = nextVertices.length;
+  nextVertices.push({
+    x: Number((v0.x + dx * distance).toFixed(2)),
+    y: Number((v0.y + dy * distance).toFixed(2)),
+    z: Number((v0.z + dz * distance).toFixed(2))
+  });
+  
+  const v1NewIdx = nextVertices.length;
+  nextVertices.push({
+    x: Number((v1.x + dx * distance).toFixed(2)),
+    y: Number((v1.y + dy * distance).toFixed(2)),
+    z: Number((v1.z + dz * distance).toFixed(2))
+  });
+  
+  const nextFaces = [...faces];
+  nextFaces.push({
+    indices: [v0Idx, v1Idx, v1NewIdx, v0NewIdx],
+    fillColor: fillColor,
+    baseColor: fillColor
+  });
+  
+  return { vertices: nextVertices, faces: nextFaces };
 }

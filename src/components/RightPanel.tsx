@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { VectorObject, Bone, Layer, Pivot, Transform, Point, Frame, RealismSettings, SmartMeshColorState, SmartWarpState, ColorMeshPoint, ColorMeshCell } from '../types';
 import { distance, localToWorld, worldToLocal, calculateBoundingBox, isPointInPolygon, findClosestView360 } from '../utils/math';
+import { extrude2DTo3D, deleteFace3D, extrudeFace3D, extrudeEdge3D } from '../utils/engine3D';
 
 interface RightPanelProps {
   selectedObject: VectorObject | null;
@@ -122,6 +123,8 @@ export default function RightPanel({
 }: RightPanelProps) {
   // Batch/Smart Controls check state
   const [smartCheckedIds, setSmartCheckedIds] = useState<{ [id: string]: boolean }>({});
+  const [faceExtrudeDist, setFaceExtrudeDist] = useState<number>(30);
+  const [edgeExtrudeDist, setEdgeExtrudeDist] = useState<number>(30);
 
   const isLassoActive = !!selectedObject?.lassoDeformState?.active;
   const currentTransformObj = selectedObject 
@@ -2714,6 +2717,394 @@ export default function RightPanel({
                       <p className="text-[10px] text-neutral-400 leading-normal font-medium">
                         Manipulate coordinates directly across both 2D and 3D viewport metrics. Changes resolve to the projection layer in real-time.
                       </p>
+
+                      {/* HIDE 3D GRID LINES TOGGLE */}
+                      <div className="flex items-center justify-between bg-neutral-950/40 p-2.5 rounded-xl border border-neutral-800/50">
+                        <span className="text-[10px] text-neutral-300 font-bold uppercase tracking-wider">
+                          Hide 3D Grid Lines
+                        </span>
+                        <button
+                          id="toggle-hide-3d-grid"
+                          onClick={() => {
+                            updateObject(selectedObject.id, {
+                              hide3DGrid: !selectedObject.hide3DGrid
+                            });
+                          }}
+                          className={`w-9 h-5 rounded-full p-0.5 transition-colors duration-200 focus:outline-none ${
+                            selectedObject.hide3DGrid ? 'bg-amber-500' : 'bg-neutral-800'
+                          }`}
+                        >
+                          <div
+                            className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform duration-200 ${
+                              selectedObject.hide3DGrid ? 'translate-x-4' : 'translate-x-0'
+                            }`}
+                          />
+                        </button>
+                      </div>
+
+                      {/* 🎲 3D ADVANCED MODELING STUDIO */}
+                      <div className="space-y-3 bg-neutral-900/60 p-3.5 rounded-xl border border-neutral-800/80">
+                        <div className="flex items-center justify-between border-b border-neutral-800/60 pb-2">
+                          <span className="text-[10px] text-amber-400 font-extrabold uppercase tracking-wider flex items-center gap-1">
+                            <Sparkles className="w-3.5 h-3.5" />
+                            3D Modeling Studio
+                          </span>
+                          <span className="text-[8px] bg-amber-500/10 text-amber-400 font-bold px-1.5 py-0.5 rounded uppercase">
+                            Mesh Sandbox
+                          </span>
+                        </div>
+
+                        {/* HOLLOW (ANDAR SPACE) & DEPTH CONTROLS */}
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] text-neutral-300 font-bold uppercase">Make Model Hollow</span>
+                            <button
+                              id="toggle-3d-hollow"
+                              onClick={() => {
+                                const newHollow = !selectedObject.hollowEnabled;
+                                const currentDepth = selectedObject.depth3D || 40;
+                                const currentInner = selectedObject.innerSpace3D !== undefined ? selectedObject.innerSpace3D : 10;
+                                const pts = selectedObject.originalPointsBackup || selectedObject.points;
+                                if (pts) {
+                                  const res = extrude2DTo3D(pts, selectedObject.fillColor, selectedObject.strokeColor, currentDepth, newHollow, currentInner);
+                                  updateObject(selectedObject.id, {
+                                    vertices3D: res.vertices,
+                                    faces3D: res.faces,
+                                    hollowEnabled: newHollow,
+                                    innerSpace3D: currentInner
+                                  });
+                                }
+                              }}
+                              className={`w-9 h-5 rounded-full p-0.5 transition-colors duration-200 focus:outline-none ${
+                                selectedObject.hollowEnabled ? 'bg-amber-500' : 'bg-neutral-800'
+                              }`}
+                            >
+                              <div
+                                className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform duration-200 ${
+                                  selectedObject.hollowEnabled ? 'translate-x-4' : 'translate-x-0'
+                                }`}
+                              />
+                            </button>
+                          </div>
+
+                          {/* Inner Wall Space Slider */}
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between text-[10px] text-neutral-400">
+                              <span>Wall Thickness (Inner Space)</span>
+                              <span className="text-amber-400 font-bold font-mono">
+                                {selectedObject.innerSpace3D !== undefined ? selectedObject.innerSpace3D : 10}px
+                              </span>
+                            </div>
+                            <input
+                              type="range"
+                              min="2"
+                              max="60"
+                              step="1"
+                              disabled={!selectedObject.hollowEnabled}
+                              value={selectedObject.innerSpace3D !== undefined ? selectedObject.innerSpace3D : 10}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value);
+                                const currentDepth = selectedObject.depth3D || 40;
+                                const pts = selectedObject.originalPointsBackup || selectedObject.points;
+                                if (pts) {
+                                  const res = extrude2DTo3D(pts, selectedObject.fillColor, selectedObject.strokeColor, currentDepth, !!selectedObject.hollowEnabled, val);
+                                  updateObject(selectedObject.id, {
+                                    vertices3D: res.vertices,
+                                    faces3D: res.faces,
+                                    innerSpace3D: val
+                                  });
+                                }
+                              }}
+                              className="w-full accent-amber-500 h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer disabled:opacity-30"
+                            />
+                          </div>
+
+                          {/* Extrusion Depth Slider */}
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between text-[10px] text-neutral-400">
+                              <span>3D Extrusion Depth</span>
+                              <span className="text-amber-400 font-bold font-mono">
+                                {selectedObject.depth3D !== undefined ? selectedObject.depth3D : 40}px
+                              </span>
+                            </div>
+                            <input
+                              type="range"
+                              min="5"
+                              max="300"
+                              step="5"
+                              value={selectedObject.depth3D !== undefined ? selectedObject.depth3D : 40}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value);
+                                const pts = selectedObject.originalPointsBackup || selectedObject.points;
+                                const currentInner = selectedObject.innerSpace3D !== undefined ? selectedObject.innerSpace3D : 10;
+                                if (pts) {
+                                  const res = extrude2DTo3D(pts, selectedObject.fillColor, selectedObject.strokeColor, val, !!selectedObject.hollowEnabled, currentInner);
+                                  updateObject(selectedObject.id, {
+                                    vertices3D: res.vertices,
+                                    faces3D: res.faces,
+                                    depth3D: val
+                                  });
+                                }
+                              }}
+                              className="w-full accent-amber-500 h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer"
+                            />
+                          </div>
+                        </div>
+
+                        {/* FACE WORKBENCH */}
+                        <div className="space-y-3.5 border-t border-neutral-800/60 pt-3">
+                          <span className="text-[10px] text-amber-500 font-extrabold uppercase tracking-wider block">
+                            Face Workbench
+                          </span>
+
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[10px] text-neutral-400 shrink-0">Select Face</span>
+                              <select
+                                id="select-face-dropdown"
+                                value={selectedObject.selectedFaceIndex !== undefined ? selectedObject.selectedFaceIndex : -1}
+                                onChange={(e) => {
+                                  const val = parseInt(e.target.value);
+                                  updateObject(selectedObject.id, {
+                                    selectedFaceIndex: val === -1 ? undefined : val
+                                  });
+                                }}
+                                className="w-full bg-neutral-950 text-xs text-neutral-300 border border-neutral-800 rounded px-2 py-1 focus:outline-none focus:border-amber-500"
+                              >
+                                <option value="-1">None (Highlight Disabled)</option>
+                                {(selectedObject.faces3D || []).map((face, idx) => (
+                                  <option key={idx} value={idx}>
+                                    Face #{idx} ({face.indices.length}-sided, Color: {face.fillColor})
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {selectedObject.selectedFaceIndex !== undefined && (
+                              <div className="bg-neutral-950/60 p-2.5 rounded-lg border border-amber-500/20 space-y-3 animate-fade-in">
+                                <div className="text-[10px] text-amber-400 font-bold flex items-center justify-between">
+                                  <span>Active Face: Face #{selectedObject.selectedFaceIndex}</span>
+                                  <span className="text-[9px] text-neutral-500">Live Gold Outline</span>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-2">
+                                  {/* Delete Face */}
+                                  <button
+                                    id="delete-face-btn"
+                                    onClick={() => {
+                                      const currentFaceIndex = selectedObject.selectedFaceIndex;
+                                      if (currentFaceIndex === undefined || !selectedObject.faces3D) return;
+                                      const updatedFaces = deleteFace3D(selectedObject.faces3D, currentFaceIndex);
+                                      updateObject(selectedObject.id, {
+                                        faces3D: updatedFaces,
+                                        selectedFaceIndex: undefined
+                                      });
+                                    }}
+                                    className="flex items-center justify-center gap-1 bg-red-950/40 hover:bg-red-900/60 text-red-400 border border-red-900/50 rounded-lg py-1.5 text-[10px] font-bold uppercase transition"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                    Delete Face
+                                  </button>
+
+                                  {/* Extrude Face */}
+                                  <button
+                                    id="extrude-face-btn"
+                                    onClick={() => {
+                                      const currentFaceIndex = selectedObject.selectedFaceIndex;
+                                      if (currentFaceIndex === undefined || !selectedObject.vertices3D || !selectedObject.faces3D) return;
+                                      const res = extrudeFace3D(selectedObject.vertices3D, selectedObject.faces3D, currentFaceIndex, faceExtrudeDist);
+                                      updateObject(selectedObject.id, {
+                                        vertices3D: res.vertices,
+                                        faces3D: res.faces,
+                                        selectedFaceIndex: undefined
+                                      });
+                                    }}
+                                    className="flex items-center justify-center gap-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-lg py-1.5 text-[10px] font-bold uppercase transition"
+                                  >
+                                    <Plus className="w-3.5 h-3.5" />
+                                    Extrude Face
+                                  </button>
+                                </div>
+
+                                {/* Face Extrude Slider */}
+                                <div className="space-y-1">
+                                  <div className="flex items-center justify-between text-[9px] text-neutral-400">
+                                    <span>Face Extrude Distance</span>
+                                    <span className="text-amber-400 font-bold font-mono">{faceExtrudeDist}px</span>
+                                  </div>
+                                  <input
+                                    type="range"
+                                    min="5"
+                                    max="150"
+                                    step="5"
+                                    value={faceExtrudeDist}
+                                    onChange={(e) => setFaceExtrudeDist(parseInt(e.target.value))}
+                                    className="w-full accent-amber-500 h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer"
+                                  />
+                                </div>
+
+                                {/* Face Color Palette */}
+                                <div className="space-y-1.5">
+                                  <span className="text-[9px] text-neutral-400 block">Paint Selected Face</span>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {['#EF4444', '#F59E0B', '#10B981', '#3B82F6', '#8B5CF6', '#EC4899', '#F3F4F6', '#1F2937', '#B45309', '#111827'].map((color) => (
+                                      <button
+                                        key={color}
+                                        onClick={() => {
+                                          const currentFaceIndex = selectedObject.selectedFaceIndex;
+                                          if (currentFaceIndex === undefined || !selectedObject.faces3D) return;
+                                          const nextFaces = [...selectedObject.faces3D];
+                                          nextFaces[currentFaceIndex] = {
+                                            ...nextFaces[currentFaceIndex],
+                                            baseColor: color,
+                                            fillColor: color
+                                          };
+                                          updateObject(selectedObject.id, {
+                                            faces3D: nextFaces
+                                          });
+                                        }}
+                                        className="w-5 h-5 rounded border border-neutral-700/50 hover:scale-110 active:scale-95 transition"
+                                        style={{ backgroundColor: color }}
+                                        title={color}
+                                      />
+                                    ))}
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* EDGE WORKBENCH */}
+                        <div className="space-y-3.5 border-t border-neutral-800/60 pt-3">
+                          <span className="text-[10px] text-amber-500 font-extrabold uppercase tracking-wider block">
+                            Edge Workbench
+                          </span>
+
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[10px] text-neutral-400 shrink-0">Select Edge</span>
+                              <select
+                                id="select-edge-dropdown"
+                                value={selectedObject.selectedEdgeIndex !== undefined ? selectedObject.selectedEdgeIndex : -1}
+                                onChange={(e) => {
+                                  const val = parseInt(e.target.value);
+                                  updateObject(selectedObject.id, {
+                                    selectedEdgeIndex: val === -1 ? undefined : val
+                                  });
+                                }}
+                                className="w-full bg-neutral-950 text-xs text-neutral-300 border border-neutral-800 rounded px-2 py-1 focus:outline-none focus:border-amber-500"
+                              >
+                                <option value="-1">None (Highlight Disabled)</option>
+                                {(() => {
+                                  const edgesList: [number, number][] = [];
+                                  if (selectedObject.faces3D) {
+                                    const edgeSet = new Set<string>();
+                                    selectedObject.faces3D.forEach(face => {
+                                      const len = face.indices.length;
+                                      for (let i = 0; i < len; i++) {
+                                        const v0 = face.indices[i];
+                                        const v1 = face.indices[(i + 1) % len];
+                                        const min = Math.min(v0, v1);
+                                        const max = Math.max(v0, v1);
+                                        const key = `${min}_${max}`;
+                                        if (!edgeSet.has(key)) {
+                                          edgeSet.add(key);
+                                          edgesList.push([min, max]);
+                                        }
+                                      }
+                                    });
+                                  }
+                                  return edgesList.map((edge, idx) => (
+                                    <option key={idx} value={idx}>
+                                      Edge #{idx} (Vertices {edge[0]}-{edge[1]})
+                                    </option>
+                                  ));
+                                })()}
+                              </select>
+                            </div>
+
+                            {selectedObject.selectedEdgeIndex !== undefined && (
+                              <div className="bg-neutral-950/60 p-2.5 rounded-lg border border-amber-500/20 space-y-3 animate-fade-in">
+                                {(() => {
+                                  const edgesList: [number, number][] = [];
+                                  if (selectedObject.faces3D) {
+                                    const edgeSet = new Set<string>();
+                                    selectedObject.faces3D.forEach(face => {
+                                      const len = face.indices.length;
+                                      for (let i = 0; i < len; i++) {
+                                        const v0 = face.indices[i];
+                                        const v1 = face.indices[(i + 1) % len];
+                                        const min = Math.min(v0, v1);
+                                        const max = Math.max(v0, v1);
+                                        const key = `${min}_${max}`;
+                                        if (!edgeSet.has(key)) {
+                                          edgeSet.add(key);
+                                          edgesList.push([min, max]);
+                                        }
+                                      }
+                                    });
+                                  }
+                                  const currentEdge = edgesList[selectedObject.selectedEdgeIndex];
+                                  if (!currentEdge) return null;
+
+                                  return (
+                                    <>
+                                      <div className="text-[10px] text-amber-400 font-bold flex items-center justify-between">
+                                        <span>Active Edge: Edge #{selectedObject.selectedEdgeIndex} (Verts {currentEdge[0]}-{currentEdge[1]})</span>
+                                        <span className="text-[9px] text-neutral-500">Live Gold Line</span>
+                                      </div>
+
+                                      <button
+                                        id="extrude-edge-btn"
+                                        onClick={() => {
+                                          const currentEdgeIndex = selectedObject.selectedEdgeIndex;
+                                          if (currentEdgeIndex === undefined || !selectedObject.vertices3D || !selectedObject.faces3D) return;
+                                          const [v0Idx, v1Idx] = currentEdge;
+                                          const res = extrudeEdge3D(
+                                            selectedObject.vertices3D,
+                                            selectedObject.faces3D,
+                                            v0Idx,
+                                            v1Idx,
+                                            edgeExtrudeDist,
+                                            selectedObject.fillColor || '#F59E0B'
+                                          );
+                                          updateObject(selectedObject.id, {
+                                            vertices3D: res.vertices,
+                                            faces3D: res.faces,
+                                            selectedEdgeIndex: undefined
+                                          });
+                                        }}
+                                        className="w-full flex items-center justify-center gap-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-lg py-1.5 text-[10px] font-bold uppercase transition"
+                                      >
+                                        <Plus className="w-3.5 h-3.5" />
+                                        Extrude Selected Edge
+                                      </button>
+
+                                      {/* Edge Extrude Slider */}
+                                      <div className="space-y-1">
+                                        <div className="flex items-center justify-between text-[9px] text-neutral-400">
+                                          <span>Edge Extrude Distance</span>
+                                          <span className="text-amber-400 font-bold font-mono">{edgeExtrudeDist}px</span>
+                                        </div>
+                                        <input
+                                          type="range"
+                                          min="5"
+                                          max="150"
+                                          step="5"
+                                          value={edgeExtrudeDist}
+                                          onChange={(e) => setEdgeExtrudeDist(parseInt(e.target.value))}
+                                          className="w-full accent-amber-500 h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer"
+                                        />
+                                      </div>
+                                    </>
+                                  );
+                                })()}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
 
                       {/* 3D TRANSLATION (X, Y, Z) */}
                       <div className="space-y-2.5">
