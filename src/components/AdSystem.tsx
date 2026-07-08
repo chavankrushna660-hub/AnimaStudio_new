@@ -114,14 +114,11 @@ export function PopunderAdTrigger() {
  * 2. NATIVE BANNER AD (container-7cc5b295556eed97425e67e9310ebbe5)
  * Dynamically renders the native ad widget container.
  * Falling back to a beautiful dark simulated ad if blocked or fails to load.
- * Refreshes automatically every 60 seconds.
+ * Refreshes automatically every 60 seconds by force-remounting the inner component.
  */
 export function NativeBannerAd() {
-  const [isBlocked, setIsBlocked] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
-  const containerRef = useRef<HTMLDivElement>(null);
 
-  // Set up 1-minute auto-refresh cycle
   useEffect(() => {
     const interval = setInterval(() => {
       setRefreshKey(prev => prev + 1);
@@ -129,14 +126,17 @@ export function NativeBannerAd() {
     return () => clearInterval(interval);
   }, []);
 
+  return <NativeBannerAdInner key={refreshKey} />;
+}
+
+function NativeBannerAdInner() {
+  const [isBlocked, setIsBlocked] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     const containerId = AD_KEYS.nativeBanner.id;
     const scriptSrc = AD_KEYS.nativeBanner.src;
 
-    // Reset container and states on refresh
-    if (containerRef.current) {
-      containerRef.current.innerHTML = '';
-    }
     setIsBlocked(false);
 
     // Timer to detect if the script failed to render anything within 3 seconds (likely adblocker)
@@ -160,17 +160,24 @@ export function NativeBannerAd() {
       setIsBlocked(true);
     }
 
-    return () => clearTimeout(timer);
-  }, [refreshKey]);
+    return () => {
+      clearTimeout(timer);
+      if (containerRef.current) {
+        containerRef.current.innerHTML = '';
+      }
+    };
+  }, []);
 
   return (
-    <div className="w-full min-h-[90px] flex flex-col items-center justify-center bg-black rounded-lg overflow-hidden border border-neutral-900">
+    <div className="w-full min-h-[70px] flex flex-col items-center justify-center bg-black rounded-lg overflow-hidden border border-neutral-900">
       {/* Real Adsterra Target Container */}
-      <div 
-        ref={containerRef} 
-        id={AD_KEYS.nativeBanner.id} 
-        className="w-full text-center"
-      />
+      {!isBlocked && (
+        <div 
+          ref={containerRef} 
+          id={AD_KEYS.nativeBanner.id} 
+          className="w-full text-center"
+        />
+      )}
 
       {/* High Polish Dark-themed Fallback / Simulator if blocked or loading */}
       {isBlocked && (
@@ -207,18 +214,11 @@ export function NativeBannerAd() {
  * 3. STANDARD BANNER AD (468x60 or general size options)
  * Implements the iframe-based ad format of Adsterra dynamically.
  * Falls back to high-fidelity simulated ads when blocked or loading.
- * Refreshes automatically every 60 seconds.
+ * Refreshes automatically every 60 seconds by force-remounting the inner component.
  */
 export function StandardBannerAd({ format = '468x60' }: { format: '468x60' | '160x300' }) {
-  const [isBlocked, setIsBlocked] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const is468 = format === '468x60';
-  const width = is468 ? AD_KEYS.banner468x60.width : AD_KEYS.banner160x300.width;
-  const height = is468 ? AD_KEYS.banner468x60.height : AD_KEYS.banner160x300.height;
-  const key = is468 ? AD_KEYS.banner468x60.key : AD_KEYS.banner160x300.key;
 
-  // Set up 1-minute auto-refresh cycle
   useEffect(() => {
     const interval = setInterval(() => {
       setRefreshKey(prev => prev + 1);
@@ -226,16 +226,27 @@ export function StandardBannerAd({ format = '468x60' }: { format: '468x60' | '16
     return () => clearInterval(interval);
   }, []);
 
+  return <StandardBannerAdInner key={refreshKey} format={format} />;
+}
+
+interface StandardBannerAdInnerProps {
+  format: '468x60' | '160x300';
+  key?: React.Key;
+}
+
+function StandardBannerAdInner({ format }: StandardBannerAdInnerProps) {
+  const [isBlocked, setIsBlocked] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const is468 = format === '468x60';
+  const width = is468 ? AD_KEYS.banner468x60.width : AD_KEYS.banner160x300.width;
+  const height = is468 ? AD_KEYS.banner468x60.height : AD_KEYS.banner160x300.height;
+  const adKey = is468 ? AD_KEYS.banner468x60.key : AD_KEYS.banner160x300.key;
+
   useEffect(() => {
-    const scriptId = `adsterra-banner-${key}-${refreshKey}`;
-    
-    // Clear container and state for fresh request
-    if (containerRef.current) {
-      containerRef.current.innerHTML = '';
-    }
+    const scriptId = `adsterra-banner-${adKey}-${Math.random()}`;
     setIsBlocked(false);
 
-    // Timer to detect adblocker
+    // Timer to detect adblocker (if container is empty after 2.5 seconds)
     const timer = setTimeout(() => {
       if (containerRef.current && containerRef.current.innerHTML === '') {
         setIsBlocked(true);
@@ -245,7 +256,7 @@ export function StandardBannerAd({ format = '468x60' }: { format: '468x60' | '16
     try {
       // Adsterra parameters setup
       (window as any).atOptions = {
-        key: key,
+        key: adKey,
         format: 'iframe',
         height: height,
         width: width,
@@ -254,8 +265,7 @@ export function StandardBannerAd({ format = '468x60' }: { format: '468x60' | '16
 
       const script = document.createElement('script');
       script.id = scriptId;
-      // Adsterra standard script link for standard iframe configuration
-      script.src = `//www.highperformanceformat.com/${key}/invoke.js`;
+      script.src = `//www.highperformanceformat.com/${adKey}/invoke.js`;
       script.async = true;
 
       if (containerRef.current) {
@@ -269,27 +279,32 @@ export function StandardBannerAd({ format = '468x60' }: { format: '468x60' | '16
       clearTimeout(timer);
       const script = document.getElementById(scriptId);
       if (script) script.remove();
+      if (containerRef.current) {
+        containerRef.current.innerHTML = '';
+      }
     };
-  }, [key, height, width, refreshKey]);
+  }, [adKey, height, width]);
 
   return (
     <div 
-      className="flex items-center justify-center bg-black border border-neutral-900 rounded-lg overflow-hidden transition-all duration-300"
+      className="flex items-center justify-center bg-black border border-neutral-900 rounded-lg overflow-hidden transition-all duration-300 relative"
       style={{ width: `${width}px`, height: `${height}px` }}
     >
       {/* Real Script Target */}
-      <div ref={containerRef} className="w-full h-full flex items-center justify-center text-center empty:hidden" />
+      {!isBlocked && (
+        <div ref={containerRef} className="w-full h-full flex items-center justify-center text-center" />
+      )}
 
       {/* Simulated Developer Sponsor Fallback (Guaranteed to render & perfectly non-obtrusive) */}
-      {(isBlocked || true) && (
-        <div className="w-full h-full flex flex-col items-center justify-center p-2.5 text-center relative select-none bg-neutral-950">
+      {isBlocked && (
+        <div className="w-full h-full flex flex-col items-center justify-center p-2.5 text-center relative select-none bg-neutral-950 animate-fade-in">
           {/* Ad Label */}
           <span className="absolute top-1 right-1 text-[8px] bg-neutral-800 text-neutral-500 px-1 rounded uppercase tracking-widest font-black">
             Sponsor
           </span>
 
           {is468 ? (
-            <div className="flex items-center gap-3 w-full h-full justify-between px-3 text-left">
+            <div className="flex items-center gap-3 w-full h-full justify-between px-3 text-left animate-fade-in">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded bg-gradient-to-tr from-amber-500 to-yellow-400 flex items-center justify-center shadow">
                   <Tv className="w-4 h-4 text-neutral-950" />
@@ -307,7 +322,7 @@ export function StandardBannerAd({ format = '468x60' }: { format: '468x60' | '16
               </button>
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-between h-full w-full py-1">
+            <div className="flex flex-col items-center justify-between h-full w-full py-1 animate-fade-in">
               <div className="w-10 h-10 rounded-full bg-neutral-900 border border-neutral-800 flex items-center justify-center mt-1">
                 <Gift className="w-5 h-5 text-amber-500 animate-bounce" />
               </div>
@@ -340,7 +355,7 @@ export function BottomAdBar({ onOpenTheater }: { onOpenTheater: () => void }) {
   return (
     <div 
       id="system-bottom-ad-bar"
-      className="h-[80px] bg-black border-t border-neutral-900 px-4 flex items-center justify-between gap-4 select-none shrink-0 overflow-hidden relative z-10"
+      className="h-[90px] bg-black border-t border-neutral-900 px-4 flex items-center justify-between gap-4 select-none shrink-0 overflow-hidden relative z-10"
     >
       <PopunderAdTrigger />
 
@@ -361,9 +376,9 @@ export function BottomAdBar({ onOpenTheater }: { onOpenTheater: () => void }) {
         </button>
       </div>
 
-      {/* Adsterra 468x60 Banner center-aligned */}
-      <div className="mx-auto flex items-center justify-center shrink-0">
-        <StandardBannerAd format="468x60" />
+      {/* Different Ad Type: Adsterra Native Banner center-aligned (Highly responsive, auto-refreshes every 1m) */}
+      <div className="flex-1 max-w-[500px] flex items-center justify-center shrink-0">
+        <NativeBannerAd />
       </div>
 
       {/* Right side ad slot: Compact Adsterra Native Ad or Simulator + Theater Button */}
