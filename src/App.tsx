@@ -94,11 +94,11 @@ export default function App() {
 
   // Realism Maker Settings
   const [realismSettings, setRealismSettings] = useState<RealismSettings>({
-    autoTaperEnabled: true,
+    autoTaperEnabled: false,
     minThickness: 1.5,
     maxThickness: 8.0,
     thinningFactor: 0.3,
-    autoShadingEnabled: true,
+    autoShadingEnabled: false,
     shadingLightAngle: 45,
     shadingHighlightOpacity: 0.2,
     shadingShadowOpacity: 0.3,
