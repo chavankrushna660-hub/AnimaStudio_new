@@ -102,11 +102,12 @@ function useExternalScript(src: string, id?: string) {
 
 /**
  * 1. POPUNDER AD TRIGGER
- * Automatically triggers the Adsterra popunder script in the background
+ * Deactivated to protect canvas and tool buttons from being hijacked by background click tracking.
+ * This guarantees that only direct clicks on the ad banners at the top or bottom will trigger any redirects.
  */
 export function PopunderAdTrigger() {
-  useExternalScript(AD_KEYS.popunder.src, 'popunder');
-  return null; // Invisible trigger component
+  // Deactivated globally to prevent automatic background redirects on tools and features.
+  return null; 
 }
 
 /**
