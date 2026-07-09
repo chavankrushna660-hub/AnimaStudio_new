@@ -147,10 +147,17 @@ export default function App() {
   const [adaptiveSubdivisionEnabled, setAdaptiveSubdivisionEnabled] = useState<boolean>(true);
   const [adaptiveSubdivisionPoints, setAdaptiveSubdivisionPoints] = useState<number>(3);
 
+  // Window size state for mobile responsive zoom-out container
+  const [windowSize, setWindowSize] = useState({
+    width: typeof window !== 'undefined' ? window.innerWidth : 1280,
+    height: typeof window !== 'undefined' ? window.innerHeight : 800
+  });
+
   // Responsive default setups & exclusive sidebar triggers
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const handleResize = () => {
+        setWindowSize({ width: window.innerWidth, height: window.innerHeight });
         if (window.innerWidth < 1024) {
           setLeftOpen(false);
           setRightOpen(false);
@@ -163,6 +170,10 @@ export default function App() {
       };
       // Run once on load
       handleResize();
+      window.addEventListener('resize', handleResize);
+      return () => {
+        window.removeEventListener('resize', handleResize);
+      };
     }
   }, []);
 
@@ -1423,80 +1434,99 @@ export default function App() {
     reader.readAsDataURL(file);
   };
 
+  const isMobile = windowSize.width < 1200;
+  const targetWidth = 1280;
+  const scale = isMobile ? windowSize.width / targetWidth : 1;
+
+  if (typeof window !== 'undefined') {
+    (window as any).__appScale = scale;
+  }
+
+  const containerStyle: React.CSSProperties = isMobile ? {
+    width: `${targetWidth}px`,
+    height: `${windowSize.height / scale}px`,
+    transform: `scale(${scale})`,
+    transformOrigin: 'top left',
+    position: 'absolute',
+    left: 0,
+    top: 0,
+  } : {};
+
   return (
-    <div className="flex flex-col h-screen bg-neutral-950 text-white font-sans text-sm antialiased overflow-hidden select-none">
-      {/* SYSTEM AD BANNER BAR TOP (Solid Black bar completely separate from tools/canvas) */}
-      <TopAdBar />
+    <div className="w-screen h-screen overflow-hidden bg-neutral-950 relative">
+      <div 
+        style={containerStyle}
+        className="flex flex-col h-full w-full bg-neutral-950 text-white font-sans text-sm antialiased overflow-hidden select-none"
+      >
+        {/* SYSTEM AD BANNER BAR TOP (Solid Black bar completely separate from tools/canvas) */}
+        <TopAdBar />
 
       {/* 1. TOP NAVIGATION BAR */}
-      <header className="h-14 bg-neutral-900 border-b border-neutral-800 px-3 sm:px-4 flex items-center justify-between shrink-0 select-none z-10">
-        <div className="flex items-center gap-2 sm:gap-3">
+      <header className="h-14 bg-neutral-900 border-b border-neutral-800 px-2 sm:px-4 flex items-center justify-between shrink-0 select-none z-10 overflow-x-auto scrollbar-none flex-nowrap">
+        <div className="flex items-center gap-1.5 sm:gap-3 shrink-0 flex-nowrap">
           <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-amber-500 to-yellow-300 flex items-center justify-center shadow-lg shadow-amber-500/20 shrink-0">
-            <span className="font-extrabold text-neutral-950 text-base">A</span>
+            <span className="font-extrabold text-neutral-950 text-xs sm:text-base">A</span>
           </div>
-          <div className="hidden sm:block">
-            <h1 className="font-black text-xs sm:text-sm tracking-wider uppercase bg-clip-text text-transparent bg-gradient-to-r from-white to-neutral-400">
-              AnimaStudio
+          <div className="block shrink-0">
+            <h1 className="font-black text-[9px] sm:text-xs tracking-wider uppercase bg-clip-text text-transparent bg-gradient-to-r from-white to-neutral-400 leading-none">
+              ANIMASTUDIO
             </h1>
-            <p className="text-[9px] sm:text-[10px] text-neutral-500 font-extrabold leading-none uppercase tracking-widest mt-0.5">
-              Vector & Rigging
+            <p className="text-[7.5px] sm:text-[9px] text-neutral-500 font-extrabold leading-none uppercase tracking-widest mt-0.5">
+              VECTOR & RIGGING
             </p>
           </div>
         </div>
 
         {/* Center Actions: Undo, Redo, Add Sample Character */}
-        <div className="flex items-center gap-1.5 sm:gap-2">
+        <div className="flex items-center gap-1 sm:gap-2 shrink-0 flex-nowrap mx-2">
           <button
             onClick={handleUndo}
             disabled={undoStack.length === 0}
-            className={`p-1.5 sm:p-2 rounded-xl bg-neutral-800 border border-neutral-700 hover:bg-neutral-700 hover:text-white transition-all ${
+            className={`p-1.5 rounded-xl bg-neutral-800 border border-neutral-700 hover:bg-neutral-700 hover:text-white transition-all shrink-0 ${
               undoStack.length === 0 ? 'opacity-30 cursor-not-allowed' : ''
             }`}
             title="Undo Last Action"
           >
-            <Undo2 className="w-3.5 sm:w-4 h-3.5 sm:h-4" />
+            <Undo2 className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={handleRedo}
             disabled={redoStack.length === 0}
-            className={`p-1.5 sm:p-2 rounded-xl bg-neutral-800 border border-neutral-700 hover:bg-neutral-700 hover:text-white transition-all ${
+            className={`p-1.5 rounded-xl bg-neutral-800 border border-neutral-700 hover:bg-neutral-700 hover:text-white transition-all shrink-0 ${
               redoStack.length === 0 ? 'opacity-30 cursor-not-allowed' : ''
             }`}
             title="Redo"
           >
-            <Redo2 className="w-3.5 sm:w-4 h-3.5 sm:h-4" />
+            <Redo2 className="w-3.5 h-3.5" />
           </button>
 
           <div className="w-[1px] h-6 bg-neutral-800 mx-0.5 sm:mx-1 shrink-0"></div>
 
           <button
             onClick={addSampleCharacter}
-            className="flex items-center gap-1.5 px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 text-neutral-950 font-black text-[10px] sm:text-xs hover:shadow-lg hover:shadow-amber-500/10 active:scale-95 transition-all cursor-pointer"
+            className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 text-neutral-950 font-black text-[9px] sm:text-xs hover:shadow-lg hover:shadow-amber-500/10 active:scale-95 transition-all cursor-pointer shrink-0"
             title="Rig Sample Character"
           >
-            <Sparkles className="w-3.5 h-3.5 fill-current shrink-0" />
-            <span className="hidden md:inline">RIG SAMPLE CHARACTER</span>
-            <span className="inline md:hidden">SAMPLE</span>
+            <Sparkles className="w-3 h-3 fill-current shrink-0" />
+            <span className="inline">RIG SAMPLE CHARACTER</span>
           </button>
 
           <button
             onClick={clearCanvas}
-            className="flex items-center gap-1.5 px-2 sm:px-3.5 py-1.5 sm:py-2 rounded-xl bg-rose-500/10 hover:bg-rose-600 border border-rose-500/20 hover:border-rose-500 text-rose-400 hover:text-white font-black text-[10px] sm:text-xs active:scale-95 transition-all cursor-pointer"
+            className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-600 border border-rose-500/20 hover:border-rose-500 text-rose-400 hover:text-white font-black text-[9px] sm:text-xs active:scale-95 transition-all cursor-pointer shrink-0"
             title="Clear entire canvas, drawings, bones and timelines"
           >
-            <Trash2 className="w-3.5 h-3.5 shrink-0" />
-            <span className="hidden md:inline">CLEAR CANVAS</span>
-            <span className="inline md:hidden">CLEAR</span>
+            <Trash2 className="w-3 h-3 shrink-0" />
+            <span className="inline">CLEAR CANVAS</span>
           </button>
         </div>
 
         {/* Right Actions: Import, Export, Record, Database */}
-        <div className="flex items-center gap-1 sm:gap-2">
+        <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 flex-nowrap">
           {/* Upload PNG */}
-          <label className="flex items-center gap-1.5 px-2 sm:px-3.5 py-1.5 sm:py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 font-black text-[10px] sm:text-xs cursor-pointer text-neutral-300 hover:text-white transition-all">
-            <Upload className="w-3.5 h-3.5 shrink-0" />
-            <span className="hidden lg:inline">UPLOAD PNG</span>
-            <span className="inline lg:hidden">UPLOAD</span>
+          <label className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 font-black text-[9px] sm:text-xs cursor-pointer text-neutral-300 hover:text-white transition-all shrink-0">
+            <Upload className="w-3 h-3 shrink-0" />
+            <span className="inline">UPLOAD</span>
             <input
               type="file"
               accept="image/png"
@@ -1505,11 +1535,11 @@ export default function App() {
             />
           </label>
 
-          <div className="w-[1px] h-6 bg-neutral-800 mx-0.5 sm:mx-1 shrink-0"></div>
+          <div className="w-[1px] h-6 bg-neutral-800 mx-0.5 shrink-0"></div>
 
           {/* Import / Export JSON */}
-          <label className="p-1.5 sm:p-2 rounded-xl bg-neutral-850 hover:bg-neutral-800 text-neutral-400 hover:text-white border border-neutral-800 cursor-pointer transition-colors shrink-0" title="Import JSON">
-            <Plus className="w-3.5 sm:w-4 h-3.5 sm:h-4" />
+          <label className="p-1.5 rounded-xl bg-neutral-850 hover:bg-neutral-800 text-neutral-400 hover:text-white border border-neutral-800 cursor-pointer transition-colors shrink-0" title="Import JSON">
+            <Plus className="w-3.5 h-3.5" />
             <input
               type="file"
               accept=".json"
@@ -1519,55 +1549,55 @@ export default function App() {
           </label>
           <button
             onClick={handleExportJSON}
-            className="p-1.5 sm:p-2 rounded-xl bg-neutral-850 hover:bg-neutral-800 text-neutral-400 hover:text-white border border-neutral-800 transition-colors shrink-0"
+            className="p-1.5 rounded-xl bg-neutral-850 hover:bg-neutral-800 text-neutral-400 hover:text-white border border-neutral-800 transition-colors shrink-0"
             title="Export JSON"
           >
-            <Download className="w-3.5 sm:w-4 h-3.5 sm:h-4" />
+            <Download className="w-3.5 h-3.5" />
           </button>
 
-          <div className="w-[1px] h-6 bg-neutral-800 mx-0.5 sm:mx-1 shrink-0"></div>
+          <div className="w-[1px] h-6 bg-neutral-800 mx-0.5 shrink-0"></div>
 
           {/* Record Live MP4 Export */}
           {isRecording ? (
             <button
               onClick={stopRecording}
-              className="flex items-center gap-1.5 px-2 sm:px-3.5 py-1.5 sm:py-2 rounded-xl bg-rose-500 text-white font-black text-[10px] sm:text-xs animate-pulse hover:bg-rose-400 transition-colors cursor-pointer shrink-0"
+              className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-rose-500 text-white font-black text-[9px] sm:text-xs animate-pulse hover:bg-rose-400 transition-colors cursor-pointer shrink-0"
             >
-              <Video className="w-3.5 h-3.5 shrink-0" />
-              <span className="hidden sm:inline">STOP</span>
+              <Video className="w-3 h-3 shrink-0" />
+              <span className="inline">STOP</span>
             </button>
           ) : (
             <button
               onClick={startRecording}
-              className="flex items-center gap-1.5 px-2 sm:px-3.5 py-1.5 sm:py-2 rounded-xl bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 border border-amber-500/20 font-black text-[10px] sm:text-xs transition-colors cursor-pointer shrink-0"
+              className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 border border-amber-500/20 font-black text-[9px] sm:text-xs transition-colors cursor-pointer shrink-0"
               title="Record MP4 Animation"
             >
-              <Video className="w-3.5 h-3.5 shrink-0" />
-              <span className="hidden sm:inline">REC</span>
+              <Video className="w-3 h-3 shrink-0" />
+              <span className="inline">REC</span>
             </button>
           )}
 
-          <div className="w-[1px] h-6 bg-neutral-800 mx-0.5 sm:mx-1 shrink-0"></div>
+          <div className="w-[1px] h-6 bg-neutral-800 mx-0.5 shrink-0"></div>
 
           {/* User Icon Auth Trigger */}
-          <div className="relative" id="user-profile-menu-container">
+          <div className="relative shrink-0" id="user-profile-menu-container">
             {currentUser ? (
               <button
                 onClick={() => setIsProfileDropdownOpen(!isProfileDropdownOpen)}
-                className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 hover:text-emerald-300 font-bold text-xs transition-colors cursor-pointer select-none shrink-0"
+                className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 hover:text-emerald-300 font-bold text-[9px] sm:text-xs transition-colors cursor-pointer select-none shrink-0"
                 title={`Logged in as ${currentUser}. Click to open database manager.`}
               >
-                <UserCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                <span className="max-w-[80px] truncate hidden sm:block">{currentUser.split('@')[0]}</span>
+                <UserCheck className="w-3 h-3 text-emerald-400 shrink-0" />
+                <span className="max-w-[60px] truncate inline">{currentUser.split('@')[0]}</span>
               </button>
             ) : (
               <button
                 onClick={() => setIsAuthModalOpen(true)}
-                className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-750 border border-neutral-700 text-neutral-300 hover:text-white font-bold text-xs transition-colors cursor-pointer select-none shrink-0"
+                className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-750 border border-neutral-700 text-neutral-300 hover:text-white font-bold text-[9px] sm:text-xs transition-colors cursor-pointer select-none shrink-0"
                 title="Guest Mode. Click here to login to save animations."
               >
-                <User className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
-                <span className="hidden sm:block">LOGIN</span>
+                <User className="w-3 h-3 text-neutral-400 shrink-0" />
+                <span className="inline">LOGIN</span>
               </button>
             )}
 
@@ -1949,6 +1979,7 @@ export default function App() {
 
       {/* 6. AD THEATER INTERACTIVE MODAL OVERLAY */}
       <AdTheaterModal isOpen={isAdTheaterOpen} onClose={() => setIsAdTheaterOpen(false)} />
+      </div>
     </div>
   );
 }

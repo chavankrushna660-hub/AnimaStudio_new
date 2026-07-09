@@ -800,6 +800,36 @@ export default function LeftPanel({
                       Select any drawing or custom shape and click <b>💫 Convert to 3D</b> in the properties panel to convert it into a real 3D solid model.
                     </p>
                   </div>
+
+                  {/* 📂 Custom Rigged 3D File Loader */}
+                  <div className="bg-neutral-950/80 border border-neutral-850 rounded-xl p-3 space-y-2.5">
+                    <span className="text-[9px] text-amber-400 font-black uppercase tracking-wider block">
+                      📂 Import Custom 3D Mesh
+                    </span>
+                    <p className="text-[9px] text-neutral-400 leading-normal">
+                      Import raw custom 3D meshes (zipped or individual .obj, .fbx, .gltf, .json formats) with bones & textures.
+                    </p>
+                    <label className="w-full flex items-center justify-center gap-1.5 py-1.5 border border-dashed border-neutral-800 hover:border-amber-500/40 bg-neutral-900/60 hover:bg-neutral-900 rounded-lg cursor-pointer transition-all text-[9.5px] text-neutral-400 hover:text-white font-black uppercase">
+                      <span>Upload 3D Mesh file</span>
+                      <input 
+                        type="file"
+                        accept=".obj,.fbx,.gltf,.json,.zip"
+                        className="hidden"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          try {
+                            const mesh = await parse3DModelFile(file);
+                            if (addCustom3DModel) {
+                              addCustom3DModel(mesh, file.name);
+                            }
+                          } catch (err) {
+                            alert("Failed to parse the uploaded 3D mesh format.");
+                          }
+                        }}
+                      />
+                    </label>
+                  </div>
                 </div>
               )}
             </div>

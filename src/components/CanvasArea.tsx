@@ -969,8 +969,9 @@ export default function CanvasArea({
     const canvas = frontCanvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
-    const screenX = e.clientX - rect.left;
-    const screenY = e.clientY - rect.top;
+    const appScale = (window as any).__appScale || 1;
+    const screenX = (e.clientX - rect.left) / appScale;
+    const screenY = (e.clientY - rect.top) / appScale;
     return {
       x: (screenX - zoomOffset.x) / zoomScale,
       y: (screenY - zoomOffset.y) / zoomScale,
@@ -1869,8 +1870,9 @@ export default function CanvasArea({
           const canvas = frontCanvasRef.current;
           if (canvas) {
             const rect = canvas.getBoundingClientRect();
-            const midCanvasX = midX - rect.left;
-            const midCanvasY = midY - rect.top;
+            const appScale = (window as any).__appScale || 1;
+            const midCanvasX = (midX - rect.left) / appScale;
+            const midCanvasY = (midY - rect.top) / appScale;
             
             const worldX = (midCanvasX - lastPinchOffsetRef.current.x) / lastPinchScaleRef.current;
             const worldY = (midCanvasY - lastPinchOffsetRef.current.y) / lastPinchScaleRef.current;
@@ -1883,8 +1885,9 @@ export default function CanvasArea({
           }
         }
       } else if (dragMode === 'pan' && pointerIds.length === 1) {
-        const dx = e.clientX - dragStartScreenRef.current.x;
-        const dy = e.clientY - dragStartScreenRef.current.y;
+        const appScale = (window as any).__appScale || 1;
+        const dx = (e.clientX - dragStartScreenRef.current.x) / appScale;
+        const dy = (e.clientY - dragStartScreenRef.current.y) / appScale;
         
         setZoomOffset({
           x: dragStartOffsetRef.current.x + dx,
@@ -2912,8 +2915,9 @@ export default function CanvasArea({
     const canvas = frontCanvasRef.current;
     if (canvas) {
       const rect = canvas.getBoundingClientRect();
-      const cursorX = e.clientX - rect.left;
-      const cursorY = e.clientY - rect.top;
+      const appScale = (window as any).__appScale || 1;
+      const cursorX = (e.clientX - rect.left) / appScale;
+      const cursorY = (e.clientY - rect.top) / appScale;
       
       const worldX = (cursorX - zoomOffset.x) / currentScale;
       const worldY = (cursorY - zoomOffset.y) / currentScale;

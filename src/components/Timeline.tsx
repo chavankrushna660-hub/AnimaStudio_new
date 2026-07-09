@@ -164,7 +164,7 @@ export default function Timeline({
             title="Copy current frame nodes"
           >
             <Copy className="w-3.5 h-3.5" />
-            <span className="text-[11px] font-bold hidden sm:inline">Copy</span>
+            <span className="text-[9px] sm:text-[11px] font-bold inline">Copy</span>
           </button>
           <button
             type="button"
@@ -176,7 +176,7 @@ export default function Timeline({
             title="Paste copied nodes into current frame"
           >
             <FileText className="w-3.5 h-3.5" />
-            <span className="text-[11px] font-bold hidden sm:inline">Paste</span>
+            <span className="text-[9px] sm:text-[11px] font-bold inline">Paste</span>
           </button>
           <button
             type="button"
@@ -185,7 +185,7 @@ export default function Timeline({
             title="Duplicate current frame"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span className="text-[11px] font-bold hidden sm:inline">Duplicate</span>
+            <span className="text-[9px] sm:text-[11px] font-bold inline">Duplicate</span>
           </button>
           {frames.length > 1 && (
             <button
@@ -195,7 +195,7 @@ export default function Timeline({
               title="Delete current frame"
             >
               <Trash2 className="w-3.5 h-3.5" />
-              <span className="text-[11px] font-bold hidden sm:inline">Delete</span>
+              <span className="text-[9px] sm:text-[11px] font-bold inline">Delete</span>
             </button>
           )}
         </div>
@@ -212,8 +212,7 @@ export default function Timeline({
               }`}
             >
               {onionSkinEnabled ? <Eye className="w-3.5 h-3.5 shrink-0" /> : <EyeOff className="w-3.5 h-3.5 shrink-0" />}
-              <span className="hidden sm:inline">ONION SKIN</span>
-              <span className="inline sm:hidden text-[10px]">ONION</span>
+              <span className="text-[9px] sm:text-xs">ONION SKIN</span>
             </button>
             <button
               onClick={() => setOnionConfigOpen(!onionConfigOpen)}
@@ -237,8 +236,7 @@ export default function Timeline({
               title="Show or hide rigged bones skeleton overlay on canvas"
             >
               <GitPullRequest className="w-3.5 h-3.5 shrink-0" />
-              <span className="hidden sm:inline">{showBones ? 'HIDE BONES' : 'SHOW BONES'}</span>
-              <span className="inline sm:hidden text-[10px]">{showBones ? 'HIDE BNS' : 'SHOW BNS'}</span>
+              <span className="text-[9px] sm:text-xs">{showBones ? 'HIDE BONES' : 'SHOW BONES'}</span>
             </button>
           </div>
 
@@ -253,8 +251,7 @@ export default function Timeline({
               title="Set custom canvas width and height"
             >
               <Maximize className="w-3.5 h-3.5 shrink-0 text-amber-400" />
-              <span className="hidden sm:inline">CANVAS SIZE</span>
-              <span className="inline sm:hidden text-[10px]">SIZE</span>
+              <span className="text-[9px] sm:text-xs">CANVAS SIZE</span>
             </button>
           </div>
 
