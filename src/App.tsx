@@ -355,7 +355,7 @@ export default function App() {
   
   // Theme states
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
-    return (localStorage.getItem('animastudio_theme') as 'dark' | 'light') || 'dark';
+    return (localStorage.getItem('animastudio_theme') as 'dark' | 'light') || 'light';
   });
 
   const toggleTheme = () => {
@@ -721,13 +721,42 @@ export default function App() {
       setFrames(prev => {
         if (!prev[currentFrameIndex]) return prev;
         const currentFrameObjectsInState = prev[currentFrameIndex].objects || {};
-        if (Object.keys(currentFrameObjectsInState).length !== Object.keys(objects).length || 
+        
+        const currentKeys = Object.keys(objects);
+        const savedKeys = Object.keys(currentFrameObjectsInState);
+        
+        const addedKeys = currentKeys.filter(k => !savedKeys.includes(k));
+        const deletedKeys = savedKeys.filter(k => !currentKeys.includes(k));
+        
+        if (addedKeys.length > 0 || deletedKeys.length > 0 || 
             JSON.stringify(currentFrameObjectsInState) !== JSON.stringify(objects)) {
-          const updated = [...prev];
-          updated[currentFrameIndex] = {
-            ...updated[currentFrameIndex],
-            objects: JSON.parse(JSON.stringify(objects))
-          };
+          
+          const updated = prev.map((f, idx) => {
+            const frameObjects = { ...(f.objects || {}) };
+            
+            // Delete deleted objects from all frames
+            deletedKeys.forEach(k => {
+              delete frameObjects[k];
+            });
+            
+            // Sync new objects to all frames
+            addedKeys.forEach(k => {
+              frameObjects[k] = JSON.parse(JSON.stringify(objects[k]));
+            });
+            
+            if (idx === currentFrameIndex) {
+              return {
+                ...f,
+                objects: JSON.parse(JSON.stringify(objects))
+              };
+            } else {
+              return {
+                ...f,
+                objects: frameObjects
+              };
+            }
+          });
+          
           return updated;
         }
         return prev;
@@ -1697,7 +1726,7 @@ export default function App() {
       setLimitNotification("App safety limit: To guarantee 100% lag-free performance, the maximum limit is 500 animation frames per project.");
       return;
     }
-    setFrames(prev => [...prev, { index: prev.length, objects: {} }]);
+    setFrames(prev => [...prev, { index: prev.length, objects: JSON.parse(JSON.stringify(objects)) }]);
   };
 
   const batchAddFrames = (count: number) => {
