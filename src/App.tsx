@@ -10,6 +10,7 @@ import {
   Plus, 
   Settings, 
   Sparkles,
+  ExternalLink,
   GitPullRequest,
   Trash2,
   User,
@@ -53,7 +54,167 @@ import {
 } from './utils/engine3D';
 import { parse3DModelFile } from './utils/custom3DLoader';
 
+interface AdItem {
+  id: number;
+  title: string;
+  tagline: string;
+  badge: string;
+  actionText: string;
+  bgColor: string;
+  borderColor: string;
+  textColor: string;
+  adKey?: string;
+  format?: 'iframe' | 'script';
+  height?: number;
+  width?: number;
+  scriptUrl?: string;
+  containerId?: string;
+}
+
+const ADS_DATA: AdItem[] = [
+  {
+    id: 1,
+    title: "Adsterra Display Banner",
+    tagline: "Premium High CPM Ad Unit #30203380",
+    badge: "Premium Banner",
+    actionText: "Visit Ads",
+    bgColor: "from-indigo-950/40 to-blue-950/20",
+    borderColor: "border-indigo-500/35",
+    textColor: "text-indigo-400",
+    adKey: "3b74f090f064befb058515e368086175",
+    format: "iframe",
+    height: 60,
+    width: 468
+  },
+  {
+    id: 2,
+    title: "Adsterra Native Recommendation",
+    tagline: "Dynamic Grid Ad Unit #30203378",
+    badge: "Native Ad",
+    actionText: "Learn More",
+    bgColor: "from-emerald-950/40 to-teal-950/20",
+    borderColor: "border-emerald-500/35",
+    textColor: "text-emerald-400",
+    scriptUrl: "https://pl30303877.effectivecpmnetwork.com/935bef08c988c2000100df96459b2487/invoke.js",
+    containerId: "container-935bef08c988c2000100df96459b2487",
+    format: "script"
+  },
+  {
+    id: 3,
+    title: "Adsterra Vertical Skyscraper",
+    tagline: "Premium Vertical Banner 160x300",
+    badge: "Skyscraper",
+    actionText: "Explore",
+    bgColor: "from-amber-950/40 to-orange-950/20",
+    borderColor: "border-amber-500/35",
+    textColor: "text-amber-400",
+    adKey: "6407bfebf17c2bd4797b6b2fc6c370b2",
+    format: "iframe",
+    height: 300,
+    width: 160
+  },
+  {
+    id: 4,
+    title: "Adsterra Social Bar Overlay",
+    tagline: "Active Dynamic Notification Unit",
+    badge: "Social Bar",
+    actionText: "View",
+    bgColor: "from-rose-950/40 to-pink-950/20",
+    borderColor: "border-rose-500/35",
+    textColor: "text-rose-400",
+    scriptUrl: "https://pl30303877.effectivecpmnetwork.com/df/17/95/df1795f51867881fe197297866204a48.js",
+    format: "script"
+  },
+  {
+    id: 5,
+    title: "Adsterra Popunder Engine",
+    tagline: "Optimized High Revenue Unit",
+    badge: "Popunder",
+    actionText: "Details",
+    bgColor: "from-purple-950/40 to-fuchsia-950/20",
+    borderColor: "border-purple-500/35",
+    textColor: "text-purple-400",
+    scriptUrl: "https://pl30303877.effectivecpmnetwork.com/df/f0/84/dff084256f85526d6cfc6857a375d4021.js",
+    format: "script"
+  }
+];
+
+function AdsterraIframe({ adKey, format, height, width, scriptUrl, containerId, align = 'bottom' }: { adKey?: string; format?: string; height?: number; width?: number; scriptUrl?: string; containerId?: string; key?: string | number; align?: 'top' | 'bottom' }) {
+  let srcDoc = "";
+
+  const alignment = align === 'bottom' ? 'flex-end' : 'flex-start';
+
+  if (format === 'iframe' && adKey) {
+    srcDoc = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body, html { margin: 0; padding: 0; overflow: hidden; display: flex; justify-content: center; align-items: ${alignment}; background: transparent; height: 100%; width: 100%; }
+        </style>
+      </head>
+      <body>
+        <script type="text/javascript">
+          atOptions = {
+            'key' : '${adKey}',
+            'format' : 'iframe',
+            'height' : ${height || 60},
+            'width' : ${width || 468},
+            'params' : {}
+          };
+        </script>
+        <script type="text/javascript" src="https://pl30303877.effectivecpmnetwork.com/${adKey}/invoke.js"></script>
+      </body>
+      </html>
+    `;
+  } else if (scriptUrl) {
+    srcDoc = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body, html { margin: 0; padding: 0; overflow: hidden; display: flex; justify-content: center; align-items: ${alignment}; background: transparent; height: 100%; width: 100%; }
+        </style>
+      </head>
+      <body>
+        ${containerId ? `<div id="${containerId}" style="width: 100%; height: 100%; display: flex; justify-content: center; align-items: ${alignment};"></div>` : ''}
+        <script async="async" data-cfasync="false" src="${scriptUrl}"></script>
+      </body>
+      </html>
+    `;
+  }
+
+  if (!srcDoc) return null;
+
+  return (
+    <iframe
+      srcDoc={srcDoc}
+      title={`Adsterra Ad ${adKey || 'Script'}`}
+      width="100%"
+      height="100%"
+      className="border-0 bg-transparent overflow-hidden w-full h-full"
+      style={{ border: 'none', outline: 'none' }}
+      sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+    />
+  );
+}
+
 export default function App() {
+  // Ads Index State (4 separate, continuous ads changing every 1 minute)
+  const [adTick, setAdTick] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setAdTick(prev => prev + 1);
+    }, 60000); // Changes every 1 minute!
+    return () => clearInterval(interval);
+  }, []);
+
+  const topAdIndex1 = adTick % ADS_DATA.length;
+  const topAdIndex2 = (adTick + 1) % ADS_DATA.length;
+  const bottomAdIndex1 = (adTick + 2) % ADS_DATA.length;
+  const bottomAdIndex2 = (adTick + 3) % ADS_DATA.length;
+
   // Toast notifications state
   const [toasts, setToasts] = useState<{ id: string; message: string; type: 'success' | 'error' | 'warning' | 'info' }[]>([]);
 
@@ -1782,12 +1943,45 @@ export default function App() {
     top: 0,
   } : {};
 
+  const renderAdBox = (item: AdItem, align: 'top' | 'bottom' = 'bottom') => {
+    return (
+      <div 
+        className="w-full h-full bg-transparent flex items-center justify-center overflow-hidden relative group/ad hover:brightness-110 transition-all duration-300"
+        style={{ border: 'none', outline: 'none' }}
+      >
+        {/* Centered Dynamic Adsterra Iframe Loader */}
+        <div className="w-full h-full flex items-center justify-center bg-transparent" style={{ border: 'none', outline: 'none' }}>
+          <AdsterraIframe 
+            key={`${item.id}-${item.adKey || item.scriptUrl || 'ad'}`}
+            adKey={item.adKey} 
+            format={item.format} 
+            height={item.height} 
+            width={item.width} 
+            scriptUrl={item.scriptUrl} 
+            containerId={item.containerId} 
+            align={align}
+          />
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className={`w-screen h-screen overflow-hidden bg-neutral-950 relative ${theme === 'light' ? 'light-theme' : ''}`}>
       <div 
         style={containerStyle}
         className={`flex flex-col h-full w-full bg-neutral-950 text-white font-sans text-sm antialiased overflow-hidden select-none ${theme === 'light' ? 'light-theme' : ''}`}
       >
+
+      {/* 1.5 TOP SPONSOR ADS BAR (2 Boxes, Centered, 76px Height, Spacious Margins) */}
+      <div className="w-full bg-transparent p-[2px] flex gap-2 items-center select-none shrink-0 mt-2 mb-3 px-3 animate-fade-in" id="top-ads-bar" style={{ border: 'none', outline: 'none' }}>
+        <div className="flex-1 h-[76px] min-w-0" style={{ border: 'none', outline: 'none' }}>
+          {renderAdBox(ADS_DATA[topAdIndex1], 'bottom')}
+        </div>
+        <div className="flex-1 h-[76px] min-w-0" style={{ border: 'none', outline: 'none' }}>
+          {renderAdBox(ADS_DATA[topAdIndex2], 'bottom')}
+        </div>
+      </div>
 
       {/* 1. TOP NAVIGATION BAR */}
       <header className="h-14 bg-neutral-900 border-b border-neutral-800 px-2 sm:px-4 flex items-center justify-between shrink-0 select-none z-10 overflow-x-auto scrollbar-none flex-nowrap">
@@ -2182,6 +2376,16 @@ export default function App() {
         showCanvasSizePanel={showCanvasSizePanel}
         setShowCanvasSizePanel={setShowCanvasSizePanel}
       />
+
+      {/* 3.5 BOTTOM SPONSOR ADS BAR (2 Boxes, Centered, 76px Height, Spacious Margins) */}
+      <div className="w-full bg-transparent p-[2px] flex gap-2 items-center select-none shrink-0 mt-3 mb-2 px-3 animate-fade-in" id="bottom-ads-bar" style={{ border: 'none', outline: 'none' }}>
+        <div className="flex-1 h-[76px] min-w-0" style={{ border: 'none', outline: 'none' }}>
+          {renderAdBox(ADS_DATA[bottomAdIndex1], 'top')}
+        </div>
+        <div className="flex-1 h-[76px] min-w-0" style={{ border: 'none', outline: 'none' }}>
+          {renderAdBox(ADS_DATA[bottomAdIndex2], 'top')}
+        </div>
+      </div>
 
       {/* 4. NOTIFICATION & TOAST OVERLAYS */}
       {dbNotification && (
