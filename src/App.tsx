@@ -743,6 +743,54 @@ export default function App() {
             addedKeys.forEach(k => {
               frameObjects[k] = JSON.parse(JSON.stringify(objects[k]));
             });
+
+            // Sync existing objects' style, color, drawing structure, and text properties to all other frames
+            Object.keys(frameObjects).forEach(k => {
+              if (objects[k]) {
+                const src = objects[k];
+                const dest = frameObjects[k];
+                
+                if (src.strokeColor !== undefined) dest.strokeColor = src.strokeColor;
+                if (src.strokeWidth !== undefined) dest.strokeWidth = src.strokeWidth;
+                if (src.fillColor !== undefined) dest.fillColor = src.fillColor;
+                if (src.lassoFills !== undefined) dest.lassoFills = JSON.parse(JSON.stringify(src.lassoFills));
+                if (src.opacity !== undefined) dest.opacity = src.opacity;
+                if (src.shadow !== undefined) dest.shadow = src.shadow ? JSON.parse(JSON.stringify(src.shadow)) : undefined;
+                if (src.innerShadow !== undefined) dest.innerShadow = src.innerShadow ? JSON.parse(JSON.stringify(src.innerShadow)) : undefined;
+                if (src.rimLight !== undefined) dest.rimLight = src.rimLight ? JSON.parse(JSON.stringify(src.rimLight)) : undefined;
+                if (src.overlay !== undefined) dest.overlay = src.overlay ? JSON.parse(JSON.stringify(src.overlay)) : undefined;
+                
+                if (src.points !== undefined) dest.points = JSON.parse(JSON.stringify(src.points));
+                if (src.subPaths !== undefined) dest.subPaths = src.subPaths ? JSON.parse(JSON.stringify(src.subPaths)) : undefined;
+                if (src.name !== undefined) dest.name = src.name;
+                if (src.type !== undefined) dest.type = src.type;
+                if (src.text !== undefined) dest.text = src.text;
+                if (src.fontSize !== undefined) dest.fontSize = src.fontSize;
+                if (src.fontFamily !== undefined) dest.fontFamily = src.fontFamily;
+                if (src.imageUrl !== undefined) dest.imageUrl = src.imageUrl;
+                
+                if (src.isLocked !== undefined) dest.isLocked = src.isLocked;
+                if (src.isHidden !== undefined) dest.isHidden = src.isHidden;
+                if (src.zIndex !== undefined) dest.zIndex = src.zIndex;
+                
+                if (src.keepAttachedTo !== undefined) dest.keepAttachedTo = src.keepAttachedTo;
+                if (src.attachedGroupId !== undefined) dest.attachedGroupId = src.attachedGroupId;
+                if (src.parentId !== undefined) dest.parentId = src.parentId;
+                if (src.childrenIds !== undefined) dest.childrenIds = src.childrenIds ? JSON.parse(JSON.stringify(src.childrenIds)) : undefined;
+                if (src.layerId !== undefined) dest.layerId = src.layerId;
+                
+                if (src.meshState !== undefined) dest.meshState = src.meshState ? JSON.parse(JSON.stringify(src.meshState)) : undefined;
+                if (src.depth3D !== undefined) dest.depth3D = src.depth3D;
+                if (src.hollowEnabled !== undefined) dest.hollowEnabled = src.hollowEnabled;
+                if (src.innerSpace3D !== undefined) dest.innerSpace3D = src.innerSpace3D;
+                if (src.selectedFaceIndex !== undefined) dest.selectedFaceIndex = src.selectedFaceIndex;
+                if (src.selectedEdgeIndex !== undefined) dest.selectedEdgeIndex = src.selectedEdgeIndex;
+                if (src.shape3DType !== undefined) dest.shape3DType = src.shape3DType;
+                if (src.smartWarp !== undefined) dest.smartWarp = src.smartWarp ? JSON.parse(JSON.stringify(src.smartWarp)) : undefined;
+                if (src.pins !== undefined) dest.pins = src.pins ? JSON.parse(JSON.stringify(src.pins)) : undefined;
+                if (src.pivots !== undefined) dest.pivots = src.pivots ? JSON.parse(JSON.stringify(src.pivots)) : undefined;
+              }
+            });
             
             if (idx === currentFrameIndex) {
               return {
