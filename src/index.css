@@ -1,1 +1,183 @@
 @import "tailwindcss";
+
+/* ----------------------------------------------------
+   LIGHT THEME OVERRIDE SYSTEM
+   ---------------------------------------------------- */
+
+.light-theme {
+  --bg-main: #f8fafc;
+  --bg-panel: #ffffff;
+  --bg-item: #f1f5f9;
+  --bg-border: #cbd5e1;
+  --text-primary: #0f172a;
+  --text-secondary: #1e293b;
+  --text-muted: #475569;
+  
+  background-color: var(--bg-main) !important;
+  color: var(--text-primary) !important;
+}
+
+/* Bold icons and text in light theme */
+.light-theme svg {
+  stroke-width: 2.4px !important;
+}
+
+.light-theme span,
+.light-theme p,
+.light-theme button,
+.light-theme label,
+.light-theme div,
+.light-theme input,
+.light-theme select,
+.light-theme option {
+  font-weight: 500;
+}
+
+.light-theme .font-normal {
+  font-weight: 500 !important;
+}
+
+.light-theme .font-medium {
+  font-weight: 600 !important;
+}
+
+.light-theme .font-semibold {
+  font-weight: 700 !important;
+}
+
+.light-theme .font-bold {
+  font-weight: 800 !important;
+}
+
+.light-theme .font-black {
+  font-weight: 950 !important;
+}
+
+/* Base structural elements (Header, Toolbar, Panels, Timelines, Ad bars) */
+.light-theme *[class*="bg-neutral-900"],
+.light-theme *[class*="bg-neutral-950"],
+.light-theme *[class*="bg-neutral-850"],
+.light-theme *[class*="bg-neutral-800"],
+.light-theme *[class*="bg-black"],
+.light-theme header,
+.light-theme aside,
+.light-theme #system-top-ad-bar,
+.light-theme #system-bottom-ad-bar {
+  background-color: var(--bg-panel) !important;
+  border-color: var(--bg-border) !important;
+  color: var(--text-primary) !important;
+}
+
+/* Borders */
+.light-theme *[class*="border-neutral-850"],
+.light-theme *[class*="border-neutral-800"],
+.light-theme *[class*="border-neutral-900"],
+.light-theme *[class*="border-neutral-700"],
+.light-theme header,
+.light-theme aside {
+  border-color: var(--bg-border) !important;
+}
+
+/* Text overrides */
+.light-theme .text-white,
+.light-theme .text-neutral-100,
+.light-theme .text-neutral-200 {
+  color: var(--text-primary) !important;
+}
+
+.light-theme .text-neutral-300,
+.light-theme .text-neutral-400 {
+  color: var(--text-secondary) !important;
+}
+
+.light-theme .text-neutral-500 {
+  color: var(--text-muted) !important;
+}
+
+/* Dynamic control blocks (sliders, dropdowns, cards) */
+.light-theme *[class*="bg-neutral-950/60"],
+.light-theme *[class*="bg-neutral-950/40"],
+.light-theme *[class*="bg-neutral-900/60"],
+.light-theme *[class*="bg-neutral-800/40"],
+.light-theme *[class*="bg-neutral-800/60"],
+.light-theme *[class*="bg-neutral-850/60"],
+.light-theme *[class*="bg-neutral-950/80"],
+.light-theme *[class*="bg-neutral-900/80"] {
+  background-color: var(--bg-item) !important;
+  border-color: var(--bg-border) !important;
+}
+
+/* Button & interactive hover overrides */
+.light-theme button[class*="bg-neutral-850"],
+.light-theme button[class*="bg-neutral-800"] {
+  background-color: var(--bg-item) !important;
+  color: var(--text-primary) !important;
+  border-color: var(--bg-border) !important;
+}
+
+.light-theme button[class*="bg-neutral-850"]:hover,
+.light-theme button[class*="bg-neutral-800"]:hover,
+.light-theme label[class*="bg-neutral-800"]:hover {
+  background-color: var(--bg-border) !important;
+}
+
+/* Form fields (Inputs, Selects, option elements) */
+.light-theme input,
+.light-theme select,
+.light-theme textarea {
+  background-color: var(--bg-panel) !important;
+  color: var(--text-primary) !important;
+  border-color: var(--bg-border) !important;
+}
+
+.light-theme input::placeholder {
+  color: var(--text-muted) !important;
+}
+
+/* Selected button highlights */
+.light-theme button[class*="bg-amber-500/10"],
+.light-theme button[class*="bg-amber-500/20"] {
+  background-color: rgba(245, 158, 11, 0.12) !important;
+  color: #b45309 !important;
+  border-color: rgba(245, 158, 11, 0.4) !important;
+}
+
+/* Canvas Area background panel */
+.light-theme main[class*="flex-1"],
+.light-theme div[class*="bg-neutral-950"] > div[class*="flex-1"] {
+  background-color: #cbd5e1 !important;
+}
+
+/* Canvas paper outline shadow */
+.light-theme canvas {
+  background-color: #ffffff;
+}
+
+/* Grid lines */
+.light-theme line {
+  stroke: #cbd5e1 !important;
+}
+
+/* Keep critical notice modals, toasts, and auth overlays dark for high visual hierarchy */
+.light-theme #limit-toast-notification,
+.light-theme #db-toast-notification,
+.light-theme #auth-modal,
+.light-theme div[class*="fixed inset-0 z-"] {
+  background-color: #0f172a !important;
+  color: #f8fafc !important;
+}
+
+.light-theme #limit-toast-notification *,
+.light-theme #db-toast-notification *,
+.light-theme #auth-modal *,
+.light-theme div[class*="fixed inset-0 z-"] * {
+  color: #f8fafc !important;
+  border-color: #334155 !important;
+}
+
+.light-theme #limit-toast-notification button,
+.light-theme #db-toast-notification button,
+.light-theme #auth-modal button,
+.light-theme div[class*="fixed inset-0 z-"] button {
+  color: #0f172a !important;
+}

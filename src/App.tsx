@@ -20,8 +20,17 @@ import {
   CheckCircle2,
   Calendar,
   Lock,
-  Mail
+  Mail,
+  Sun,
+  Moon,
+  HelpCircle,
+  Megaphone,
+  Tv,
+  Info,
+  AlertCircle,
+  X
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import Toolbar from './components/Toolbar';
 import LeftPanel from './components/LeftPanel';
 import RightPanel from './components/RightPanel';
@@ -43,9 +52,67 @@ import {
   extrude2DTo3D
 } from './utils/engine3D';
 import { parse3DModelFile } from './utils/custom3DLoader';
-import { BottomAdBar, AdTheaterModal, TopAdBar } from './components/AdSystem';
 
 export default function App() {
+  // Toast notifications state
+  const [toasts, setToasts] = useState<{ id: string; message: string; type: 'success' | 'error' | 'warning' | 'info' }[]>([]);
+
+  const classifyToast = (msg: string): 'success' | 'error' | 'warning' | 'info' => {
+    const lowercase = msg.toLowerCase();
+    if (
+      lowercase.includes('success') || 
+      lowercase.includes('successfully') || 
+      lowercase.includes('loaded') || 
+      lowercase.includes('grouped') || 
+      lowercase.includes('attached') || 
+      lowercase.includes('restored') || 
+      lowercase.includes('saved')
+    ) {
+      return 'success';
+    }
+    if (
+      lowercase.includes('blocked') || 
+      lowercase.includes('error') || 
+      lowercase.includes('failed') || 
+      lowercase.includes('limit') || 
+      lowercase.includes('safeguard') || 
+      lowercase.includes('cannot') || 
+      lowercase.includes('circular') || 
+      lowercase.includes('must keep') || 
+      lowercase.includes('not supported')
+    ) {
+      return 'error';
+    }
+    if (
+      lowercase.includes('please') || 
+      lowercase.includes('ensure') || 
+      lowercase.includes('warning') || 
+      lowercase.includes('select')
+    ) {
+      return 'warning';
+    }
+    return 'info';
+  };
+
+  const addToast = (message: string) => {
+    const id = Math.random().toString(36).substring(2, 9);
+    const type = classifyToast(message);
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 2000); // automatically close after 2 seconds!
+  };
+
+  useEffect(() => {
+    const originalAlert = window.alert;
+    window.alert = (message: string) => {
+      addToast(message);
+    };
+    return () => {
+      window.alert = originalAlert;
+    };
+  }, []);
+
   // Topbar Collapse States
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
@@ -91,6 +158,7 @@ export default function App() {
   const [lassoPoints, setLassoPoints] = useState<Point[]>([]);
   const [lassoMode, setLassoMode] = useState<'freehand' | 'pen'>('freehand');
   const [penLassoPoints, setPenLassoPoints] = useState<Point[]>([]);
+  const [fillToolColor, setFillToolColor] = useState<string>('#4CAF50');
 
   // Realism Maker Settings
   const [realismSettings, setRealismSettings] = useState<RealismSettings>({
@@ -123,6 +191,17 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [dbNotification, setDbNotification] = useState<{ type: 'success' | 'info' | 'error'; message: string } | null>(null);
   const [limitNotification, setLimitNotification] = useState<string | null>(null);
+  
+  // Theme states
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    return (localStorage.getItem('animastudio_theme') as 'dark' | 'light') || 'dark';
+  });
+
+  const toggleTheme = () => {
+    const next = theme === 'dark' ? 'light' : 'dark';
+    setTheme(next);
+    localStorage.setItem('animastudio_theme', next);
+  };
   const limitTimeoutRef = useRef<any>(null);
 
   const triggerLimitNotification = () => {
@@ -136,7 +215,6 @@ export default function App() {
   };
 
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
-  const [isAdTheaterOpen, setIsAdTheaterOpen] = useState(false);
 
   // Canvas Size States
   const [artboardW, setArtboardW] = useState<number>(1400);
@@ -144,7 +222,7 @@ export default function App() {
   const [showCanvasSizePanel, setShowCanvasSizePanel] = useState<boolean>(false);
 
   // Adaptive subdivision control
-  const [adaptiveSubdivisionEnabled, setAdaptiveSubdivisionEnabled] = useState<boolean>(true);
+  const [adaptiveSubdivisionEnabled, setAdaptiveSubdivisionEnabled] = useState<boolean>(false);
   const [adaptiveSubdivisionPoints, setAdaptiveSubdivisionPoints] = useState<number>(3);
 
   // Window size state for mobile responsive zoom-out container
@@ -175,6 +253,68 @@ export default function App() {
         window.removeEventListener('resize', handleResize);
       };
     }
+  }, []);
+
+  // Strict Security Protection Effect (Right-click & DevTools Hotkey block + console warnings)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    // 1. Prevent context menu (disables right-click)
+    const preventContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      setLimitNotification("Security Guard: Right-click is strictly disabled to secure App presets & vector assets.");
+    };
+    window.addEventListener('contextmenu', preventContextMenu);
+
+    // 2. Prevent Developer tools shortcuts
+    const preventDevTools = (e: KeyboardEvent) => {
+      // F12
+      if (e.key === 'F12' || e.keyCode === 123) {
+        e.preventDefault();
+        setLimitNotification("Security Guard: Source inspection is locked for safety.");
+        return false;
+      }
+      // Ctrl+Shift+I / J / C or Cmd+Option+I / J / C
+      const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+      const isShift = e.shiftKey;
+      if (isCtrlOrCmd && isShift && (e.key === 'i' || e.key === 'I' || e.key === 'j' || e.key === 'J' || e.key === 'c' || e.key === 'C')) {
+        e.preventDefault();
+        setLimitNotification("Security Guard: Source code inspection and compilation overrides are locked.");
+        return false;
+      }
+      // Ctrl+U / Cmd+Option+U (view source)
+      if (isCtrlOrCmd && (e.key === 'u' || e.key === 'U')) {
+        e.preventDefault();
+        setLimitNotification("Security Guard: View-source operation is blocked.");
+        return false;
+      }
+      // Ctrl+S / Cmd+S (prevent saving page source)
+      if (isCtrlOrCmd && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
+        setLimitNotification("Security Guard: Local file cloning is blocked.");
+        return false;
+      }
+    };
+    window.addEventListener('keydown', preventDevTools);
+
+    // 3. Clear console loop or console warn message to prevent script inject hacking
+    const warningInterval = setInterval(() => {
+      console.clear();
+      console.log(
+        "%cSECURITY ALERT: CHAVANKRUSHNA ANIMATION WORKSPACE SECURED",
+        "color: #f59e0b; font-size: 24px; font-weight: 900; text-shadow: 2px 2px black;"
+      );
+      console.log(
+        "%cAll system compilation tools, bone-riggers, and vector presets are actively secured. Source inspection or unauthorized cloning constitutes a policy violation.",
+        "color: #a3a3a3; font-size: 13px;"
+      );
+    }, 5000);
+
+    return () => {
+      window.removeEventListener('contextmenu', preventContextMenu);
+      window.removeEventListener('keydown', preventDevTools);
+      clearInterval(warningInterval);
+    };
   }, []);
 
   const handleSetLeftOpen = (val: boolean | ((prev: boolean) => boolean)) => {
@@ -600,6 +740,170 @@ export default function App() {
 
       return updated;
     });
+  };
+
+  const duplicateObject = (id: string, offset = { x: 30, y: 30 }) => {
+    try {
+      const original = objects[id];
+      if (!original) {
+        alert("Duplication Error: The selected drawing could not be found.");
+        return null;
+      }
+
+      historyPush();
+
+      const newId = `obj_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+      
+      const newPivots = original.pivots.map(p => ({
+        ...p,
+        id: `pvt_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`
+      }));
+
+      const newPins = original.pins ? original.pins.map(p => ({
+        ...p,
+        id: `pvt_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`
+      })) : undefined;
+
+      const newObj: VectorObject = {
+        ...original,
+        id: newId,
+        name: `${original.name}_copy`,
+        points: original.points ? original.points.map(p => ({ ...p })) : [],
+        subPaths: original.subPaths ? original.subPaths.map(path => path.map(p => ({ ...p }))) : undefined,
+        pivots: newPivots,
+        pins: newPins,
+        transform: {
+          ...original.transform,
+          x: original.transform.x + offset.x,
+          y: original.transform.y + offset.y
+        },
+        parentId: null,
+        childrenIds: []
+      };
+
+      setObjects(prev => ({
+        ...prev,
+        [newId]: newObj
+      }));
+
+      setSelectedObjectId(newId);
+      return newId;
+    } catch (err: any) {
+      console.error("Duplication error:", err);
+      alert(`Failed to duplicate drawing: ${err.message || err}`);
+      return null;
+    }
+  };
+
+  const isPointInPolygonLocal = (p: Point, polygon: Point[]): boolean => {
+    if (polygon.length < 3) return false;
+    let inside = false;
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+      const xi = polygon[i].x, yi = polygon[i].y;
+      const xj = polygon[j].x, yj = polygon[j].y;
+      const intersect = ((yi > p.y) !== (yj > p.y))
+          && (p.x < (xj - xi) * (p.y - yi) / (yj - yi) + xi);
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  };
+
+  const getObjectWorldCenterLocal = (obj: VectorObject) => {
+    if (obj.pivots && obj.pivots.length > 0) {
+      const pvt = obj.pivots[0];
+      return {
+        x: obj.transform.x + pvt.localX,
+        y: obj.transform.y + pvt.localY
+      };
+    }
+    if (obj.points && obj.points.length > 0) {
+      let sumX = 0;
+      let sumY = 0;
+      obj.points.forEach(p => {
+        sumX += p.x;
+        sumY += p.y;
+      });
+      return {
+        x: obj.transform.x + sumX / obj.points.length,
+        y: obj.transform.y + sumY / obj.points.length
+      };
+    }
+    return { x: obj.transform.x, y: obj.transform.y };
+  };
+
+  const duplicateLassoBatch = () => {
+    try {
+      if (!lassoPoints || lassoPoints.length < 3) {
+        alert("Please draw a closed lasso loop around the drawings you wish to duplicate.");
+        return;
+      }
+
+      const targets = (Object.values(objects) as VectorObject[]).filter(obj => {
+        if (obj.isHidden || obj.isLocked) return false;
+        if (obj.type === '360_container') return false; // skip containers
+        const center = getObjectWorldCenterLocal(obj);
+        return isPointInPolygonLocal(center, lassoPoints);
+      });
+
+      if (targets.length === 0) {
+        alert("No active drawings found inside the lasso selection loop! Ensure the target drawings are visible and unlocked.");
+        return;
+      }
+
+      historyPush();
+
+      const newObjects: { [id: string]: VectorObject } = {};
+      const duplicatedIds: string[] = [];
+
+      targets.forEach((original, index) => {
+        const newId = `obj_${Date.now()}_${index}_${Math.random().toString(36).substr(2, 5)}`;
+        const newPivots = original.pivots.map(p => ({
+          ...p,
+          id: `pvt_${Date.now()}_${index}_${Math.random().toString(36).substr(2, 5)}`
+        }));
+        const newPins = original.pins ? original.pins.map(p => ({
+          ...p,
+          id: `pvt_${Date.now()}_${index}_${Math.random().toString(36).substr(2, 5)}`
+        })) : undefined;
+
+        const newObj: VectorObject = {
+          ...original,
+          id: newId,
+          name: `${original.name}_copy`,
+          points: original.points ? original.points.map(p => ({ ...p })) : [],
+          subPaths: original.subPaths ? original.subPaths.map(path => path.map(p => ({ ...p }))) : undefined,
+          pivots: newPivots,
+          pins: newPins,
+          transform: {
+            ...original.transform,
+            x: original.transform.x + 40,
+            y: original.transform.y + 40
+          },
+          parentId: null,
+          childrenIds: []
+        };
+
+        newObjects[newId] = newObj;
+        duplicatedIds.push(newId);
+      });
+
+      setObjects(prev => ({
+        ...prev,
+        ...newObjects
+      }));
+
+      if (duplicatedIds.length > 0) {
+        setSelectedObjectId(duplicatedIds[0]);
+      }
+      
+      // Clear lasso points to complete action
+      setLassoPoints([]);
+      
+      alert(`Successfully duplicated ${targets.length} drawings in batch!`);
+    } catch (err: any) {
+      console.error("Batch duplication error:", err);
+      alert(`Failed to complete batch duplication: ${err.message || err}`);
+    }
   };
 
   const handleUndo = () => {
@@ -1228,17 +1532,32 @@ export default function App() {
 
   // Timeline operations
   const addFrame = () => {
+    if (frames.length >= 500) {
+      setLimitNotification("App safety limit: To guarantee 100% lag-free performance, the maximum limit is 500 animation frames per project.");
+      return;
+    }
     setFrames(prev => [...prev, { index: prev.length, objects: {} }]);
   };
 
   const batchAddFrames = (count: number) => {
+    if (frames.length >= 500) {
+      setLimitNotification("App safety limit: To guarantee 100% lag-free performance, the maximum limit is 500 animation frames per project.");
+      return;
+    }
     historyPush();
     setFrames(prev => {
       const updated = [...prev];
       const lastFrame = prev[prev.length - 1];
       const lastFrameObjects = lastFrame ? lastFrame.objects || {} : {};
       
-      for (let i = 0; i < count; i++) {
+      const spaceLeft = 500 - prev.length;
+      const actualToAdd = Math.min(count, spaceLeft);
+
+      if (actualToAdd < count) {
+        setLimitNotification(`App safety limit: Truncated batch addition to ${actualToAdd} frames to keep project under the 500-frame ceiling.`);
+      }
+
+      for (let i = 0; i < actualToAdd; i++) {
         updated.push({
           index: updated.length,
           objects: JSON.parse(JSON.stringify(lastFrameObjects))
@@ -1257,6 +1576,10 @@ export default function App() {
   };
 
   const duplicateFrame = (index: number) => {
+    if (frames.length >= 500) {
+      setLimitNotification("App safety limit: To guarantee 100% lag-free performance, the maximum limit is 500 animation frames per project.");
+      return;
+    }
     const frameToDup = frames[index];
     const newFrame = JSON.parse(JSON.stringify(frameToDup));
     newFrame.index = frames.length;
@@ -1360,7 +1683,14 @@ export default function App() {
         const project = JSON.parse(event.target?.result as string);
         if (project.objects) setObjects(project.objects);
         if (project.bones) setBones(project.bones);
-        if (project.frames) setFrames(project.frames);
+        if (project.frames) {
+          let loadedFrames = project.frames;
+          if (loadedFrames.length > 500) {
+            loadedFrames = loadedFrames.slice(0, 500);
+            setLimitNotification("Security warning: Project truncated to 500 frames to guarantee system stability and prevent extreme canvas lag.");
+          }
+          setFrames(loadedFrames);
+        }
         alert("Project loaded successfully!");
       } catch (err) {
         alert("Invalid project JSON layout.");
@@ -1453,13 +1783,11 @@ export default function App() {
   } : {};
 
   return (
-    <div className="w-screen h-screen overflow-hidden bg-neutral-950 relative">
+    <div className={`w-screen h-screen overflow-hidden bg-neutral-950 relative ${theme === 'light' ? 'light-theme' : ''}`}>
       <div 
         style={containerStyle}
-        className="flex flex-col h-full w-full bg-neutral-950 text-white font-sans text-sm antialiased overflow-hidden select-none"
+        className={`flex flex-col h-full w-full bg-neutral-950 text-white font-sans text-sm antialiased overflow-hidden select-none ${theme === 'light' ? 'light-theme' : ''}`}
       >
-        {/* SYSTEM AD BANNER BAR TOP (Solid Black bar completely separate from tools/canvas) */}
-        <TopAdBar />
 
       {/* 1. TOP NAVIGATION BAR */}
       <header className="h-14 bg-neutral-900 border-b border-neutral-800 px-2 sm:px-4 flex items-center justify-between shrink-0 select-none z-10 overflow-x-auto scrollbar-none flex-nowrap">
@@ -1553,6 +1881,21 @@ export default function App() {
             title="Export JSON"
           >
             <Download className="w-3.5 h-3.5" />
+          </button>
+
+          <div className="w-[1px] h-6 bg-neutral-800 mx-0.5 shrink-0"></div>
+
+          {/* Light/Dark Theme Toggle */}
+          <button
+            onClick={toggleTheme}
+            className={`p-1.5 rounded-xl border transition-all shrink-0 cursor-pointer ${
+              theme === 'dark' 
+                ? 'bg-neutral-850 hover:bg-neutral-800 text-amber-400 hover:text-amber-300 border-neutral-800' 
+                : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-600 hover:text-neutral-900 border-neutral-200'
+            }`}
+            title={theme === 'dark' ? "Switch to Light Theme" : "Switch to Dark Theme"}
+          >
+            {theme === 'dark' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
           </button>
 
           <div className="w-[1px] h-6 bg-neutral-800 mx-0.5 shrink-0"></div>
@@ -1721,6 +2064,12 @@ export default function App() {
           setAdaptiveSubdivisionEnabled={setAdaptiveSubdivisionEnabled}
           adaptiveSubdivisionPoints={adaptiveSubdivisionPoints}
           setAdaptiveSubdivisionPoints={setAdaptiveSubdivisionPoints}
+          duplicateObject={duplicateObject}
+          duplicateLassoBatch={duplicateLassoBatch}
+          lassoPoints={lassoPoints}
+          setLassoPoints={setLassoPoints}
+          fillToolColor={fillToolColor}
+          setFillToolColor={setFillToolColor}
         />
 
         {/* Central Vector Canvas Area */}
@@ -1759,6 +2108,7 @@ export default function App() {
           setShowCanvasSizePanel={setShowCanvasSizePanel}
           adaptiveSubdivisionEnabled={adaptiveSubdivisionEnabled}
           adaptiveSubdivisionPoints={adaptiveSubdivisionPoints}
+          fillToolColor={fillToolColor}
         />
 
         {/* Right Collapsible Properties, Sliders, Smart Pinned Controls */}
@@ -1832,9 +2182,6 @@ export default function App() {
         showCanvasSizePanel={showCanvasSizePanel}
         setShowCanvasSizePanel={setShowCanvasSizePanel}
       />
-
-      {/* 3.1 SYSTEM AD BANNER BAR (Solid Black bar separate from tools/canvas) */}
-      <BottomAdBar onOpenTheater={() => setIsAdTheaterOpen(true)} />
 
       {/* 4. NOTIFICATION & TOAST OVERLAYS */}
       {dbNotification && (
@@ -1977,8 +2324,70 @@ export default function App() {
         </div>
       )}
 
-      {/* 6. AD THEATER INTERACTIVE MODAL OVERLAY */}
-      <AdTheaterModal isOpen={isAdTheaterOpen} onClose={() => setIsAdTheaterOpen(false)} />
+      {/* 🌟 Premium Real-time Notification HUD (Auto-dismisses after 2 seconds) */}
+      <div className="fixed top-4 right-4 z-[9999] flex flex-col gap-2 w-full max-w-sm pointer-events-none">
+        <AnimatePresence>
+          {toasts.map((toast) => {
+            const isSuccess = toast.type === 'success';
+            const isError = toast.type === 'error';
+            const isWarning = toast.type === 'warning';
+            
+            let bgClass = 'bg-neutral-950/95 border-neutral-800 text-neutral-300';
+            let accentBar = 'bg-blue-500';
+            let icon = <Info className="w-4 h-4 text-blue-400 shrink-0" />;
+            let title = 'Notification';
+
+            if (isSuccess) {
+              bgClass = 'bg-neutral-950/95 border-emerald-500/20 text-neutral-200';
+              accentBar = 'bg-emerald-500';
+              icon = <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />;
+              title = 'Success';
+            } else if (isError) {
+              bgClass = 'bg-neutral-950/95 border-rose-500/20 text-neutral-200';
+              accentBar = 'bg-rose-500';
+              icon = <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />;
+              title = 'Error / Limit Blocked';
+            } else if (isWarning) {
+              bgClass = 'bg-neutral-950/95 border-amber-500/20 text-neutral-200';
+              accentBar = 'bg-amber-500';
+              icon = <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />;
+              title = 'Rule / Warning';
+            }
+
+            return (
+              <motion.div
+                key={toast.id}
+                layout
+                initial={{ opacity: 0, y: -20, scale: 0.95, x: 20 }}
+                animate={{ opacity: 1, y: 0, scale: 1, x: 0 }}
+                exit={{ opacity: 0, scale: 0.9, x: 20, transition: { duration: 0.15 } }}
+                className={`pointer-events-auto flex gap-3 p-3.5 rounded-xl border shadow-2xl backdrop-blur-md ${bgClass}`}
+              >
+                {/* Accent bar */}
+                <div className={`w-1 rounded-full shrink-0 ${accentBar}`} />
+                
+                {/* Content */}
+                <div className="flex-1 space-y-1">
+                  <div className="flex items-center gap-1.5">
+                    {icon}
+                    <span className="text-[10px] font-black uppercase tracking-wider text-neutral-400">{title}</span>
+                  </div>
+                  <p className="text-xs font-semibold leading-relaxed text-neutral-100">{toast.message}</p>
+                </div>
+
+                {/* Dismiss button */}
+                <button
+                  onClick={() => setToasts(prev => prev.filter(t => t.id !== toast.id))}
+                  className="self-start p-1 rounded-lg hover:bg-neutral-900 text-neutral-500 hover:text-white transition-colors cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </motion.div>
+            );
+          })}
+        </AnimatePresence>
+      </div>
+
       </div>
     </div>
   );

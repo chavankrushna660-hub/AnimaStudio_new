@@ -583,6 +583,7 @@ interface CanvasAreaProps {
   setShowCanvasSizePanel: React.Dispatch<React.SetStateAction<boolean>>;
   adaptiveSubdivisionEnabled: boolean;
   adaptiveSubdivisionPoints: number;
+  fillToolColor?: string;
 }
 
 export default function CanvasArea({
@@ -620,6 +621,7 @@ export default function CanvasArea({
   setShowCanvasSizePanel,
   adaptiveSubdivisionEnabled,
   adaptiveSubdivisionPoints,
+  fillToolColor = '#4CAF50',
 }: CanvasAreaProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const backCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -1253,6 +1255,7 @@ export default function CanvasArea({
 
   // Pointer Down event handler
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    try {
     // Record active pointer
     activePointersRef.current[e.pointerId] = { x: e.clientX, y: e.clientY };
     const pointerIds = Object.keys(activePointersRef.current);
@@ -1513,62 +1516,84 @@ export default function CanvasArea({
 
     // 8. Fill Bucket Tool logic
     if (activeTool === 'FIL') {
-      const clickedObj = performHitTest(coords);
-      if (clickedObj) {
-        if (clickedObj.type === '3d' && clickedObj.vertices3D && clickedObj.faces3D && clickedObj.transform3D) {
-          const transformed3D = clickedObj.vertices3D.map(v => transform3DVertex(v, clickedObj.transform3D!.x, clickedObj.transform3D!.y, clickedObj.transform3D!.z, clickedObj.transform3D!.rx, clickedObj.transform3D!.ry, clickedObj.transform3D!.rz, clickedObj.transform3D!.sx, clickedObj.transform3D!.sy, clickedObj.transform3D!.sz));
-          const projected = transformed3D.map(v => {
-            const proj = project3DVertex(v, 400);
-            return localToWorld(proj, clickedObj.transform, clickedObj.pivots[0] || { localX: 0, localY: 0 });
-          });
-
-          const matchedFaces: { idx: number; avgZ: number }[] = [];
-          clickedObj.faces3D.forEach((face, idx) => {
-            const poly = face.indices.map(i => projected[i]);
-            if (isPointInPolygon(coords, poly)) {
-              let sumZ = 0;
-              face.indices.forEach(i => {
-                sumZ += transformed3D[i].z;
+      try {
+        const clickedObj = performHitTest(coords);
+        if (clickedObj) {
+          // Only allow filling on currently selected drawings, strictly as requested!
+          if (selectedObjectId === clickedObj.id) {
+            if (clickedObj.type === '3d' && clickedObj.vertices3D && clickedObj.faces3D && clickedObj.transform3D) {
+              const transformed3D = clickedObj.vertices3D.map(v => transform3DVertex(v, clickedObj.transform3D!.x, clickedObj.transform3D!.y, clickedObj.transform3D!.z, clickedObj.transform3D!.rx, clickedObj.transform3D!.ry, clickedObj.transform3D!.rz, clickedObj.transform3D!.sx, clickedObj.transform3D!.sy, clickedObj.transform3D!.sz));
+              const projected = transformed3D.map(v => {
+                const proj = project3DVertex(v, 400);
+                return localToWorld(proj, clickedObj.transform, clickedObj.pivots[0] || { localX: 0, localY: 0 });
               });
-              const avgZ = sumZ / face.indices.length;
-              matchedFaces.push({ idx, avgZ });
-            }
-          });
 
-          if (matchedFaces.length > 0) {
-            matchedFaces.sort((a, b) => a.avgZ - b.avgZ);
-            const targetFaceIdx = matchedFaces[0].idx;
-            const paintColors = ['#FF9800', '#E53935', '#2196F3', '#4CAF50', '#9C27B0', '#FFEB3B'];
-            // Cycle colors or just use orange as a vivid highlight
-            const paintColor = paintColors[targetFaceIdx % paintColors.length];
+              const matchedFaces: { idx: number; avgZ: number }[] = [];
+              clickedObj.faces3D.forEach((face, idx) => {
+                const poly = face.indices.map(i => projected[i]);
+                if (isPointInPolygon(coords, poly)) {
+                  let sumZ = 0;
+                  face.indices.forEach(i => {
+                    sumZ += transformed3D[i].z;
+                  });
+                  const avgZ = sumZ / face.indices.length;
+                  matchedFaces.push({ idx, avgZ });
+                }
+              });
 
-            setObjects(prev => {
-              const updatedObj = { ...prev[clickedObj.id] };
-              const updatedFaces = [...(updatedObj.faces3D || [])];
-              updatedFaces[targetFaceIdx] = {
-                ...updatedFaces[targetFaceIdx],
-                baseColor: paintColor,
-                fillColor: paintColor
+              if (matchedFaces.length > 0) {
+                matchedFaces.sort((a, b) => a.avgZ - b.avgZ);
+                const targetFaceIdx = matchedFaces[0].idx;
+                const paintColor = fillToolColor;
+
+                setObjects(prev => {
+                  const updatedObj = { ...prev[clickedObj.id] };
+                  const updatedFaces = [...(updatedObj.faces3D || [])];
+                  updatedFaces[targetFaceIdx] = {
+                    ...updatedFaces[targetFaceIdx],
+                    baseColor: paintColor,
+                    fillColor: paintColor
+                  };
+                  updatedObj.faces3D = updatedFaces;
+                  updatedObj.selectedFaceIndex = targetFaceIdx;
+                  return {
+                    ...prev,
+                    [clickedObj.id]: updatedObj
+                  };
+                });
+                historyPush();
+              }
+            } else {
+              // Check if path is closed
+              const isPathClosedLocal = (obj: VectorObject): boolean => {
+                if (obj.type === 'shape') return true;
+                if (!obj.points || obj.points.length < 3) return false;
+                const first = obj.points[0];
+                const last = obj.points[obj.points.length - 1];
+                const dx = first.x - last.x;
+                const dy = first.y - last.y;
+                return Math.sqrt(dx * dx + dy * dy) < 15;
               };
-              updatedObj.faces3D = updatedFaces;
-              updatedObj.selectedFaceIndex = targetFaceIdx;
-              return {
+
+              const isClosed = isPathClosedLocal(clickedObj);
+              setObjects(prev => ({
                 ...prev,
-                [clickedObj.id]: updatedObj
-              };
-            });
-            historyPush();
-          }
-        } else {
-          setObjects(prev => ({
-            ...prev,
-            [clickedObj.id]: {
-              ...prev[clickedObj.id],
-              fillColor: '#FF9800'
+                [clickedObj.id]: {
+                  ...prev[clickedObj.id],
+                  fillColor: isClosed ? fillToolColor : prev[clickedObj.id].fillColor,
+                  strokeColor: !isClosed ? fillToolColor : prev[clickedObj.id].strokeColor
+                }
+              }));
+              historyPush();
             }
-          }));
-          historyPush();
+          } else {
+            // Select clicked object first
+            setSelectedObjectId(clickedObj.id);
+          }
         }
+      } catch (err: any) {
+        console.error("Fill tool error:", err);
+        alert(`Failed to apply color fill: ${err.message || err}`);
       }
       return;
     }
@@ -1838,10 +1863,14 @@ export default function CanvasArea({
       setStrokePoints([startPt]);
       return;
     }
+    } catch (err: any) {
+      console.error("Pointer down handler failed:", err);
+    }
   };
 
   // Pointer Move event handler
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    try {
     // Update active pointer tracking coordinate
     if (activePointersRef.current[e.pointerId]) {
       activePointersRef.current[e.pointerId] = { x: e.clientX, y: e.clientY };
@@ -2408,10 +2437,14 @@ export default function CanvasArea({
     if (dragMode === 'pivot' && activeTool === 'KNF') {
       setKnifePath(prev => [...prev, coords]);
     }
+    } catch (err: any) {
+      console.error("Pointer move handler failed:", err);
+    }
   };
 
   // Pointer Up event handler
   const handlePointerUp = (e?: React.PointerEvent<HTMLCanvasElement>) => {
+    try {
     if (e && e.pointerId !== undefined) {
       delete activePointersRef.current[e.pointerId];
     } else {
@@ -2895,6 +2928,9 @@ export default function CanvasArea({
     setDraggedDirectRigBoneId(null);
     setStrokePoints([]);
     setIsDrawingLasso(false);
+    } catch (err: any) {
+      console.error("Pointer up handler failed:", err);
+    }
   };
 
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {

@@ -21,11 +21,14 @@ import {
   Circle,
   Car,
   Smile,
-  Armchair
+  Armchair,
+  Copy,
+  PaintBucket
 } from 'lucide-react';
 import { VectorObject, Layer } from '../types';
 import { parse3DModelFile } from '../utils/custom3DLoader';
 import { getDailyLimitStatus } from '../utils/engine3D';
+import { sanitizeString } from '../utils/securityGuard';
 
 interface LeftPanelProps {
   objects: { [id: string]: VectorObject };
@@ -58,6 +61,12 @@ interface LeftPanelProps {
   setAdaptiveSubdivisionEnabled: (val: boolean) => void;
   adaptiveSubdivisionPoints: number;
   setAdaptiveSubdivisionPoints: (val: number) => void;
+  duplicateObject: (id: string, offset?: { x: number; y: number }) => string | null;
+  duplicateLassoBatch?: () => void;
+  lassoPoints?: any[];
+  setLassoPoints?: React.Dispatch<React.SetStateAction<any[]>>;
+  fillToolColor?: string;
+  setFillToolColor?: (val: string) => void;
 }
 
 export default function LeftPanel({
@@ -91,6 +100,12 @@ export default function LeftPanel({
   setAdaptiveSubdivisionEnabled,
   adaptiveSubdivisionPoints,
   setAdaptiveSubdivisionPoints,
+  duplicateObject,
+  duplicateLassoBatch,
+  lassoPoints,
+  setLassoPoints,
+  fillToolColor,
+  setFillToolColor,
 }: LeftPanelProps) {
   const [expandedNodes, setExpandedNodes] = useState<{ [id: string]: boolean }>({});
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -118,7 +133,10 @@ export default function LeftPanel({
 
   const handleRenameSave = (id: string) => {
     if (renameText.trim()) {
-      updateObject(id, { name: renameText.trim() });
+      const sanitized = sanitizeString(renameText.trim());
+      if (sanitized) {
+        updateObject(id, { name: sanitized });
+      }
     }
     setRenamingId(null);
   };
@@ -196,7 +214,9 @@ export default function LeftPanel({
 
   // Advanced Layer operations
   const handleAddLayer = () => {
-    const name = prompt("Enter new layer name:", `Layer ${layers.length + 1}`);
+    const rawName = prompt("Enter new layer name:", `Layer ${layers.length + 1}`);
+    if (!rawName) return;
+    const name = sanitizeString(rawName);
     if (!name) return;
     const id = `layer_${Date.now()}`;
     const nextZ = layers.length > 0 ? Math.max(...layers.map(l => l.zIndex)) + 1 : 1;
@@ -342,6 +362,16 @@ export default function LeftPanel({
             <button
               onClick={(e) => {
                 e.stopPropagation();
+                duplicateObject(obj.id);
+              }}
+              className="p-1 rounded hover:bg-neutral-700 text-neutral-400 hover:text-amber-400"
+              title="Duplicate drawing"
+            >
+              <Copy className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
                 deleteObject(obj.id);
               }}
               className="p-1 rounded hover:bg-neutral-700 text-neutral-400 hover:text-rose-400"
@@ -477,6 +507,114 @@ export default function LeftPanel({
                 </div>
               </div>
             </div>
+
+            {/* 📋 Selected Drawing Quick Controls */}
+            {selectedObjectId && objects[selectedObjectId] && (
+              <div className="border border-neutral-800 bg-neutral-950/80 rounded-2xl p-3 space-y-2.5 shrink-0 shadow-lg" id="selected-drawing-controls">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-amber-400">
+                    <Copy className="w-3.5 h-3.5" />
+                    <span className="text-[10px] font-black uppercase tracking-wider">Drawing Controls</span>
+                  </div>
+                  <span className="text-[9px] text-neutral-500 font-mono">SELECTED</span>
+                </div>
+                <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl p-2 flex items-center justify-between gap-2">
+                  <span className="text-xs truncate font-bold text-neutral-200 flex-1">{objects[selectedObjectId].name}</span>
+                  <button
+                    onClick={() => duplicateObject(selectedObjectId)}
+                    className="bg-amber-500 hover:bg-amber-600 text-neutral-950 text-[10px] font-black px-2.5 py-1 rounded-lg uppercase tracking-wider transition-all cursor-pointer shadow-md shrink-0"
+                  >
+                    Duplicate
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* 🎯 Lasso Batch Duplicate Option */}
+            {activeTool === 'LSO' && (
+              <div className="border border-amber-500/30 bg-neutral-950/90 rounded-2xl p-3 space-y-3 shrink-0 shadow-lg animate-fade-in" id="lasso-batch-panel">
+                <div className="flex items-center gap-1.5 text-amber-400">
+                  <Sparkles className="w-3.5 h-3.5 animate-pulse" />
+                  <span className="text-[10px] font-black uppercase tracking-wider font-sans">Lasso Batch Actions</span>
+                </div>
+                <p className="text-[9px] text-neutral-400 leading-normal font-medium">
+                  Draw a closed loop on the canvas around multiple drawings, then duplicate all of them instantly in batch!
+                </p>
+                
+                {lassoPoints && lassoPoints.length >= 3 ? (
+                  <div className="space-y-2 bg-neutral-900/60 p-2 rounded-xl border border-neutral-800">
+                    <div className="flex justify-between text-[10px]">
+                      <span className="text-neutral-400 font-bold">Lasso Loop:</span>
+                      <span className="text-emerald-400 font-mono font-black">Closed ({lassoPoints.length} pts)</span>
+                    </div>
+                    <button
+                      onClick={duplicateLassoBatch}
+                      className="w-full bg-amber-500 hover:bg-amber-600 text-neutral-950 text-[10px] font-black py-1.5 rounded-lg uppercase tracking-wider transition-all cursor-pointer shadow-md"
+                    >
+                      Duplicate Lasso Batch
+                    </button>
+                  </div>
+                ) : (
+                  <div className="p-2.5 bg-neutral-900 border border-neutral-800 rounded-xl text-center">
+                    <span className="text-[9px] text-neutral-500 font-extrabold leading-normal block">Draw a closed loop on the canvas to select drawings.</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 🎨 Premium Fill Bucket Configuration */}
+            {activeTool === 'FIL' && (
+              <div className="border border-emerald-500/30 bg-neutral-950/90 rounded-2xl p-3 space-y-3 shrink-0 shadow-lg animate-fade-in" id="fill-tool-panel">
+                <div className="flex items-center gap-1.5 text-emerald-400">
+                  <PaintBucket className="w-3.5 h-3.5" />
+                  <span className="text-[10px] font-black uppercase tracking-wider">Fill Tool Controls</span>
+                </div>
+                <p className="text-[9px] text-neutral-400 leading-normal font-medium">
+                  Select a color and click on a <b>selected</b> drawing.
+                  <br />
+                  • <b>Closed Path:</b> Fills inner area (preserves stroke).
+                  <br />
+                  • <b>Open Path:</b> Color is applied directly to the stroke.
+                </p>
+
+                {/* Color Selection HUD */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] text-neutral-500 font-extrabold uppercase tracking-widest">Active Fill Color</span>
+                    <span className="text-[10px] text-emerald-400 font-mono font-bold bg-neutral-900 px-1.5 py-0.5 rounded border border-neutral-800">{fillToolColor}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={fillToolColor || '#4CAF50'}
+                      onChange={(e) => setFillToolColor?.(e.target.value)}
+                      className="w-8 h-8 rounded-lg cursor-pointer bg-transparent border-0 shrink-0"
+                    />
+                    <input
+                      type="text"
+                      value={fillToolColor || ''}
+                      onChange={(e) => setFillToolColor?.(e.target.value)}
+                      className="flex-1 bg-neutral-900 border border-neutral-800 text-[11px] px-2 py-1.5 rounded-lg text-white font-mono outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                  {/* Preset Swatches */}
+                  <div className="grid grid-cols-6 gap-1 pt-1">
+                    {['#E53935', '#D81B60', '#8E24AA', '#5E35B1', '#3949AB', '#1E88E5', '#039BE5', '#00ACC1', '#00897B', '#43A047', '#7CB342', '#FDD835', '#FFB300', '#F4511E', '#6D4C41', '#757575', '#37474F', '#000000'].map(swatch => (
+                      <button
+                        key={swatch}
+                        onClick={() => setFillToolColor?.(swatch)}
+                        style={{ backgroundColor: swatch }}
+                        className={`w-full h-4 rounded-md transition-all border ${
+                          fillToolColor === swatch ? 'border-white scale-110 shadow' : 'border-transparent hover:scale-105'
+                        }`}
+                        title={swatch}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* 360° Studio Creation Center */}
             {activeTool === '360' && (
               <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-3 space-y-3.5 animate-fade-in shrink-0">
@@ -809,6 +947,10 @@ export default function LeftPanel({
                     <p className="text-[9px] text-neutral-400 leading-normal">
                       Import raw custom 3D meshes (zipped or individual .obj, .fbx, .gltf, .json formats) with bones & textures.
                     </p>
+                    <div className="text-[8px] text-amber-500/90 font-bold uppercase tracking-wider space-y-0.5 bg-neutral-900/40 p-1.5 rounded border border-neutral-800/30">
+                      <div>• Max File Size: 10 MB</div>
+                      <div>• Max Daily Quota: 10 models / day</div>
+                    </div>
                     <label className="w-full flex items-center justify-center gap-1.5 py-1.5 border border-dashed border-neutral-800 hover:border-amber-500/40 bg-neutral-900/60 hover:bg-neutral-900 rounded-lg cursor-pointer transition-all text-[9.5px] text-neutral-400 hover:text-white font-black uppercase">
                       <span>Upload 3D Mesh file</span>
                       <input 
@@ -818,14 +960,36 @@ export default function LeftPanel({
                         onChange={async (e) => {
                           const file = e.target.files?.[0];
                           if (!file) return;
+
+                          // Strict file size check: 10 MB limit
+                          const maxSizeBytes = 10 * 1024 * 1024;
+                          if (file.size > maxSizeBytes) {
+                            alert(`Upload Blocked: File is not accepted because the file size is greater than 10 MB. (Uploaded file size: ${(file.size / (1024 * 1024)).toFixed(2)} MB).`);
+                            e.target.value = '';
+                            return;
+                          }
+
+                          // Strict daily quota check
+                          const email = currentUser || 'guest';
+                          const limitStatus = getDailyLimitStatus(email);
+                          if (!limitStatus.allowed) {
+                            alert("Upload Blocked: Strict limit of 10 3D models per day has been reached. Please try again tomorrow.");
+                            e.target.value = '';
+                            return;
+                          }
+
                           try {
                             const mesh = await parse3DModelFile(file);
                             if (addCustom3DModel) {
                               addCustom3DModel(mesh, file.name);
+                              alert(`Successfully imported custom 3D model "${file.name}"!`);
                             }
-                          } catch (err) {
-                            alert("Failed to parse the uploaded 3D mesh format.");
+                          } catch (err: any) {
+                            console.error("Custom 3D mesh parsing failed:", err);
+                            alert(`Failed to parse the uploaded 3D mesh format: ${err.message || err}. Please ensure it is a valid format (JSON, OBJ, FBX, GLTF, or ZIP containing these).`);
                           }
+                          
+                          e.target.value = ''; // clear input after load
                         }}
                       />
                     </label>
