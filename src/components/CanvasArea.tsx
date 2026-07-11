@@ -965,6 +965,7 @@ export default function CanvasArea({
   const dragStartOffsetRef = useRef<Point>({ x: 0, y: 0 });
   const lastPinchOffsetRef = useRef<Point>({ x: 0, y: 0 });
   const lastPinchScaleRef = useRef<number>(1);
+  const selectedObjInitialTransformRef = useRef<Transform | null>(null);
 
   // Get coordinates relative to canvas bounding box with zoom/pan applied
   const getCanvasCoords = (e: React.PointerEvent<HTMLCanvasElement>): Point => {
@@ -1284,8 +1285,26 @@ export default function CanvasArea({
     }
 
     if (pointerIds.length === 2) {
-      // Ignore zoom on other tools to prevent accidental canvas manipulation,
-      // as zoom tool is now dedicated.
+      if (activeTool === 'SEL') {
+        const p1 = activePointersRef.current[Number(pointerIds[0])];
+        const p2 = activePointersRef.current[Number(pointerIds[1])];
+        const dist = distance(p1, p2);
+        lastPinchDistRef.current = dist;
+
+        if (selectedObjectId && objects[selectedObjectId]) {
+          const obj = objects[selectedObjectId];
+          selectedObjInitialTransformRef.current = { ...obj.transform };
+          setDragMode('pinchScaleObj');
+        } else {
+          lastPinchMidRef.current = {
+            x: (p1.x + p2.x) / 2,
+            y: (p1.y + p2.y) / 2
+          };
+          lastPinchOffsetRef.current = { ...zoomOffset };
+          lastPinchScaleRef.current = zoomScale;
+          setDragMode('zoom');
+        }
+      }
       return;
     }
 
@@ -1879,6 +1898,86 @@ export default function CanvasArea({
     const coords = getCanvasCoords(e);
     setCurrentCursorPos(coords);
 
+    if (activeTool === 'SEL') {
+      const pointerIds = Object.keys(activePointersRef.current);
+      if (dragMode === 'pinchScaleObj' && pointerIds.length === 2 && selectedObjectId) {
+        const p1 = activePointersRef.current[Number(pointerIds[0])];
+        const p2 = activePointersRef.current[Number(pointerIds[1])];
+        const dist = distance(p1, p2);
+        if (lastPinchDistRef.current > 0 && selectedObjInitialTransformRef.current) {
+          const ratio = dist / lastPinchDistRef.current;
+          let scaleX = Number((selectedObjInitialTransformRef.current.scaleX * ratio).toFixed(4));
+          let scaleY = Number((selectedObjInitialTransformRef.current.scaleY * ratio).toFixed(4));
+          
+          scaleX = Math.min(20.0, Math.max(0.05, scaleX));
+          scaleY = Math.min(20.0, Math.max(0.05, scaleY));
+          
+          const obj = objects[selectedObjectId];
+          if (obj) {
+            if (obj.parentId && objects[obj.parentId]) {
+              const parent = objects[obj.parentId];
+              const isParentClosed = parent.type === 'shape' && parent.shapeType !== 'line';
+              if (isParentClosed) {
+                const testTransform = { ...obj.transform, scaleX, scaleY };
+                if (!isChildInsideParent(obj, parent, testTransform, objects)) {
+                  scaleX = obj.transform.scaleX;
+                  scaleY = obj.transform.scaleY;
+                }
+              }
+            }
+            
+            setObjects(prev => {
+              if (!prev[selectedObjectId]) return prev;
+              const updated = { ...prev };
+              updated[selectedObjectId] = {
+                ...updated[selectedObjectId],
+                transform: {
+                  ...updated[selectedObjectId].transform,
+                  scaleX,
+                  scaleY
+                }
+              };
+              return updated;
+            });
+          }
+        }
+        return;
+      }
+      
+      if (dragMode === 'zoom' && pointerIds.length === 2) {
+        const p1 = activePointersRef.current[Number(pointerIds[0])];
+        const p2 = activePointersRef.current[Number(pointerIds[1])];
+        const dist = distance(p1, p2);
+        if (lastPinchDistRef.current > 0) {
+          const scaleChange = dist / lastPinchDistRef.current;
+          let nextScale = lastPinchScaleRef.current * scaleChange;
+          
+          nextScale = Math.min(10.0, Math.max(0.15, nextScale));
+          
+          const midX = (p1.x + p2.x) / 2;
+          const midY = (p1.y + p2.y) / 2;
+          
+          const canvas = frontCanvasRef.current;
+          if (canvas) {
+            const rect = canvas.getBoundingClientRect();
+            const appScale = (window as any).__appScale || 1;
+            const midCanvasX = (midX - rect.left) / appScale;
+            const midCanvasY = (midY - rect.top) / appScale;
+            
+            const worldX = (midCanvasX - lastPinchOffsetRef.current.x) / lastPinchScaleRef.current;
+            const worldY = (midCanvasY - lastPinchOffsetRef.current.y) / lastPinchScaleRef.current;
+            
+            const nextOffsetX = midCanvasX - worldX * nextScale;
+            const nextOffsetY = midCanvasY - worldY * nextScale;
+            
+            setZoomScale(nextScale);
+            setZoomOffset({ x: nextOffsetX, y: nextOffsetY });
+          }
+        }
+        return;
+      }
+    }
+
     if (activeTool === 'ZOM') {
       const pointerIds = Object.keys(activePointersRef.current);
       if (dragMode === 'zoom' && pointerIds.length === 2) {
@@ -2449,6 +2548,25 @@ export default function CanvasArea({
       delete activePointersRef.current[e.pointerId];
     } else {
       activePointersRef.current = {};
+    }
+
+    if (dragMode === 'pinchScaleObj') {
+      const pointerIds = Object.keys(activePointersRef.current);
+      if (pointerIds.length === 1) {
+        const pt = activePointersRef.current[Number(pointerIds[0])];
+        if (pt && selectedObjectId && objects[selectedObjectId]) {
+          const coords = getCanvasCoords({ clientX: pt.x, clientY: pt.y } as any);
+          setDragStartPoint(coords);
+          setInitialTransform({ ...objects[selectedObjectId].transform });
+          setDragMode('move');
+        } else {
+          setDragMode('none');
+        }
+      } else {
+        setDragMode('none');
+      }
+      historyPush();
+      return;
     }
 
     if (dragMode === 'zoom' || dragMode === 'pan') {
