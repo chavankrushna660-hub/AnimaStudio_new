@@ -114,6 +114,10 @@ interface RightPanelProps {
   convertTo3D?: (id: string) => void;
   brushSettings?: BrushSettings;
   setBrushSettings?: React.Dispatch<React.SetStateAction<BrushSettings>>;
+  selectedDeformPointIndex?: number | null;
+  selectedDeformPointType?: 'standard' | 'grid' | '3d' | null;
+  deformPointTransform?: Transform;
+  updateDeformPointTransform?: (property: string, value: number) => void;
 }
 
 const isChildInsideParent = (
@@ -170,6 +174,10 @@ export default function RightPanel({
   convertTo3D,
   brushSettings,
   setBrushSettings,
+  selectedDeformPointIndex,
+  selectedDeformPointType,
+  deformPointTransform,
+  updateDeformPointTransform,
 }: RightPanelProps) {
   // Batch/Smart Controls check state
   const [smartCheckedIds, setSmartCheckedIds] = useState<{ [id: string]: boolean }>({});
@@ -177,10 +185,13 @@ export default function RightPanel({
   const [edgeExtrudeDist, setEdgeExtrudeDist] = useState<number>(30);
 
   const isLassoActive = !!selectedObject?.lassoDeformState?.active;
+  const isDeformPointActive = activeTool === 'MSH' && selectedDeformPointIndex !== undefined && selectedDeformPointIndex !== null;
   const currentTransformObj = selectedObject 
-    ? (isLassoActive 
-        ? (selectedObject.lassoDeformState?.transform || { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, skewX: 0, skewY: 0, rotateX: 0, rotateY: 0, perspective: 0 })
-        : selectedObject.transform)
+    ? (isDeformPointActive
+        ? (deformPointTransform || { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, skewX: 0, skewY: 0, rotateX: 0, rotateY: 0, perspective: 0, cameraAngleX: 0, cameraAngleY: 0 })
+        : (isLassoActive 
+            ? (selectedObject.lassoDeformState?.transform || { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, skewX: 0, skewY: 0, rotateX: 0, rotateY: 0, perspective: 0 })
+            : selectedObject.transform))
     : null;
 
   // AI Smooth Motion & Loop Generator States
@@ -1078,6 +1089,13 @@ export default function RightPanel({
   const handleNudge = (property: string, amount: number) => {
     if (!selectedObject) return;
 
+    if (isDeformPointActive && updateDeformPointTransform) {
+      const val = (deformPointTransform as any)[property] || 0;
+      const nextVal = Number((val + amount).toFixed(2));
+      updateDeformPointTransform(property, nextVal);
+      return;
+    }
+
     // Apply to selected drawing's active lasso region if active
     if (selectedObject.lassoDeformState?.active) {
       const currentLassoState = selectedObject.lassoDeformState;
@@ -1155,6 +1173,11 @@ export default function RightPanel({
 
   const handleSliderChange = (property: string, value: number) => {
     if (!selectedObject) return;
+
+    if (isDeformPointActive && updateDeformPointTransform) {
+      updateDeformPointTransform(property, value);
+      return;
+    }
 
     // Apply to selected drawing's active lasso region if active
     if (selectedObject.lassoDeformState?.active) {
@@ -3767,7 +3790,7 @@ export default function RightPanel({
                       {/* Slider: Translate X */}
                       <div className="space-y-1">
                         <div className="flex items-center justify-between text-xs">
-                          <span className="text-neutral-400">{isLassoActive ? 'Lasso Region X Nudge' : 'Smooth Translate X'}</span>
+                          <span className="text-neutral-400">{isLassoActive ? 'Lasso Region X Nudge' : isDeformPointActive ? 'Point Translate X' : 'Smooth Translate X'}</span>
                           <span className="text-white font-bold">{currentTransformObj ? currentTransformObj.x.toFixed(1) : '0.0'}px</span>
                         </div>
                         <input
@@ -3775,35 +3798,35 @@ export default function RightPanel({
                           min="-500"
                           max="1500"
                           step="0.5"
-                          disabled={!isLassoActive && !isSmoothMoveEnabled}
+                          disabled={!isLassoActive && !isSmoothMoveEnabled && !isDeformPointActive}
                           value={currentTransformObj ? currentTransformObj.x : 0}
                           onChange={(e) => handleSliderChange('x', Number(e.target.value))}
                           className="w-full accent-amber-500 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
                         />
                         <div className="flex items-center justify-between gap-1.5 pt-0.5">
                           <button
-                            disabled={!isLassoActive && !isSmoothMoveEnabled}
+                            disabled={!isLassoActive && !isSmoothMoveEnabled && !isDeformPointActive}
                             onClick={() => handleNudge('x', -10)}
                             className="flex-1 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-40 disabled:pointer-events-none"
                           >
                             -10px
                           </button>
                           <button
-                            disabled={!isLassoActive && !isSmoothMoveEnabled}
+                            disabled={!isLassoActive && !isSmoothMoveEnabled && !isDeformPointActive}
                             onClick={() => handleNudge('x', -1)}
                             className="flex-1 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-40 disabled:pointer-events-none"
                           >
                             -1px
                           </button>
                           <button
-                            disabled={!isLassoActive && !isSmoothMoveEnabled}
+                            disabled={!isLassoActive && !isSmoothMoveEnabled && !isDeformPointActive}
                             onClick={() => handleNudge('x', 1)}
                             className="flex-1 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-40 disabled:pointer-events-none"
                           >
                             +1px
                           </button>
                           <button
-                            disabled={!isLassoActive && !isSmoothMoveEnabled}
+                            disabled={!isLassoActive && !isSmoothMoveEnabled && !isDeformPointActive}
                             onClick={() => handleNudge('x', 10)}
                             className="flex-1 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-40 disabled:pointer-events-none"
                           >
@@ -3815,7 +3838,7 @@ export default function RightPanel({
                       {/* Slider: Translate Y */}
                       <div className="space-y-1">
                         <div className="flex items-center justify-between text-xs">
-                          <span className="text-neutral-400">{isLassoActive ? 'Lasso Region Y Nudge' : 'Smooth Translate Y'}</span>
+                          <span className="text-neutral-400">{isLassoActive ? 'Lasso Region Y Nudge' : isDeformPointActive ? 'Point Translate Y' : 'Smooth Translate Y'}</span>
                           <span className="text-white font-bold">{currentTransformObj ? currentTransformObj.y.toFixed(1) : '0.0'}px</span>
                         </div>
                         <input
@@ -3823,35 +3846,35 @@ export default function RightPanel({
                           min="-500"
                           max="1500"
                           step="0.5"
-                          disabled={!isLassoActive && !isSmoothMoveEnabled}
+                          disabled={!isLassoActive && !isSmoothMoveEnabled && !isDeformPointActive}
                           value={currentTransformObj ? currentTransformObj.y : 0}
                           onChange={(e) => handleSliderChange('y', Number(e.target.value))}
                           className="w-full accent-amber-500 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
                         />
                         <div className="flex items-center justify-between gap-1.5 pt-0.5">
                           <button
-                            disabled={!isLassoActive && !isSmoothMoveEnabled}
+                            disabled={!isLassoActive && !isSmoothMoveEnabled && !isDeformPointActive}
                             onClick={() => handleNudge('y', -10)}
                             className="flex-1 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-40 disabled:pointer-events-none"
                           >
                             -10px
                           </button>
                           <button
-                            disabled={!isLassoActive && !isSmoothMoveEnabled}
+                            disabled={!isLassoActive && !isSmoothMoveEnabled && !isDeformPointActive}
                             onClick={() => handleNudge('y', -1)}
                             className="flex-1 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-40 disabled:pointer-events-none"
                           >
                             -1px
                           </button>
                           <button
-                            disabled={!isLassoActive && !isSmoothMoveEnabled}
+                            disabled={!isLassoActive && !isSmoothMoveEnabled && !isDeformPointActive}
                             onClick={() => handleNudge('y', 1)}
                             className="flex-1 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-40 disabled:pointer-events-none"
                           >
                             +1px
                           </button>
                           <button
-                            disabled={!isLassoActive && !isSmoothMoveEnabled}
+                            disabled={!isLassoActive && !isSmoothMoveEnabled && !isDeformPointActive}
                             onClick={() => handleNudge('y', 10)}
                             className="flex-1 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-40 disabled:pointer-events-none"
                           >
@@ -3867,7 +3890,16 @@ export default function RightPanel({
                 <div className="space-y-4">
                   <div className="text-[10px] text-neutral-500 font-black uppercase tracking-wider flex items-center gap-1">
                     <Maximize2 className="w-3.5 h-3.5 text-amber-500" />
-                    TRANSFORMS (PRECISION) {isLassoActive && <span className="text-[9px] text-amber-400 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded ml-auto">LASSO SELECTED</span>}
+                    TRANSFORMS (PRECISION){' '}
+                    {isDeformPointActive ? (
+                      <span className="text-[9px] text-amber-400 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded ml-auto">
+                        POINT #{selectedDeformPointIndex} ({selectedDeformPointType?.toUpperCase()}) SELECTED
+                      </span>
+                    ) : isLassoActive ? (
+                      <span className="text-[9px] text-amber-400 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded ml-auto">
+                        LASSO SELECTED
+                      </span>
+                    ) : null}
                   </div>
 
                   {/* Slider: Rotate */}

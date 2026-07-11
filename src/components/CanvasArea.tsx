@@ -538,6 +538,12 @@ interface CanvasAreaProps {
   fillToolColor?: string;
   brushSettings?: BrushSettings;
   setBrushSettings?: React.Dispatch<React.SetStateAction<BrushSettings>>;
+  selectedDeformPointIndex?: number | null;
+  setSelectedDeformPointIndex?: (idx: number | null) => void;
+  selectedDeformPointType?: 'standard' | 'grid' | '3d' | null;
+  setSelectedDeformPointType?: (type: 'standard' | 'grid' | '3d' | null) => void;
+  setOriginalDeformPointCoords?: (coords: { x: number; y: number; z?: number } | null) => void;
+  setDeformPointTransform?: (t: Transform) => void;
 }
 
 export default function CanvasArea({
@@ -578,6 +584,12 @@ export default function CanvasArea({
   fillToolColor = '#4CAF50',
   brushSettings,
   setBrushSettings,
+  selectedDeformPointIndex = null,
+  setSelectedDeformPointIndex,
+  selectedDeformPointType = null,
+  setSelectedDeformPointType,
+  setOriginalDeformPointCoords,
+  setDeformPointTransform,
 }: CanvasAreaProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const backCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -1622,6 +1634,18 @@ export default function CanvasArea({
             setDragMode('meshPoint');
             setDraggedMeshPointIndex(clickedVtxIdx);
             setDragStartPoint(coords);
+            if (setSelectedDeformPointIndex && setSelectedDeformPointType && setOriginalDeformPointCoords && setDeformPointTransform) {
+              setSelectedDeformPointIndex(clickedVtxIdx);
+              setSelectedDeformPointType('3d');
+              setOriginalDeformPointCoords({
+                x: obj.vertices3D[clickedVtxIdx].x,
+                y: obj.vertices3D[clickedVtxIdx].y,
+                z: obj.vertices3D[clickedVtxIdx].z
+              });
+              setDeformPointTransform({
+                x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, skewX: 0, skewY: 0, rotateX: 0, rotateY: 0, perspective: 0, cameraAngleX: 0, cameraAngleY: 0
+              });
+            }
             return;
           }
         }
@@ -1642,6 +1666,17 @@ export default function CanvasArea({
             setDragMode('meshGridPoint');
             setDraggedMeshPointIndex(clickedMptIndex);
             setDragStartPoint(coords);
+            if (setSelectedDeformPointIndex && setSelectedDeformPointType && setOriginalDeformPointCoords && setDeformPointTransform) {
+              setSelectedDeformPointIndex(clickedMptIndex);
+              setSelectedDeformPointType('grid');
+              setOriginalDeformPointCoords({
+                x: obj.meshState.points[clickedMptIndex].currentX,
+                y: obj.meshState.points[clickedMptIndex].currentY
+              });
+              setDeformPointTransform({
+                x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, skewX: 0, skewY: 0, rotateX: 0, rotateY: 0, perspective: 0, cameraAngleX: 0, cameraAngleY: 0
+              });
+            }
             return;
           }
         } else {
@@ -1662,6 +1697,17 @@ export default function CanvasArea({
             setDragMode('meshPoint');
             setDraggedMeshPointIndex(clickedPointIndex);
             setDragStartPoint(coords);
+            if (setSelectedDeformPointIndex && setSelectedDeformPointType && setOriginalDeformPointCoords && setDeformPointTransform) {
+              setSelectedDeformPointIndex(clickedPointIndex);
+              setSelectedDeformPointType('standard');
+              setOriginalDeformPointCoords({
+                x: obj.points[clickedPointIndex].x,
+                y: obj.points[clickedPointIndex].y
+              });
+              setDeformPointTransform({
+                x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, skewX: 0, skewY: 0, rotateX: 0, rotateY: 0, perspective: 0, cameraAngleX: 0, cameraAngleY: 0
+              });
+            }
             return;
           }
         }
@@ -2939,6 +2985,28 @@ export default function CanvasArea({
         }
       }
 
+      if ((dragMode === 'meshPoint' || dragMode === 'meshGridPoint') && selectedObjectId && draggedMeshPointIndex !== null) {
+        const obj = objects[selectedObjectId];
+        if (obj) {
+          let updatedCoords = null;
+          if (dragMode === 'meshPoint' && obj.type === '3d' && obj.vertices3D) {
+            updatedCoords = obj.vertices3D[draggedMeshPointIndex];
+          } else if (dragMode === 'meshGridPoint' && obj.meshState && obj.meshState.points) {
+            const pt = obj.meshState.points[draggedMeshPointIndex];
+            updatedCoords = pt ? { x: pt.currentX, y: pt.currentY } : null;
+          } else {
+            updatedCoords = obj.points[draggedMeshPointIndex];
+          }
+
+          if (updatedCoords && setOriginalDeformPointCoords && setDeformPointTransform) {
+            setOriginalDeformPointCoords(updatedCoords);
+            setDeformPointTransform({
+              x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, skewX: 0, skewY: 0, rotateX: 0, rotateY: 0, perspective: 0, cameraAngleX: 0, cameraAngleY: 0
+            });
+          }
+        }
+      }
+
       setDragMode('none');
       setDraggedMeshPointIndex(null);
       setIsPlayingState(false);
@@ -3506,9 +3574,10 @@ export default function CanvasArea({
         if (selectedObjectId === drawObj.id && (activeTool === 'MSH' || activeTool === 'BON')) {
           ctx.save();
           projected.forEach((p, idx) => {
+            const isSelected = selectedDeformPointIndex === idx && selectedDeformPointType === '3d';
             ctx.beginPath();
-            ctx.arc(p.x, p.y, idx === draggedMeshPointIndex ? 6 : 4, 0, Math.PI * 2);
-            ctx.fillStyle = idx === draggedMeshPointIndex ? '#F59E0B' : '#3B82F6';
+            ctx.arc(p.x, p.y, (idx === draggedMeshPointIndex || isSelected) ? 7 : 4, 0, Math.PI * 2);
+            ctx.fillStyle = (idx === draggedMeshPointIndex || isSelected) ? '#F59E0B' : '#3B82F6';
             ctx.strokeStyle = '#FFFFFF';
             ctx.lineWidth = 1;
             ctx.fill();
@@ -4008,9 +4077,10 @@ export default function CanvasArea({
         // 2. Draw Mesh Grid points
         if (showPoints) {
           worldMeshPoints.forEach((mpt, idx) => {
+            const isSelected = selectedDeformPointIndex === idx && selectedDeformPointType === 'grid';
             ctx.beginPath();
-            ctx.arc(mpt.x, mpt.y, 5, 0, Math.PI * 2);
-            ctx.fillStyle = (dragMode === 'meshGridPoint' && draggedMeshPointIndex === idx) ? '#F59E0B' : '#3B82F6';
+            ctx.arc(mpt.x, mpt.y, (dragMode === 'meshGridPoint' && draggedMeshPointIndex === idx || isSelected) ? 7 : 5, 0, Math.PI * 2);
+            ctx.fillStyle = (dragMode === 'meshGridPoint' && draggedMeshPointIndex === idx || isSelected) ? '#F59E0B' : '#3B82F6';
             ctx.fill();
             ctx.strokeStyle = '#FFFFFF';
             ctx.lineWidth = 1;
@@ -4035,9 +4105,10 @@ export default function CanvasArea({
         }
         
         worldPts.forEach((pt, i) => {
+          const isSelected = selectedDeformPointIndex === i && selectedDeformPointType === 'standard';
           ctx.beginPath();
-          ctx.arc(pt.x, pt.y, 6, 0, Math.PI * 2);
-          ctx.fillStyle = (dragMode === 'meshPoint' && draggedMeshPointIndex === i) ? '#F59E0B' : '#3B82F6';
+          ctx.arc(pt.x, pt.y, (dragMode === 'meshPoint' && draggedMeshPointIndex === i || isSelected) ? 8 : 6, 0, Math.PI * 2);
+          ctx.fillStyle = (dragMode === 'meshPoint' && draggedMeshPointIndex === i || isSelected) ? '#F59E0B' : '#3B82F6';
           ctx.fill();
           ctx.strokeStyle = '#FFFFFF';
           ctx.lineWidth = 1.5;

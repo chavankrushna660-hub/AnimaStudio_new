@@ -37,7 +37,7 @@ import LeftPanel from './components/LeftPanel';
 import RightPanel from './components/RightPanel';
 import CanvasArea from './components/CanvasArea';
 import Timeline from './components/Timeline';
-import { VectorObject, Bone, Layer, Frame, Point, RealismSettings, View360, BrushSettings } from './types';
+import { VectorObject, Bone, Layer, Frame, Point, RealismSettings, View360, BrushSettings, Transform } from './types';
 import { localToWorld, rotatePoint, calculateBoundingBox } from './utils/math';
 import { 
   validateSimpleAuth, 
@@ -52,6 +52,90 @@ import {
   incrementDailyLimit,
   extrude2DTo3D
 } from './utils/engine3D';
+
+export function transformDeformPoint(
+  orig: { x: number; y: number; z?: number },
+  t: Transform,
+  pivot: { x: number; y: number }
+): { x: number; y: number; z?: number } {
+  // 1. Pivot translation (move pivot to origin)
+  let x = orig.x - pivot.x;
+  let y = orig.y - pivot.y;
+  let z = orig.z || 0;
+
+  // 2. Scale
+  const sx = t.scaleX !== undefined ? t.scaleX : 1;
+  const sy = t.scaleY !== undefined ? t.scaleY : 1;
+  x *= sx;
+  y *= sy;
+
+  // 3. Skew
+  const skX = t.skewX || 0;
+  const skY = t.skewY || 0;
+  if (skX !== 0 || skY !== 0) {
+    const originalX = x;
+    const originalY = y;
+    x = originalX + originalY * Math.tan(skX * Math.PI / 180);
+    y = originalY + originalX * Math.tan(skY * Math.PI / 180);
+  }
+
+  // 4. 3D Rotations (Euler Angles)
+  const rotX = t.rotateX || 0;
+  const rotY = t.rotateY || 0;
+  const rotZ = t.rotation || 0;
+
+  // Pitch (Rotate around X axis)
+  if (rotX !== 0) {
+    const radX = rotX * Math.PI / 180;
+    const cosX = Math.cos(radX);
+    const sinX = Math.sin(radX);
+    const newY = y * cosX - z * sinX;
+    const newZ = y * sinX + z * cosX;
+    y = newY;
+    z = newZ;
+  }
+
+  // Yaw (Rotate around Y axis)
+  if (rotY !== 0) {
+    const radY = rotY * Math.PI / 180;
+    const cosY = Math.cos(radY);
+    const sinY = Math.sin(radY);
+    const newX = x * cosY + z * sinY;
+    const newZ = -x * sinY + z * cosY;
+    x = newX;
+    z = newZ;
+  }
+
+  // Roll (Rotate around Z axis)
+  if (rotZ !== 0) {
+    const radZ = rotZ * Math.PI / 180;
+    const cosZ = Math.cos(radZ);
+    const sinZ = Math.sin(radZ);
+    const newX = x * cosZ - y * sinZ;
+    const newY = x * sinZ + y * cosZ;
+    x = newX;
+    y = newY;
+  }
+
+  // 5. Perspective
+  const perspective = t.perspective || 0;
+  if (perspective > 0) {
+    const sz = 1 / (1 - z / perspective);
+    x *= sz;
+    y *= sz;
+  }
+
+  // 6. Translation
+  x += t.x;
+  y += t.y;
+
+  // 7. Pivot translation back
+  return {
+    x: x + pivot.x,
+    y: y + pivot.y,
+    z: z
+  };
+}
 
 interface AdItem {
   id: number;
@@ -282,6 +366,91 @@ export default function App() {
   const [objects, setObjects] = useState<{ [id: string]: VectorObject }>({});
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<string>('SEL');
+
+  // Deform/Mesh point selection and transform state
+  const [selectedDeformPointIndex, setSelectedDeformPointIndex] = useState<number | null>(null);
+  const [selectedDeformPointType, setSelectedDeformPointType] = useState<'standard' | 'grid' | '3d' | null>(null);
+  const [originalDeformPointCoords, setOriginalDeformPointCoords] = useState<{ x: number; y: number; z?: number } | null>(null);
+  const [deformPointTransform, setDeformPointTransform] = useState<Transform>({
+    x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, skewX: 0, skewY: 0, rotateX: 0, rotateY: 0, perspective: 0, cameraAngleX: 0, cameraAngleY: 0
+  });
+
+  const updateDeformPointTransform = (property: string, value: number) => {
+    if (!selectedObjectId || selectedDeformPointIndex === null || !selectedDeformPointType) return;
+    const obj = objects[selectedObjectId];
+    if (!obj) return;
+
+    const px = obj.pivots[0]?.localX || 0;
+    const py = obj.pivots[0]?.localY || 0;
+
+    const nextTransform = {
+      ...deformPointTransform,
+      [property]: value
+    };
+    setDeformPointTransform(nextTransform);
+
+    if (!originalDeformPointCoords) return;
+
+    const transformed = transformDeformPoint(originalDeformPointCoords, nextTransform, { x: px, y: py });
+
+    setObjects(prev => {
+      const currentObj = prev[selectedObjectId];
+      if (!currentObj) return prev;
+
+      if (selectedDeformPointType === '3d' && currentObj.vertices3D) {
+        const nextVtx = [...currentObj.vertices3D];
+        if (nextVtx[selectedDeformPointIndex]) {
+          nextVtx[selectedDeformPointIndex] = {
+            x: Number(transformed.x.toFixed(2)),
+            y: Number(transformed.y.toFixed(2)),
+            z: Number((transformed.z ?? 0).toFixed(2))
+          };
+        }
+        return {
+          ...prev,
+          [selectedObjectId]: {
+            ...currentObj,
+            vertices3D: nextVtx
+          }
+        };
+      } else if (selectedDeformPointType === 'grid' && currentObj.meshState?.points) {
+        const nextPoints = [...currentObj.meshState.points];
+        if (nextPoints[selectedDeformPointIndex]) {
+          nextPoints[selectedDeformPointIndex] = {
+            ...nextPoints[selectedDeformPointIndex],
+            currentX: Number(transformed.x.toFixed(2)),
+            currentY: Number(transformed.y.toFixed(2))
+          };
+        }
+        return {
+          ...prev,
+          [selectedObjectId]: {
+            ...currentObj,
+            meshState: {
+              ...currentObj.meshState,
+              points: nextPoints
+            }
+          }
+        };
+      } else {
+        const nextPoints = [...currentObj.points];
+        if (nextPoints[selectedDeformPointIndex]) {
+          nextPoints[selectedDeformPointIndex] = {
+            ...nextPoints[selectedDeformPointIndex],
+            x: Number(transformed.x.toFixed(2)),
+            y: Number(transformed.y.toFixed(2))
+          };
+        }
+        return {
+          ...prev,
+          [selectedObjectId]: {
+            ...currentObj,
+            points: nextPoints
+          }
+        };
+      }
+    });
+  };
   const [bones, setBones] = useState<Bone[]>([]);
   const [onionSkinEnabled, setOnionSkinEnabled] = useState(true);
   const [showBones, setShowBones] = useState(true);
@@ -2454,6 +2623,12 @@ export default function App() {
           fillToolColor={fillToolColor}
           brushSettings={brushSettings}
           setBrushSettings={setBrushSettings}
+          selectedDeformPointIndex={selectedDeformPointIndex}
+          setSelectedDeformPointIndex={setSelectedDeformPointIndex}
+          selectedDeformPointType={selectedDeformPointType}
+          setSelectedDeformPointType={setSelectedDeformPointType}
+          setOriginalDeformPointCoords={setOriginalDeformPointCoords}
+          setDeformPointTransform={setDeformPointTransform}
         />
 
         {/* Right Collapsible Properties, Sliders, Smart Pinned Controls */}
@@ -2504,6 +2679,10 @@ export default function App() {
           realismSettings={realismSettings}
           setRealismSettings={setRealismSettings}
           convertTo3D={convertTo3D}
+          selectedDeformPointIndex={selectedDeformPointIndex}
+          selectedDeformPointType={selectedDeformPointType}
+          deformPointTransform={deformPointTransform}
+          updateDeformPointTransform={updateDeformPointTransform}
         />
       </div>
 
