@@ -711,7 +711,7 @@ export default function App() {
       const key = e.key.toLowerCase();
       const isCtrlOrCmd = e.ctrlKey || e.metaKey;
 
-      // Handle Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y
+      // Handle Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y / Ctrl+D
       if (isCtrlOrCmd) {
         if (key === 'z') {
           e.preventDefault();
@@ -728,6 +728,18 @@ export default function App() {
           e.preventDefault();
           h.handleRedo();
           h.triggerShortcutHint("Redo (Ctrl+Y)");
+          return;
+        }
+        if (key === 'd') {
+          e.preventDefault();
+          if (h.activeTool === 'SEL' && h.selectedObjectId) {
+            h.deleteObject(h.selectedObjectId);
+            h.triggerShortcutHint("Deleted Selected Drawing (Ctrl+D)");
+          } else if (h.activeTool !== 'SEL') {
+            h.triggerShortcutHint("Select Tool must be active to delete");
+          } else {
+            h.triggerShortcutHint("No drawing selected to delete");
+          }
           return;
         }
         return;
@@ -799,6 +811,30 @@ export default function App() {
           e.preventDefault();
           h.addFrame();
           h.triggerShortcutHint("Frame Added (A)");
+          break;
+        }
+        // 'n' for next frame / switch to another frame
+        case 'n':
+        case 'N': {
+          e.preventDefault();
+          if (h.frames && h.frames.length > 0) {
+            const nextIdx = (h.currentFrameIndex + 1) % h.frames.length;
+            h.setCurrentFrameIndex(nextIdx);
+            h.triggerShortcutHint(`Switched to Frame ${nextIdx + 1}`);
+          }
+          break;
+        }
+        // 'd' for delete frame (when not ctrl/cmd key)
+        case 'd':
+        case 'D': {
+          e.preventDefault();
+          if (h.frames && h.frames.length > 1) {
+            const frameToDelete = h.currentFrameIndex;
+            h.deleteFrame(frameToDelete);
+            h.triggerShortcutHint(`Deleted Frame ${frameToDelete + 1}`);
+          } else {
+            h.triggerShortcutHint("Cannot delete the only frame");
+          }
           break;
         }
         // 'e' for eraser
@@ -2463,7 +2499,14 @@ export default function App() {
     addFrame,
     handleUndo,
     handleRedo,
-    triggerShortcutHint
+    triggerShortcutHint,
+    currentFrameIndex,
+    setCurrentFrameIndex,
+    frames,
+    deleteFrame,
+    selectedObjectId,
+    activeTool,
+    deleteObject
   };
 
   return (
