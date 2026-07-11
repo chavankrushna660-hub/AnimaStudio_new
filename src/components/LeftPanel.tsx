@@ -66,6 +66,7 @@ interface LeftPanelProps {
   setLassoPoints?: React.Dispatch<React.SetStateAction<any[]>>;
   fillToolColor?: string;
   setFillToolColor?: (val: string) => void;
+  toolbarCollapsed?: boolean;
 }
 
 export default function LeftPanel({
@@ -105,6 +106,7 @@ export default function LeftPanel({
   setLassoPoints,
   fillToolColor,
   setFillToolColor,
+  toolbarCollapsed = false,
 }: LeftPanelProps) {
   const [expandedNodes, setExpandedNodes] = useState<{ [id: string]: boolean }>({});
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -397,7 +399,7 @@ export default function LeftPanel({
 
   return (
     <div
-      className={`absolute left-14 h-full transition-all duration-200 shrink-0 z-30 ${
+      className={`absolute ${toolbarCollapsed ? 'left-14' : 'left-56'} h-full transition-all duration-200 shrink-0 z-30 ${
         open ? 'w-64' : 'w-0'
       }`}
     >

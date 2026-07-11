@@ -2818,6 +2818,7 @@ export default function App() {
           setLassoPoints={setLassoPoints}
           fillToolColor={fillToolColor}
           setFillToolColor={setFillToolColor}
+          toolbarCollapsed={toolbarCollapsed}
         />
 
         {/* Central Vector Canvas Area */}
