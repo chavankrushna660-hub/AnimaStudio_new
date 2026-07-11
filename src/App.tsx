@@ -37,7 +37,7 @@ import LeftPanel from './components/LeftPanel';
 import RightPanel from './components/RightPanel';
 import CanvasArea from './components/CanvasArea';
 import Timeline from './components/Timeline';
-import { VectorObject, Bone, Layer, Frame, Point, RealismSettings, View360 } from './types';
+import { VectorObject, Bone, Layer, Frame, Point, RealismSettings, View360, BrushSettings } from './types';
 import { localToWorld, rotatePoint, calculateBoundingBox } from './utils/math';
 import { 
   validateSimpleAuth, 
@@ -319,6 +319,21 @@ export default function App() {
   const [lassoMode, setLassoMode] = useState<'freehand' | 'pen'>('freehand');
   const [penLassoPoints, setPenLassoPoints] = useState<Point[]>([]);
   const [fillToolColor, setFillToolColor] = useState<string>('#4CAF50');
+
+  // Brush Custom Settings for lifelike drawing
+  const [brushSettings, setBrushSettings] = useState<BrushSettings>({
+    brushType: 'solid',
+    strokeColor: '#000000',
+    strokeWidth: 5,
+    strokeOpacity: 1.0,
+    hardness: 0.8,
+    blur: 0,
+    shadowEnabled: false,
+    shadowColor: '#000000',
+    shadowBlur: 4,
+    shadowOffsetX: 2,
+    shadowOffsetY: 2,
+  });
 
   // Realism Maker Settings
   const [realismSettings, setRealismSettings] = useState<RealismSettings>({
@@ -661,6 +676,7 @@ export default function App() {
 
   // Ref to track the currently loaded frame index to prevent race conditions & update loops
   const loadedFrameIndexRef = useRef<number>(0);
+  const lastSyncedObjectsRef = useRef<string>('');
 
   // Synchronize active objects back and forth between active frame and objects dictionary
   useEffect(() => {
@@ -671,9 +687,11 @@ export default function App() {
         const frameObjects = targetFrame.objects || {};
         if (Object.keys(frameObjects).length > 0) {
           loadedFrameIndexRef.current = currentFrameIndex;
+          const frameObjectsStr = JSON.stringify(frameObjects);
+          lastSyncedObjectsRef.current = frameObjectsStr;
           setObjects(prev => {
-            if (JSON.stringify(prev) !== JSON.stringify(frameObjects)) {
-              return JSON.parse(JSON.stringify(frameObjects));
+            if (JSON.stringify(prev) !== frameObjectsStr) {
+              return JSON.parse(frameObjectsStr);
             }
             return prev;
           });
@@ -683,9 +701,11 @@ export default function App() {
           if (prevFrame && prevFrame.objects && Object.keys(prevFrame.objects).length > 0) {
             const copiedObjects = JSON.parse(JSON.stringify(prevFrame.objects));
             loadedFrameIndexRef.current = currentFrameIndex;
+            const copiedStr = JSON.stringify(copiedObjects);
+            lastSyncedObjectsRef.current = copiedStr;
             
             setObjects(prev => {
-              if (JSON.stringify(prev) !== JSON.stringify(copiedObjects)) {
+              if (JSON.stringify(prev) !== copiedStr) {
                 return copiedObjects;
               }
               return prev;
@@ -694,7 +714,7 @@ export default function App() {
             setFrames(prev => {
               if (!prev[currentFrameIndex]) return prev;
               const currentFrameObjectsInState = prev[currentFrameIndex].objects || {};
-              if (JSON.stringify(currentFrameObjectsInState) !== JSON.stringify(copiedObjects)) {
+              if (JSON.stringify(currentFrameObjectsInState) !== copiedStr) {
                 const updated = [...prev];
                 updated[currentFrameIndex] = {
                   ...updated[currentFrameIndex],
@@ -706,10 +726,12 @@ export default function App() {
             });
           } else {
             loadedFrameIndexRef.current = currentFrameIndex;
+            lastSyncedObjectsRef.current = '{}';
             setObjects(prev => Object.keys(prev).length > 0 ? {} : prev);
           }
         } else {
           loadedFrameIndexRef.current = currentFrameIndex;
+          lastSyncedObjectsRef.current = '{}';
           setObjects(prev => Object.keys(prev).length > 0 ? {} : prev);
         }
       } else {
@@ -717,6 +739,12 @@ export default function App() {
       }
     } else {
       // 2. Otherwise, we are on the same frame, so sync any changes in 'objects' back to 'frames'
+      const currentObjectsStr = JSON.stringify(objects);
+      // If it matches our last synchronized string, skip synchronization to prevent loops!
+      if (currentObjectsStr === lastSyncedObjectsRef.current) {
+        return;
+      }
+
       setFrames(prev => {
         if (!prev[currentFrameIndex]) return prev;
         const currentFrameObjectsInState = prev[currentFrameIndex].objects || {};
@@ -728,10 +756,12 @@ export default function App() {
         const deletedKeys = savedKeys.filter(k => !currentKeys.includes(k));
         
         if (addedKeys.length > 0 || deletedKeys.length > 0 || 
-            JSON.stringify(currentFrameObjectsInState) !== JSON.stringify(objects)) {
+            JSON.stringify(currentFrameObjectsInState) !== currentObjectsStr) {
+          
+          lastSyncedObjectsRef.current = currentObjectsStr;
           
           const updated = prev.map((f, idx) => {
-            const frameObjects = { ...(f.objects || {}) };
+            const frameObjects = JSON.parse(JSON.stringify(f.objects || {})); // Deep clone to prevent direct state mutation!
             
             // Delete deleted objects from all frames
             deletedKeys.forEach(k => {
@@ -794,7 +824,7 @@ export default function App() {
             if (idx === currentFrameIndex) {
               return {
                 ...f,
-                objects: JSON.parse(JSON.stringify(objects))
+                objects: JSON.parse(currentObjectsStr)
               };
             } else {
               return {
@@ -2379,6 +2409,8 @@ export default function App() {
           adaptiveSubdivisionEnabled={adaptiveSubdivisionEnabled}
           adaptiveSubdivisionPoints={adaptiveSubdivisionPoints}
           fillToolColor={fillToolColor}
+          brushSettings={brushSettings}
+          setBrushSettings={setBrushSettings}
         />
 
         {/* Right Collapsible Properties, Sliders, Smart Pinned Controls */}
@@ -2389,6 +2421,8 @@ export default function App() {
           deleteObject={deleteObject}
           objects={objects}
           bones={bones}
+          brushSettings={brushSettings}
+          setBrushSettings={setBrushSettings}
           addBone={(bone) => setBones(prev => [...prev, bone])}
           deleteBone={(id) => {
             const targetBone = bones.find(b => b.id === id);
@@ -2511,26 +2545,25 @@ export default function App() {
           </button>
         </div>
       )}
-
       {/* 5. AUTH MODAL OVERLAY */}
       {isAuthModalOpen && (
         <div 
           id="auth-modal-overlay" 
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in"
         >
-          <div className="w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-2xl shadow-2xl overflow-hidden text-neutral-200">
+          <div className="w-full max-w-md bg-white border border-neutral-200 rounded-2xl shadow-2xl overflow-hidden text-neutral-800">
             {/* Header */}
-            <div className="p-5 border-b border-neutral-800 flex items-center justify-between">
+            <div className="p-5 border-b border-neutral-100 flex items-center justify-between bg-neutral-50">
               <div className="flex items-center gap-2">
-                <User className="w-5 h-5 text-amber-500" />
-                <h3 className="font-black uppercase tracking-wider text-sm text-neutral-100">Simple Authentication</h3>
+                <User className="w-5 h-5 text-amber-600" />
+                <h3 className="font-black uppercase tracking-wider text-sm text-neutral-900">Simple Authentication</h3>
               </div>
               <button
                 onClick={() => {
                   setIsAuthModalOpen(false);
                   setAuthError('');
                 }}
-                className="text-neutral-500 hover:text-neutral-300 font-black text-sm p-1.5 hover:bg-neutral-800 rounded-lg transition-all"
+                className="text-neutral-400 hover:text-neutral-700 font-black text-sm p-1.5 hover:bg-neutral-100 rounded-lg transition-all"
               >
                 ✕
               </button>
@@ -2538,56 +2571,56 @@ export default function App() {
 
             {/* Form Body */}
             <form onSubmit={handleAuthSubmit} className="p-5 space-y-4">
-              <p className="text-xs text-neutral-400 leading-relaxed">
-                Log in with your Gmail address to access your private storage slot. Your saved work will be retained securely for exactly <strong className="text-amber-400">1 day (24 hours)</strong> and then auto-deleted.
+              <p className="text-xs text-neutral-600 leading-relaxed">
+                Log in with your Gmail address to access your private storage slot. Your saved work will be retained securely for exactly <strong className="text-amber-600 font-bold">1 day (24 hours)</strong> and then auto-deleted.
               </p>
 
               {/* Alert info banner */}
-              <div className="bg-amber-500/5 border border-amber-500/10 rounded-xl p-3 text-[10.5px] text-amber-400/90 leading-relaxed space-y-1">
-                <p className="font-bold flex items-center gap-1.5 text-amber-400 text-xs">
-                  <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[10.5px] text-amber-900 leading-relaxed space-y-1">
+                <p className="font-bold flex items-center gap-1.5 text-amber-800 text-xs">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
                   Simple Credentials Rule:
                 </p>
-                <ul className="list-disc list-inside space-y-0.5 text-neutral-400">
-                  <li>Email must end with <code className="text-amber-400 text-[10px] bg-amber-500/10 px-1 py-0.5 rounded font-mono">@gmail.com</code></li>
-                  <li>Password: <code className="text-amber-400 text-[10px] bg-amber-500/10 px-1 py-0.5 rounded font-mono">123456</code> or <code className="text-amber-400 text-[10px] bg-amber-500/10 px-1 py-0.5 rounded font-mono">password</code></li>
+                <ul className="list-disc list-inside space-y-0.5 text-neutral-600">
+                  <li>Email must end with <code className="text-amber-800 text-[10px] bg-amber-100 px-1 py-0.5 rounded font-mono font-bold">@gmail.com</code></li>
+                  <li>Password: <code className="text-amber-800 text-[10px] bg-amber-100 px-1 py-0.5 rounded font-mono font-bold">123456</code> or <code className="text-amber-800 text-[10px] bg-amber-100 px-1 py-0.5 rounded font-mono font-bold">password</code></li>
                 </ul>
               </div>
 
               {authError && (
-                <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-xl p-3 text-xs font-semibold">
+                <div className="bg-rose-50 border border-rose-200 text-rose-800 rounded-xl p-3 text-xs font-semibold">
                   ⚠️ {authError}
                 </div>
               )}
 
               {/* Email */}
               <div className="space-y-1.5">
-                <label className="text-[10px] text-neutral-400 font-black uppercase tracking-wider block">Gmail Address</label>
+                <label className="text-[10px] text-neutral-500 font-black uppercase tracking-wider block">Gmail Address</label>
                 <div className="relative">
-                  <Mail className="absolute left-3 top-2.5 w-4 h-4 text-neutral-500" />
+                  <Mail className="absolute left-3 top-2.5 w-4 h-4 text-neutral-400" />
                   <input
                     type="email"
                     required
                     placeholder="yourname@gmail.com"
                     value={authEmail}
                     onChange={(e) => setAuthEmail(e.target.value)}
-                    className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 pl-9 pr-4 text-xs font-medium text-white placeholder-neutral-600 outline-none transition-all"
+                    className="w-full bg-neutral-50 border border-neutral-200 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 rounded-xl py-2 pl-9 pr-4 text-xs font-medium text-neutral-900 placeholder-neutral-400 outline-none transition-all"
                   />
                 </div>
               </div>
 
               {/* Password */}
               <div className="space-y-1.5">
-                <label className="text-[10px] text-neutral-400 font-black uppercase tracking-wider block">Password</label>
+                <label className="text-[10px] text-neutral-500 font-black uppercase tracking-wider block">Password</label>
                 <div className="relative">
-                  <Lock className="absolute left-3 top-2.5 w-4 h-4 text-neutral-500" />
+                  <Lock className="absolute left-3 top-2.5 w-4 h-4 text-neutral-400" />
                   <input
                     type="password"
                     required
                     placeholder="••••••"
                     value={authPassword}
                     onChange={(e) => setAuthPassword(e.target.value)}
-                    className="w-full bg-neutral-950 border border-neutral-800 focus:border-amber-500 rounded-xl py-2 pl-9 pr-4 text-xs font-medium text-white placeholder-neutral-600 outline-none transition-all"
+                    className="w-full bg-neutral-50 border border-neutral-200 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 rounded-xl py-2 pl-9 pr-4 text-xs font-medium text-neutral-900 placeholder-neutral-400 outline-none transition-all"
                   />
                 </div>
               </div>
@@ -2595,7 +2628,7 @@ export default function App() {
               {/* Submit */}
               <button
                 type="submit"
-                className="w-full py-2.5 mt-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-neutral-950 font-black text-xs text-center transition-all uppercase cursor-pointer"
+                className="w-full py-2.5 mt-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-600 hover:to-amber-500 text-neutral-950 font-black text-xs text-center transition-all uppercase cursor-pointer shadow-sm shadow-amber-500/10"
               >
                 Log In & Sync
               </button>

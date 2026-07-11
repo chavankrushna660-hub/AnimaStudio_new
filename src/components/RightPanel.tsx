@@ -30,9 +30,55 @@ import {
   Palette,
   MapPin
 } from 'lucide-react';
-import { VectorObject, Bone, Layer, Pivot, Transform, Point, Frame, RealismSettings, SmartMeshColorState, SmartWarpState, ColorMeshPoint, ColorMeshCell } from '../types';
+import { VectorObject, Bone, Layer, Pivot, Transform, Point, Frame, RealismSettings, SmartMeshColorState, SmartWarpState, ColorMeshPoint, ColorMeshCell, BrushSettings } from '../types';
 import { distance, localToWorld, worldToLocal, calculateBoundingBox, isPointInPolygon, findClosestView360 } from '../utils/math';
 import { extrude2DTo3D, deleteFace3D, extrudeFace3D, extrudeEdge3D } from '../utils/engine3D';
+
+const hslToHex = (h: number, s: number = 100, l: number = 50): string => {
+  l /= 100;
+  const a = (s * Math.min(l, 1 - l)) / 100;
+  const f = (n: number) => {
+    const k = (n + h / 30) % 12;
+    const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+    const hex = Math.round(255 * color).toString(16).padStart(2, '0');
+    return hex;
+  };
+  return `#${f(0)}${f(8)}${f(4)}`.toUpperCase();
+};
+
+const hexToHue = (hex: string): number => {
+  let r = 0, g = 0, b = 0;
+  const hClean = hex.replace('#', '');
+  if (hClean.length === 3) {
+    r = parseInt(hClean[0] + hClean[0], 16);
+    g = parseInt(hClean[1] + hClean[1], 16);
+    b = parseInt(hClean[2] + hClean[2], 16);
+  } else if (hClean.length === 6) {
+    r = parseInt(hClean.substring(0, 2), 16);
+    g = parseInt(hClean.substring(2, 4), 16);
+    b = parseInt(hClean.substring(4, 6), 16);
+  } else {
+    return 220; // default to blue hue
+  }
+  r /= 255;
+  g /= 255;
+  b /= 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  let h = 0;
+  if (max === min) {
+    h = 0;
+  } else {
+    const d = max - min;
+    switch (max) {
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      case b: h = (r - g) / d + 4; break;
+    }
+    h /= 6;
+  }
+  return Math.round(h * 360);
+};
 
 interface RightPanelProps {
   selectedObject: VectorObject | null;
@@ -66,6 +112,8 @@ interface RightPanelProps {
   realismSettings?: RealismSettings;
   setRealismSettings?: React.Dispatch<React.SetStateAction<RealismSettings>>;
   convertTo3D?: (id: string) => void;
+  brushSettings?: BrushSettings;
+  setBrushSettings?: React.Dispatch<React.SetStateAction<BrushSettings>>;
 }
 
 const isChildInsideParent = (
@@ -120,6 +168,8 @@ export default function RightPanel({
   realismSettings,
   setRealismSettings,
   convertTo3D,
+  brushSettings,
+  setBrushSettings,
 }: RightPanelProps) {
   // Batch/Smart Controls check state
   const [smartCheckedIds, setSmartCheckedIds] = useState<{ [id: string]: boolean }>({});
@@ -4537,315 +4587,278 @@ export default function RightPanel({
               </div>
             </div>
 
-            {/* THE REALISM MAKER & ORGANIC MEDIA ENGINE */}
-            {realismSettings && setRealismSettings && (
-              <div id="realism-maker-panel" className="space-y-4 bg-neutral-950/40 p-4 rounded-2xl border border-neutral-800/50 mt-4 animate-fade-in text-xs">
-                <div className="flex items-center justify-between text-[10px] text-amber-400 font-black uppercase tracking-wider border-b border-neutral-800/40 pb-2.5">
+            {/* BRUSH CRAFTING STUDIO */}
+            {brushSettings && setBrushSettings && (
+              <div id="brush-crafting-studio" className="space-y-4 bg-neutral-950/40 p-4 rounded-2xl border border-neutral-800/50 mt-4 animate-fade-in text-xs">
+                <div className="flex items-center justify-between text-[10px] text-emerald-400 font-black uppercase tracking-wider border-b border-neutral-800/40 pb-2.5">
                   <span className="flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
-                    The Realism Maker
+                    <Feather className="w-3.5 h-3.5 text-emerald-500 animate-pulse" />
+                    Brush Crafting Studio
                   </span>
-                  <span className="bg-amber-500/15 text-amber-400 text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase">
-                    Organic Brush v2.0
+                  <span className="bg-emerald-500/15 text-emerald-400 text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase">
+                    Vector Brush
                   </span>
                 </div>
 
-                {/* CALLIGRAPHY / AUTOMATIC TAPER */}
-                <div className="space-y-2.5 bg-neutral-900/55 p-3 rounded-xl border border-neutral-850">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] text-neutral-300 font-black uppercase tracking-wider">
-                      ✒️ Calligraphy Auto-Taper
-                    </span>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={realismSettings.autoTaperEnabled}
-                        onChange={(e) => setRealismSettings(prev => ({ ...prev, autoTaperEnabled: e.target.checked }))}
-                        className="sr-only peer"
-                      />
-                      <div className="w-8 h-4 bg-neutral-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-neutral-400 after:border-neutral-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-amber-500 peer-checked:after:bg-neutral-950"></div>
-                    </label>
+                <div className="bg-neutral-900/45 p-2.5 rounded-xl border border-neutral-850 text-[10px] text-neutral-400 leading-relaxed italic text-center">
+                  🎨 Adjust the sliders below to design your own high-performance, responsive custom brush profiles.
+                </div>
+
+                {/* PRO MASTER BRUSH PRESETS */}
+                <div className="space-y-2 bg-neutral-900/55 p-3 rounded-xl border border-neutral-850">
+                  <label className="text-[10px] text-neutral-300 font-black uppercase tracking-wider block flex items-center gap-1">
+                    ⚡ Instant Pro Presets
+                  </label>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {[
+                      { name: '✏️ Sketch Pencil', strokeWidth: 1.5, strokeOpacity: 0.65, hardness: 0.2, blur: 0, shadowEnabled: false, shadowColor: '#000000', shadowBlur: 0, shadowOffsetX: 0, shadowOffsetY: 0 },
+                      { name: '✒️ Ink Quill', strokeWidth: 4, strokeOpacity: 1.0, hardness: 0.95, blur: 0, shadowEnabled: false, shadowColor: '#000000', shadowBlur: 0, shadowOffsetX: 0, shadowOffsetY: 0 },
+                      { name: '💨 Soft Airbrush', strokeWidth: 45, strokeOpacity: 0.2, hardness: 0.05, blur: 7.5, shadowEnabled: false, shadowColor: '#000000', shadowBlur: 0, shadowOffsetX: 0, shadowOffsetY: 0 },
+                      { name: '⚡ Cyber Neon', strokeWidth: 6, strokeOpacity: 1.0, hardness: 0.8, blur: 1.5, shadowEnabled: true, useStrokeColorAsShadow: true, shadowBlur: 14, shadowOffsetX: 0, shadowOffsetY: 0 },
+                      { name: '🖍️ Solid Marker', strokeWidth: 14, strokeOpacity: 0.9, hardness: 0.7, blur: 0, shadowEnabled: false, shadowColor: '#000000', shadowBlur: 0, shadowOffsetX: 0, shadowOffsetY: 0 },
+                      { name: '👤 Shadow Cast', strokeWidth: 5, strokeOpacity: 1.0, hardness: 0.9, blur: 0, shadowEnabled: true, shadowColor: '#000000', shadowBlur: 6, shadowOffsetX: 4, shadowOffsetY: 4 }
+                    ].map((preset) => (
+                      <button
+                        key={preset.name}
+                        type="button"
+                        onClick={() => {
+                          setBrushSettings(prev => ({
+                            ...prev,
+                            strokeWidth: preset.strokeWidth,
+                            strokeOpacity: preset.strokeOpacity,
+                            hardness: preset.hardness,
+                            blur: preset.blur,
+                            shadowEnabled: preset.shadowEnabled,
+                            shadowColor: preset.useStrokeColorAsShadow ? prev.strokeColor : preset.shadowColor,
+                            shadowBlur: preset.shadowBlur,
+                            shadowOffsetX: preset.shadowOffsetX,
+                            shadowOffsetY: preset.shadowOffsetY
+                          }));
+                        }}
+                        className="bg-neutral-950/70 hover:bg-neutral-800 text-neutral-300 hover:text-white border border-neutral-800 hover:border-neutral-700 rounded-lg py-1 px-2 text-[10px] font-bold text-left transition-all truncate"
+                      >
+                        {preset.name}
+                      </button>
+                    ))}
                   </div>
-                  <p className="text-[10px] text-neutral-400 font-medium leading-relaxed">
-                    Tapers line-ends automatically, and dynamically thins stroke thickness in response to stylus velocity.
-                  </p>
+                </div>
 
-                  {realismSettings.autoTaperEnabled && (
-                    <div className="space-y-2 pt-1">
-                      {/* Max Thickness */}
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-[10px]">
-                          <span className="text-neutral-400 font-bold">Max Brush Thickness:</span>
-                          <span className="text-amber-400 font-black">{realismSettings.maxThickness}px</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="3"
-                          max="25"
-                          step="0.5"
-                          value={realismSettings.maxThickness}
-                          onChange={(e) => setRealismSettings(prev => ({ ...prev, maxThickness: parseFloat(e.target.value) }))}
-                          className="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
-                        />
-                      </div>
-
-                      {/* Min Thickness */}
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-[10px]">
-                          <span className="text-neutral-400 font-bold">Min Taper Thickness:</span>
-                          <span className="text-amber-400 font-black">{realismSettings.minThickness}px</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="0.5"
-                          max="5"
-                          step="0.1"
-                          value={realismSettings.minThickness}
-                          onChange={(e) => setRealismSettings(prev => ({ ...prev, minThickness: parseFloat(e.target.value) }))}
-                          className="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
-                        />
-                      </div>
-
-                      {/* Thinning Factor */}
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-[10px]">
-                          <span className="text-neutral-400 font-bold">Speed Thinning Sensitivity:</span>
-                          <span className="text-amber-400 font-black">{realismSettings.thinningFactor}x</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="0.05"
-                          max="1.0"
-                          step="0.05"
-                          value={realismSettings.thinningFactor}
-                          onChange={(e) => setRealismSettings(prev => ({ ...prev, thinningFactor: parseFloat(e.target.value) }))}
-                          className="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
-                        />
-                      </div>
+                {/* SIMPLIFIED COLOR CONTROLS */}
+                <div className="space-y-3 bg-neutral-900/55 p-3 rounded-xl border border-neutral-850">
+                  <div className="flex items-center justify-between border-b border-neutral-850 pb-2 mb-1">
+                    <label className="text-[10px] text-neutral-300 font-black uppercase tracking-wider block">
+                      🎨 Color Engine
+                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <div 
+                        className="w-4 h-4 rounded-md border border-neutral-700 shadow-inner" 
+                        style={{ backgroundColor: brushSettings.strokeColor, opacity: brushSettings.strokeOpacity }}
+                      />
+                      <span className="text-[9px] font-mono text-neutral-400 uppercase tracking-tight">{brushSettings.strokeColor}</span>
                     </div>
-                  )}
+                  </div>
+
+                  {/* Option: Color Blue */}
+                  <div className="space-y-1">
+                    <span className="text-[9px] text-neutral-400 font-bold uppercase tracking-wide">Color Presets</span>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setBrushSettings(prev => ({ ...prev, strokeColor: '#007AFF' }))}
+                        className={`flex-1 py-1.5 px-3 rounded-lg border text-[10px] font-black tracking-wide uppercase transition-all flex items-center justify-center gap-1.5 ${
+                          brushSettings.strokeColor.toUpperCase() === '#007AFF' 
+                            ? 'bg-blue-600/25 border-blue-500 text-blue-400 shadow-md shadow-blue-500/10' 
+                            : 'bg-neutral-950/50 hover:bg-neutral-850 border-neutral-800 text-neutral-400 hover:text-neutral-200'
+                        }`}
+                      >
+                        <span className="w-2.5 h-2.5 rounded-full bg-blue-500 border border-blue-400 shrink-0" />
+                        Color Blue
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Option: Color Hue */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[9px] text-neutral-400 font-bold uppercase tracking-wide">Color Hue</span>
+                      <span className="text-[10px] text-emerald-400 font-black">{hexToHue(brushSettings.strokeColor)}°</span>
+                    </div>
+                    <div className="relative group flex items-center h-4">
+                      <input
+                        type="range"
+                        min="0"
+                        max="360"
+                        step="1"
+                        value={hexToHue(brushSettings.strokeColor)}
+                        onChange={(e) => {
+                          const hue = parseInt(e.target.value);
+                          const hex = hslToHex(hue);
+                          setBrushSettings(prev => ({ ...prev, strokeColor: hex }));
+                        }}
+                        style={{
+                          background: 'linear-gradient(to right, #ff0000 0%, #ffff00 17%, #00ff00 33%, #00ffff 50%, #0000ff 67%, #ff00ff 83%, #ff0000 100%)'
+                        }}
+                        className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-white"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Option: Color Opacity */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[9px] text-neutral-400 font-bold uppercase tracking-wide">Color Opacity</span>
+                      <span className="text-[10px] text-emerald-400 font-black">{Math.round(brushSettings.strokeOpacity * 100)}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.05"
+                      max="1"
+                      step="0.01"
+                      value={brushSettings.strokeOpacity}
+                      onChange={(e) => setBrushSettings(prev => ({ ...prev, strokeOpacity: parseFloat(e.target.value) }))}
+                      className="w-full h-1 bg-neutral-950 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                    />
+                  </div>
                 </div>
 
-                {/* PROCEDURAL 2.5D SHADING */}
-                <div className="space-y-2.5 bg-neutral-900/55 p-3 rounded-xl border border-neutral-850">
+                {/* Physical Sliders */}
+                <div className="space-y-3 bg-neutral-900/55 p-3 rounded-xl border border-neutral-850">
+                  {/* Size */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-neutral-400 font-bold uppercase">Brush Size / Width</span>
+                      <span className="text-emerald-400 font-black text-[10px]">{brushSettings.strokeWidth}px</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="1"
+                      max="100"
+                      step="0.5"
+                      value={brushSettings.strokeWidth}
+                      onChange={(e) => setBrushSettings(prev => ({ ...prev, strokeWidth: parseFloat(e.target.value) }))}
+                      className="w-full h-1 bg-neutral-950 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                    />
+                  </div>
+
+                  {/* Hardness */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-neutral-400 font-bold uppercase">Brush Hardness</span>
+                      <span className="text-emerald-400 font-black text-[10px]">{Math.round(brushSettings.hardness * 100)}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                      value={brushSettings.hardness}
+                      onChange={(e) => setBrushSettings(prev => ({ ...prev, hardness: parseFloat(e.target.value) }))}
+                      className="w-full h-1 bg-neutral-950 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                    />
+                  </div>
+
+                  {/* Blur */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-neutral-400 font-bold uppercase">Blur Effect</span>
+                      <span className="text-emerald-400 font-black text-[10px]">{brushSettings.blur}px</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="30"
+                      step="0.5"
+                      value={brushSettings.blur}
+                      onChange={(e) => setBrushSettings(prev => ({ ...prev, blur: parseFloat(e.target.value) }))}
+                      className="w-full h-1 bg-neutral-950 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Shadow Engine */}
+                <div className="space-y-3 bg-neutral-900/55 p-3 rounded-xl border border-neutral-850">
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] text-neutral-300 font-black uppercase tracking-wider">
-                      ⛰️ Cylinder Auto-Shading
+                      👥 Stroke Drop Shadow
                     </span>
                     <label className="relative inline-flex items-center cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={realismSettings.autoShadingEnabled}
-                        onChange={(e) => setRealismSettings(prev => ({ ...prev, autoShadingEnabled: e.target.checked }))}
+                        checked={brushSettings.shadowEnabled}
+                        onChange={(e) => setBrushSettings(prev => ({ ...prev, shadowEnabled: e.target.checked }))}
                         className="sr-only peer"
                       />
-                      <div className="w-8 h-4 bg-neutral-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-neutral-400 after:border-neutral-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-amber-500 peer-checked:after:bg-neutral-950"></div>
+                      <div className="w-8 h-4 bg-neutral-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-neutral-400 after:border-neutral-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-emerald-500 peer-checked:after:bg-white" />
                     </label>
                   </div>
-                  <p className="text-[10px] text-neutral-400 font-medium leading-relaxed">
-                    Instantly generates light highlights and shadow boundaries perpendicular to stroke direction for 3D realism.
-                  </p>
 
-                  {realismSettings.autoShadingEnabled && (
-                    <div className="space-y-2 pt-1">
-                      {/* Light Angle */}
+                  {brushSettings.shadowEnabled && (
+                    <div className="space-y-2.5 pt-1.5 border-t border-neutral-800/40 animate-fade-in">
+                      {/* Shadow Color */}
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] text-neutral-400 uppercase">Shadow Color</span>
+                        <input
+                          type="color"
+                          value={brushSettings.shadowColor}
+                          onChange={(e) => setBrushSettings(prev => ({ ...prev, shadowColor: e.target.value }))}
+                          className="w-6 h-6 rounded border border-neutral-800 cursor-pointer bg-neutral-950"
+                        />
+                      </div>
+
+                      {/* Shadow Blur */}
                       <div className="space-y-1">
-                        <div className="flex justify-between text-[10px]">
-                          <span className="text-neutral-400 font-bold">Virtual Light Source Angle:</span>
-                          <span className="text-amber-400 font-black">{realismSettings.shadingLightAngle}°</span>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[9px] text-neutral-400 uppercase">Shadow Blur</span>
+                          <span className="text-emerald-400 font-bold">{brushSettings.shadowBlur}px</span>
                         </div>
                         <input
                           type="range"
                           min="0"
-                          max="360"
-                          step="5"
-                          value={realismSettings.shadingLightAngle}
-                          onChange={(e) => setRealismSettings(prev => ({ ...prev, shadingLightAngle: parseInt(e.target.value) }))}
-                          className="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                          max="40"
+                          value={brushSettings.shadowBlur}
+                          onChange={(e) => setBrushSettings(prev => ({ ...prev, shadowBlur: parseInt(e.target.value) }))}
+                          className="w-full h-1 bg-neutral-950 rounded accent-emerald-500 appearance-none cursor-pointer"
                         />
                       </div>
 
-                      {/* Highlight Opacity */}
+                      {/* Shadow Offset X */}
                       <div className="space-y-1">
-                        <div className="flex justify-between text-[10px]">
-                          <span className="text-neutral-400 font-bold">Highlight Volume (White):</span>
-                          <span className="text-amber-400 font-black">{Math.round(realismSettings.shadingHighlightOpacity * 100)}%</span>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[9px] text-neutral-400 uppercase">Offset X</span>
+                          <span className="text-emerald-400 font-bold">{brushSettings.shadowOffsetX}px</span>
                         </div>
                         <input
                           type="range"
-                          min="0.0"
-                          max="0.8"
-                          step="0.05"
-                          value={realismSettings.shadingHighlightOpacity}
-                          onChange={(e) => setRealismSettings(prev => ({ ...prev, shadingHighlightOpacity: parseFloat(e.target.value) }))}
-                          className="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                          min="-30"
+                          max="30"
+                          value={brushSettings.shadowOffsetX}
+                          onChange={(e) => setBrushSettings(prev => ({ ...prev, shadowOffsetX: parseInt(e.target.value) }))}
+                          className="w-full h-1 bg-neutral-950 rounded accent-emerald-500 appearance-none cursor-pointer"
                         />
                       </div>
 
-                      {/* Shadow Opacity */}
+                      {/* Shadow Offset Y */}
                       <div className="space-y-1">
-                        <div className="flex justify-between text-[10px]">
-                          <span className="text-neutral-400 font-bold">Shadow Depth (Black):</span>
-                          <span className="text-amber-400 font-black">{Math.round(realismSettings.shadingShadowOpacity * 100)}%</span>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[9px] text-neutral-400 uppercase">Offset Y</span>
+                          <span className="text-emerald-400 font-bold">{brushSettings.shadowOffsetY}px</span>
                         </div>
                         <input
                           type="range"
-                          min="0.0"
-                          max="0.8"
-                          step="0.05"
-                          value={realismSettings.shadingShadowOpacity}
-                          onChange={(e) => setRealismSettings(prev => ({ ...prev, shadingShadowOpacity: parseFloat(e.target.value) }))}
-                          className="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                          min="-30"
+                          max="30"
+                          value={brushSettings.shadowOffsetY}
+                          onChange={(e) => setBrushSettings(prev => ({ ...prev, shadowOffsetY: parseInt(e.target.value) }))}
+                          className="w-full h-1 bg-neutral-950 rounded accent-emerald-500 appearance-none cursor-pointer"
                         />
                       </div>
                     </div>
                   )}
                 </div>
-
-                {/* ORGANIC ENGINE: JITTER & TEXTURE & WET BLEED */}
-                <div className="space-y-2.5 bg-neutral-900/55 p-3 rounded-xl border border-neutral-850">
-                  <span className="text-[10px] text-neutral-300 font-black uppercase tracking-wider block mb-1">
-                    🎨 Organic Media Engine
-                  </span>
-
-                  {/* Micro-Jitter */}
-                  <div className="space-y-1.5 border-b border-neutral-850 pb-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] text-neutral-400 font-bold">Human Hand Simulator (Jitter)</span>
-                      <label className="relative inline-flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={realismSettings.microJitterEnabled}
-                          onChange={(e) => setRealismSettings(prev => ({ ...prev, microJitterEnabled: e.target.checked }))}
-                          className="sr-only peer"
-                        />
-                        <div className="w-8 h-4 bg-neutral-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-neutral-400 after:border-neutral-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-amber-500 peer-checked:after:bg-neutral-950"></div>
-                      </label>
-                    </div>
-                    {realismSettings.microJitterEnabled && (
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-[9px]">
-                          <span className="text-neutral-500">Tremor Amplitude:</span>
-                          <span className="text-amber-400 font-bold">{realismSettings.microJitterAmount}px</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="0.5"
-                          max="5.0"
-                          step="0.1"
-                          value={realismSettings.microJitterAmount}
-                          onChange={(e) => setRealismSettings(prev => ({ ...prev, microJitterAmount: parseFloat(e.target.value) }))}
-                          className="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Paper Grain */}
-                  <div className="space-y-1.5 border-b border-neutral-850 pb-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] text-neutral-400 font-bold">Procedural Paper Grain</span>
-                      <label className="relative inline-flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={realismSettings.paperGrainEnabled}
-                          onChange={(e) => setRealismSettings(prev => ({ ...prev, paperGrainEnabled: e.target.checked }))}
-                          className="sr-only peer"
-                        />
-                        <div className="w-8 h-4 bg-neutral-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-neutral-400 after:border-neutral-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-amber-500 peer-checked:after:bg-neutral-950"></div>
-                      </label>
-                    </div>
-                    {realismSettings.paperGrainEnabled && (
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-[9px]">
-                          <span className="text-neutral-500">Texture Contrast/Intensity:</span>
-                          <span className="text-amber-400 font-bold">{Math.round(realismSettings.paperGrainIntensity * 100)}%</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="0.1"
-                          max="0.8"
-                          step="0.05"
-                          value={realismSettings.paperGrainIntensity}
-                          onChange={(e) => setRealismSettings(prev => ({ ...prev, paperGrainIntensity: parseFloat(e.target.value) }))}
-                          className="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Ink Bleed */}
-                  <div className="space-y-1.5 pb-1">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] text-neutral-400 font-bold">Wet Smart Ink Bleed</span>
-                      <label className="relative inline-flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={realismSettings.inkBleedEnabled}
-                          onChange={(e) => setRealismSettings(prev => ({ ...prev, inkBleedEnabled: e.target.checked }))}
-                          className="sr-only peer"
-                        />
-                        <div className="w-8 h-4 bg-neutral-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-neutral-400 after:border-neutral-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-amber-500 peer-checked:after:bg-neutral-950"></div>
-                      </label>
-                    </div>
-                    {realismSettings.inkBleedEnabled && (
-                      <div className="space-y-2 pt-1">
-                        {/* Blur Radius */}
-                        <div className="space-y-1">
-                          <div className="flex justify-between text-[9px]">
-                            <span className="text-neutral-500">Wet Spread (Blur):</span>
-                            <span className="text-amber-400 font-bold">{realismSettings.inkBleedBlur}px</span>
-                          </div>
-                          <input
-                            type="range"
-                            min="1"
-                            max="8"
-                            step="1"
-                            value={realismSettings.inkBleedBlur}
-                            onChange={(e) => setRealismSettings(prev => ({ ...prev, inkBleedBlur: parseInt(e.target.value) }))}
-                            className="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
-                          />
-                        </div>
-
-                        {/* Opacity */}
-                        <div className="space-y-1">
-                          <div className="flex justify-between text-[9px]">
-                            <span className="text-neutral-500">Halo Transparency:</span>
-                            <span className="text-amber-400 font-bold">{Math.round(realismSettings.inkBleedOpacity * 100)}%</span>
-                          </div>
-                          <input
-                            type="range"
-                            min="0.1"
-                            max="0.8"
-                            step="0.05"
-                            value={realismSettings.inkBleedOpacity}
-                            onChange={(e) => setRealismSettings(prev => ({ ...prev, inkBleedOpacity: parseFloat(e.target.value) }))}
-                            className="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
-                          />
-                        </div>
-
-                        {/* Width Offset */}
-                        <div className="space-y-1">
-                          <div className="flex justify-between text-[9px]">
-                            <span className="text-neutral-500">Bleed Offset Width:</span>
-                            <span className="text-amber-400 font-bold">+{realismSettings.inkBleedWidthOffset}px</span>
-                          </div>
-                          <input
-                            type="range"
-                            min="2"
-                            max="15"
-                            step="1"
-                            value={realismSettings.inkBleedWidthOffset}
-                            onChange={(e) => setRealismSettings(prev => ({ ...prev, inkBleedWidthOffset: parseInt(e.target.value) }))}
-                            className="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
               </div>
             )}
+
+
 
             {/* AI SMOOTH MOTION & LOOP GENERATOR PANEL */}
             <div id="ai-smooth-motion-panel" className="space-y-4 bg-neutral-950/40 p-4 rounded-2xl border border-neutral-800/50 mt-4 animate-fade-in">

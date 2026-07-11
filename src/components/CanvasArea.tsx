@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { RotateCcw, Sparkles, Feather, ZoomIn, ZoomOut } from 'lucide-react';
-import { Point, VectorObject, Bone, Pivot, Frame, Transform, RealismSettings, LassoControlPoint, SmartWarpPin } from '../types';
+import { Point, VectorObject, Bone, Pivot, Frame, Transform, RealismSettings, LassoControlPoint, SmartWarpPin, BrushSettings } from '../types';
 import { transform3DVertex, project3DVertex, getFaceLightColor, deformVertices3D } from '../utils/engine3D';
 import { 
   distance, 
@@ -418,134 +418,86 @@ const createRealismPoint = (
   };
 };
 
+const applyBrushSettingsToCtx = (
+  ctx: CanvasRenderingContext2D,
+  brush: Partial<BrushSettings>,
+  baseColor: string,
+  strokeWidth: number
+) => {
+  const opacity = brush.strokeOpacity ?? 1.0;
+  ctx.globalAlpha = ctx.globalAlpha * opacity;
+
+  // Apply basic shadow if enabled
+  if (brush.shadowEnabled) {
+    ctx.shadowColor = brush.shadowColor ?? '#000000';
+    ctx.shadowBlur = brush.shadowBlur ?? 4;
+    ctx.shadowOffsetX = brush.shadowOffsetX ?? 2;
+    ctx.shadowOffsetY = brush.shadowOffsetY ?? 2;
+  } else {
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+  }
+
+  // Hardness & blur filters
+  const blurVal = brush.blur ?? 0;
+  if (blurVal > 0) {
+    ctx.filter = `blur(${blurVal}px)`;
+  } else {
+    ctx.filter = 'none';
+  }
+};
+
 const drawVariableWidthStrokeInternal = (
   ctx: CanvasRenderingContext2D,
   points: Point[],
   baseColor: string,
   settings?: RealismSettings,
   widthOffset: number = 0,
-  drawShading: boolean = true
+  drawShading: boolean = true,
+  brush?: Partial<BrushSettings>
 ) => {
   if (points.length === 0) return;
-  if (points.length === 1) {
-    const pt = points[0];
-    const jX = settings?.microJitterEnabled ? (pt.jitterX ?? 0) : 0;
-    const jY = settings?.microJitterEnabled ? (pt.jitterY ?? 0) : 0;
-    const w = (pt.w ?? (settings?.maxThickness ?? 3.5)) + widthOffset;
-    const taperedW = getTaperWidth(0, 1, w, settings?.autoTaperEnabled ?? true);
-    
-    ctx.save();
-    if (settings?.paperGrainEnabled) {
-      ctx.globalAlpha = ctx.globalAlpha * (pt.grainOpacity ?? 1.0);
-    }
-    ctx.beginPath();
-    ctx.arc(pt.x + jX, pt.y + jY, Math.max(0.1, taperedW / 2), 0, Math.PI * 2);
-    ctx.fillStyle = baseColor;
-    ctx.fill();
-    ctx.restore();
-    return;
+
+  ctx.save();
+  if (brush) {
+    applyBrushSettingsToCtx(ctx, brush, baseColor, brush.strokeWidth ?? 5);
   }
 
-  // Draw segment by segment
-  for (let i = 0; i < points.length - 1; i++) {
-    const p1 = points[i];
-    const p2 = points[i + 1];
-    
-    // Apply micro-jitter
-    const jX1 = settings?.microJitterEnabled ? (p1.jitterX ?? 0) : 0;
-    const jY1 = settings?.microJitterEnabled ? (p1.jitterY ?? 0) : 0;
-    const jX2 = settings?.microJitterEnabled ? (p2.jitterX ?? 0) : 0;
-    const jY2 = settings?.microJitterEnabled ? (p2.jitterY ?? 0) : 0;
-    
-    // Paper Grain
-    const gAlpha1 = settings?.paperGrainEnabled ? (p1.grainOpacity ?? 1.0) : 1.0;
-    const gAlpha2 = settings?.paperGrainEnabled ? (p2.grainOpacity ?? 1.0) : 1.0;
-    const segmentAlpha = (gAlpha1 + gAlpha2) / 2;
-    
-    // Widths with taper
-    const w1 = getTaperWidth(i, points.length, p1.w ?? (settings?.maxThickness ?? 3.5), settings?.autoTaperEnabled ?? true) + widthOffset;
-    const w2 = getTaperWidth(i + 1, points.length, p2.w ?? (settings?.maxThickness ?? 3.5), settings?.autoTaperEnabled ?? true) + widthOffset;
-    const avgW = Math.max(0.1, (w1 + w2) / 2);
-    
-    ctx.save();
-    
-    if (settings?.paperGrainEnabled) {
-      ctx.globalAlpha = ctx.globalAlpha * segmentAlpha;
+  ctx.beginPath();
+  if (points.length === 1) {
+    const pt = points[0];
+    const r = Math.max(0.1, ((brush?.strokeWidth ?? 5) + widthOffset) / 2);
+    ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = baseColor;
+    ctx.fill();
+  } else {
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) {
+      const xc = (points[i].x + points[i - 1].x) / 2;
+      const yc = (points[i].y + points[i - 1].y) / 2;
+      ctx.quadraticCurveTo(points[i - 1].x, points[i - 1].y, xc, yc);
     }
-    
-    ctx.beginPath();
-    ctx.moveTo(p1.x + jX1, p1.y + jY1);
-    ctx.lineTo(p2.x + jX2, p2.y + jY2);
-    
+    ctx.lineTo(points[points.length - 1].x, points[points.length - 1].y);
+
     ctx.strokeStyle = baseColor;
-    ctx.lineWidth = avgW;
+    ctx.lineWidth = (brush?.strokeWidth ?? 5) + widthOffset;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.stroke();
-    
-    ctx.restore();
-
-    // 2.5D Auto-Shading on the Core stroke only
-    if (drawShading && settings?.autoShadingEnabled && points.length > 1) {
-      const strokeAngle = p2.angle ?? Math.atan2(p2.y - p1.y, p2.x - p1.x);
-      const lightRad = (settings.shadingLightAngle ?? 45) * (Math.PI / 180);
-      
-      const angleDifference = strokeAngle - lightRad;
-      const shadingIntensity = Math.cos(angleDifference);
-      
-      const perpX = -Math.sin(strokeAngle);
-      const perpY = Math.cos(strokeAngle);
-      
-      const shadowOffset = avgW * 0.22;
-      const isLeftHighlight = shadingIntensity > 0;
-      
-      // Highlight: drawn facing the light
-      ctx.save();
-      ctx.beginPath();
-      const hSign = isLeftHighlight ? -1 : 1;
-      ctx.moveTo(p1.x + jX1 + hSign * perpX * shadowOffset, p1.y + jY1 + hSign * perpY * shadowOffset);
-      ctx.lineTo(p2.x + jX2 + hSign * perpX * shadowOffset, p2.y + jY2 + hSign * perpY * shadowOffset);
-      ctx.strokeStyle = '#FFFFFF';
-      ctx.lineWidth = Math.max(0.1, avgW * 0.35);
-      ctx.globalAlpha = ctx.globalAlpha * Math.abs(shadingIntensity) * settings.shadingHighlightOpacity;
-      ctx.lineCap = 'round';
-      ctx.stroke();
-      ctx.restore();
-      
-      // Shadow: drawn facing away from light
-      ctx.save();
-      ctx.beginPath();
-      const sSign = isLeftHighlight ? 1 : -1;
-      ctx.moveTo(p1.x + jX1 + sSign * perpX * shadowOffset, p1.y + jY1 + sSign * perpY * shadowOffset);
-      ctx.lineTo(p2.x + jX2 + sSign * perpX * shadowOffset, p2.y + jY2 + sSign * perpY * shadowOffset);
-      ctx.strokeStyle = '#000000';
-      ctx.lineWidth = Math.max(0.1, avgW * 0.4);
-      ctx.globalAlpha = ctx.globalAlpha * Math.abs(shadingIntensity) * settings.shadingShadowOpacity;
-      ctx.lineCap = 'round';
-      ctx.stroke();
-      ctx.restore();
-    }
   }
+  ctx.restore();
 };
 
 const drawVariableWidthStroke = (
   ctx: CanvasRenderingContext2D,
   points: Point[],
   baseColor: string,
-  settings?: RealismSettings
+  settings?: RealismSettings,
+  brush?: Partial<BrushSettings>
 ) => {
-  if (settings?.inkBleedEnabled) {
-    // PASS 1: Bleed Halo
-    ctx.save();
-    ctx.filter = `blur(${settings.inkBleedBlur}px)`;
-    ctx.globalAlpha = ctx.globalAlpha * settings.inkBleedOpacity;
-    
-    drawVariableWidthStrokeInternal(ctx, points, baseColor, settings, settings.inkBleedWidthOffset, false);
-    ctx.restore();
-  }
-  
-  // PASS 2: Crisp Core & Shading
-  drawVariableWidthStrokeInternal(ctx, points, baseColor, settings, 0, true);
+  drawVariableWidthStrokeInternal(ctx, points, baseColor, settings, 0, false, brush);
 };
 
 interface CanvasAreaProps {
@@ -584,6 +536,8 @@ interface CanvasAreaProps {
   adaptiveSubdivisionEnabled: boolean;
   adaptiveSubdivisionPoints: number;
   fillToolColor?: string;
+  brushSettings?: BrushSettings;
+  setBrushSettings?: React.Dispatch<React.SetStateAction<BrushSettings>>;
 }
 
 export default function CanvasArea({
@@ -622,6 +576,8 @@ export default function CanvasArea({
   adaptiveSubdivisionEnabled,
   adaptiveSubdivisionPoints,
   fillToolColor = '#4CAF50',
+  brushSettings,
+  setBrushSettings,
 }: CanvasAreaProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const backCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -645,8 +601,20 @@ export default function CanvasArea({
       const bestScale = Math.min(2.0, Math.max(0.3, Math.min(scaleX, scaleY)));
       const offsetX = (dimensions.width - artboardW * bestScale) / 2;
       const offsetY = (dimensions.height - artboardH * bestScale) / 2;
-      setZoomScale(bestScale);
-      setZoomOffset({ x: offsetX, y: offsetY });
+      
+      setZoomScale(prev => {
+        if (Math.abs(prev - bestScale) < 0.001) {
+          return prev;
+        }
+        return bestScale;
+      });
+      
+      setZoomOffset(prev => {
+        if (Math.abs(prev.x - offsetX) < 0.01 && Math.abs(prev.y - offsetY) < 0.01) {
+          return prev;
+        }
+        return { x: offsetX, y: offsetY };
+      });
     } catch (err) {
       console.error("Recenter canvas failed", err);
     }
@@ -921,6 +889,7 @@ export default function CanvasArea({
   // Drawing state
   const [isDrawing, setIsPlayingState] = useState(false);
   const [strokePoints, setStrokePoints] = useState<Point[]>([]);
+  const strokePointsRef = useRef<Point[]>([]);
   const [isDrawingLasso, setIsDrawingLasso] = useState(false);
   
   // Transform & drag gesture state
@@ -1879,6 +1848,7 @@ export default function CanvasArea({
     if (activeTool === 'BRS') {
       setIsPlayingState(true);
       const startPt = createRealismPoint(coords, null, realismSettings);
+      strokePointsRef.current = [startPt];
       setStrokePoints([startPt]);
       return;
     }
@@ -2305,11 +2275,47 @@ export default function CanvasArea({
     }
 
     if (isDrawing && activeTool === 'BRS') {
-      setStrokePoints(prev => {
-        const lastPt = prev[prev.length - 1] || null;
-        const nextPt = createRealismPoint(coords, lastPt, realismSettings);
-        return [...prev, nextPt];
-      });
+      const lastPt = strokePointsRef.current[strokePointsRef.current.length - 1] || null;
+      const nextPt = createRealismPoint(coords, lastPt, realismSettings);
+      strokePointsRef.current.push(nextPt);
+      setStrokePoints([...strokePointsRef.current]);
+
+      // Direct canvas context paint for 0ms lag!
+      const canvas = frontCanvasRef.current;
+      if (canvas) {
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.save();
+          // Align with active zoom & pan settings
+          ctx.translate(zoomOffset.x, zoomOffset.y);
+          ctx.scale(zoomScale, zoomScale);
+
+          // Configure active brush context style
+          applyBrushSettingsToCtx(ctx, brushSettings || {}, brushSettings?.strokeColor ?? '#000000', brushSettings?.strokeWidth ?? 5);
+
+          ctx.beginPath();
+          if (lastPt) {
+            ctx.moveTo(lastPt.x, lastPt.y);
+            ctx.lineTo(nextPt.x, nextPt.y);
+          } else {
+            ctx.arc(nextPt.x, nextPt.y, (brushSettings?.strokeWidth ?? 5) / 2, 0, Math.PI * 2);
+          }
+
+          ctx.strokeStyle = brushSettings?.strokeColor ?? '#000000';
+          ctx.lineWidth = brushSettings?.strokeWidth ?? 5;
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+
+          if (lastPt) {
+            ctx.stroke();
+          } else {
+            ctx.fillStyle = brushSettings?.strokeColor ?? '#000000';
+            ctx.fill();
+          }
+
+          ctx.restore();
+        }
+      }
       return;
     }
 
@@ -2590,7 +2596,8 @@ export default function CanvasArea({
       return;
     }
 
-    if (isDrawing && activeTool === 'BRS' && strokePoints.length > 1) {
+    if (isDrawing && activeTool === 'BRS' && strokePointsRef.current.length > 1) {
+      const pts = [...strokePointsRef.current];
       const newId = `obj_${Date.now()}`;
       const name = `Stroke_${Object.keys(objects).length + 1}`;
       
@@ -2598,18 +2605,27 @@ export default function CanvasArea({
         id: newId,
         name,
         type: 'stroke',
-        points: [...strokePoints],
-        strokeColor: '#000000',
-        strokeWidth: 3.5,
+        points: pts,
+        strokeColor: brushSettings?.strokeColor ?? '#000000',
+        strokeWidth: brushSettings?.strokeWidth ?? 3.5,
         fillColor: 'transparent',
         opacity: 1,
         transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
-        pivots: [{ id: `pvt_${Date.now()}`, name: 'Pivot_1', localX: strokePoints[0].x, localY: strokePoints[0].y, locked: false }],
+        pivots: [{ id: `pvt_${Date.now()}`, name: 'Pivot_1', localX: pts[0].x, localY: pts[0].y, locked: false }],
         parentId: null,
         childrenIds: [],
         layerId: activeLayerId,
         isLocked: false,
         isHidden: false,
+        brushType: brushSettings?.brushType ?? 'solid',
+        strokeOpacity: brushSettings?.strokeOpacity ?? 1.0,
+        hardness: brushSettings?.hardness ?? 0.8,
+        blur: brushSettings?.blur ?? 0,
+        shadowEnabled: brushSettings?.shadowEnabled ?? false,
+        shadowColor: brushSettings?.shadowColor ?? '#000000',
+        shadowBlur: brushSettings?.shadowBlur ?? 4,
+        shadowOffsetX: brushSettings?.shadowOffsetX ?? 2,
+        shadowOffsetY: brushSettings?.shadowOffsetY ?? 2,
       };
 
       setObjects(prev => ({ ...prev, [newId]: newObj }));
@@ -3044,6 +3060,7 @@ export default function CanvasArea({
     setIsPlayingState(false);
     setDragMode('none');
     setDraggedDirectRigBoneId(null);
+    strokePointsRef.current = [];
     setStrokePoints([]);
     setIsDrawingLasso(false);
     } catch (err: any) {
@@ -3671,7 +3688,20 @@ export default function CanvasArea({
             };
           });
           
-          drawVariableWidthStroke(ctx, worldStrokePoints, drawObj.strokeColor, realismSettings);
+          const strokeBrush: Partial<BrushSettings> = {
+            brushType: drawObj.brushType as any ?? 'solid',
+            strokeWidth: drawObj.strokeWidth,
+            strokeOpacity: drawObj.strokeOpacity ?? 1.0,
+            hardness: drawObj.hardness ?? 0.8,
+            blur: drawObj.blur ?? 0,
+            shadowEnabled: drawObj.shadowEnabled ?? false,
+            shadowColor: drawObj.shadowColor ?? '#000000',
+            shadowBlur: drawObj.shadowBlur ?? 4,
+            shadowOffsetX: drawObj.shadowOffsetX ?? 2,
+            shadowOffsetY: drawObj.shadowOffsetY ?? 2,
+          };
+
+          drawVariableWidthStroke(ctx, worldStrokePoints, drawObj.strokeColor, realismSettings, strokeBrush);
           
           // Draw any subPaths of merged drawings
           if (drawObj.subPaths && drawObj.subPaths.length > 0) {
@@ -3695,7 +3725,7 @@ export default function CanvasArea({
                   grainOpacity: p.grainOpacity
                 };
               });
-              drawVariableWidthStroke(ctx, worldSubPoints, drawObj.strokeColor, realismSettings);
+              drawVariableWidthStroke(ctx, worldSubPoints, drawObj.strokeColor, realismSettings, strokeBrush);
             });
           }
         } else {
@@ -4346,7 +4376,8 @@ export default function CanvasArea({
     // Render current active brush line
     if (isDrawing && strokePoints.length > 0) {
       ctx.save();
-      drawVariableWidthStroke(ctx, strokePoints, '#000000', realismSettings);
+      const previewColor = brushSettings?.strokeColor ?? '#000000';
+      drawVariableWidthStroke(ctx, strokePoints, previewColor, realismSettings, brushSettings);
       ctx.restore();
     }
 

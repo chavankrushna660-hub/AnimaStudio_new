@@ -181,6 +181,15 @@ export interface VectorObject {
   rimLight?: ObjectRimLight;
   overlay?: ObjectOverlay;
   meshState?: MeshState;
+  brushType?: string;
+  strokeOpacity?: number;
+  hardness?: number;
+  blur?: number;
+  shadowEnabled?: boolean;
+  shadowColor?: string;
+  shadowBlur?: number;
+  shadowOffsetX?: number;
+  shadowOffsetY?: number;
   hide3DGrid?: boolean;
   hollowEnabled?: boolean;
   innerSpace3D?: number;
@@ -343,3 +352,18 @@ export interface Project {
   frames: Frame[];
   bones: Bone[];
 }
+
+export interface BrushSettings {
+  brushType: 'solid';
+  strokeColor: string;
+  strokeWidth: number;
+  strokeOpacity: number;
+  hardness: number;
+  blur: number;
+  shadowEnabled: boolean;
+  shadowColor: string;
+  shadowBlur: number;
+  shadowOffsetX: number;
+  shadowOffsetY: number;
+}
+
