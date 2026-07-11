@@ -869,6 +869,16 @@ export default function App() {
           h.triggerShortcutHint("Tool: Zoom & Pan (Z)");
           break;
         }
+        // 'u' for unselecting selected drawing
+        case 'u':
+        case 'U': {
+          e.preventDefault();
+          if (h.setSelectedObjectId) {
+            h.setSelectedObjectId(null);
+            h.triggerShortcutHint("Unselected Drawing (U)");
+          }
+          break;
+        }
         default:
           break;
       }
@@ -2505,6 +2515,7 @@ export default function App() {
     frames,
     deleteFrame,
     selectedObjectId,
+    setSelectedObjectId,
     activeTool,
     deleteObject
   };
