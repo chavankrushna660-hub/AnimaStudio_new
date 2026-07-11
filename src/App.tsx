@@ -52,7 +52,6 @@ import {
   incrementDailyLimit,
   extrude2DTo3D
 } from './utils/engine3D';
-import { parse3DModelFile } from './utils/custom3DLoader';
 
 interface AdItem {
   id: number;

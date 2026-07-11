@@ -26,7 +26,6 @@ import {
   PaintBucket
 } from 'lucide-react';
 import { VectorObject, Layer } from '../types';
-import { parse3DModelFile } from '../utils/custom3DLoader';
 import { getDailyLimitStatus } from '../utils/engine3D';
 import { sanitizeString } from '../utils/securityGuard';
 
@@ -939,61 +938,7 @@ export default function LeftPanel({
                     </p>
                   </div>
 
-                  {/* 📂 Custom Rigged 3D File Loader */}
-                  <div className="bg-neutral-950/80 border border-neutral-850 rounded-xl p-3 space-y-2.5">
-                    <span className="text-[9px] text-amber-400 font-black uppercase tracking-wider block">
-                      📂 Import Custom 3D Mesh
-                    </span>
-                    <p className="text-[9px] text-neutral-400 leading-normal">
-                      Import raw custom 3D meshes (zipped or individual .obj, .fbx, .gltf, .json formats) with bones & textures.
-                    </p>
-                    <div className="text-[8px] text-amber-500/90 font-bold uppercase tracking-wider space-y-0.5 bg-neutral-900/40 p-1.5 rounded border border-neutral-800/30">
-                      <div>• Max File Size: 10 MB</div>
-                      <div>• Max Daily Quota: 10 models / day</div>
-                    </div>
-                    <label className="w-full flex items-center justify-center gap-1.5 py-1.5 border border-dashed border-neutral-800 hover:border-amber-500/40 bg-neutral-900/60 hover:bg-neutral-900 rounded-lg cursor-pointer transition-all text-[9.5px] text-neutral-400 hover:text-white font-black uppercase">
-                      <span>Upload 3D Mesh file</span>
-                      <input 
-                        type="file"
-                        accept=".obj,.fbx,.gltf,.json,.zip"
-                        className="hidden"
-                        onChange={async (e) => {
-                          const file = e.target.files?.[0];
-                          if (!file) return;
 
-                          // Strict file size check: 10 MB limit
-                          const maxSizeBytes = 10 * 1024 * 1024;
-                          if (file.size > maxSizeBytes) {
-                            alert(`Upload Blocked: File is not accepted because the file size is greater than 10 MB. (Uploaded file size: ${(file.size / (1024 * 1024)).toFixed(2)} MB).`);
-                            e.target.value = '';
-                            return;
-                          }
-
-                          // Strict daily quota check
-                          const email = currentUser || 'guest';
-                          const limitStatus = getDailyLimitStatus(email);
-                          if (!limitStatus.allowed) {
-                            alert("Upload Blocked: Strict limit of 10 3D models per day has been reached. Please try again tomorrow.");
-                            e.target.value = '';
-                            return;
-                          }
-
-                          try {
-                            const mesh = await parse3DModelFile(file);
-                            if (addCustom3DModel) {
-                              addCustom3DModel(mesh, file.name);
-                              alert(`Successfully imported custom 3D model "${file.name}"!`);
-                            }
-                          } catch (err: any) {
-                            console.error("Custom 3D mesh parsing failed:", err);
-                            alert(`Failed to parse the uploaded 3D mesh format: ${err.message || err}. Please ensure it is a valid format (JSON, OBJ, FBX, GLTF, or ZIP containing these).`);
-                          }
-                          
-                          e.target.value = ''; // clear input after load
-                        }}
-                      />
-                    </label>
-                  </div>
                 </div>
               )}
             </div>
