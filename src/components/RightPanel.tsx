@@ -4601,112 +4601,32 @@ export default function RightPanel({
                 </div>
 
                 <div className="bg-neutral-900/45 p-2.5 rounded-xl border border-neutral-850 text-[10px] text-neutral-400 leading-relaxed italic text-center">
-                  🎨 Adjust the sliders below to design your own high-performance, responsive custom brush profiles.
+                  🎨 Adjust the sliders below to configure the brush opacity, blur, and shadow effects.
                 </div>
 
-                {/* PRO MASTER BRUSH PRESETS */}
-                <div className="space-y-2 bg-neutral-900/55 p-3 rounded-xl border border-neutral-850">
-                  <label className="text-[10px] text-neutral-300 font-black uppercase tracking-wider block flex items-center gap-1">
-                    ⚡ Instant Pro Presets
-                  </label>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {[
-                      { name: '✏️ Sketch Pencil', strokeWidth: 1.5, strokeOpacity: 0.65, hardness: 0.2, blur: 0, shadowEnabled: false, shadowColor: '#000000', shadowBlur: 0, shadowOffsetX: 0, shadowOffsetY: 0 },
-                      { name: '✒️ Ink Quill', strokeWidth: 4, strokeOpacity: 1.0, hardness: 0.95, blur: 0, shadowEnabled: false, shadowColor: '#000000', shadowBlur: 0, shadowOffsetX: 0, shadowOffsetY: 0 },
-                      { name: '💨 Soft Airbrush', strokeWidth: 45, strokeOpacity: 0.2, hardness: 0.05, blur: 7.5, shadowEnabled: false, shadowColor: '#000000', shadowBlur: 0, shadowOffsetX: 0, shadowOffsetY: 0 },
-                      { name: '⚡ Cyber Neon', strokeWidth: 6, strokeOpacity: 1.0, hardness: 0.8, blur: 1.5, shadowEnabled: true, useStrokeColorAsShadow: true, shadowBlur: 14, shadowOffsetX: 0, shadowOffsetY: 0 },
-                      { name: '🖍️ Solid Marker', strokeWidth: 14, strokeOpacity: 0.9, hardness: 0.7, blur: 0, shadowEnabled: false, shadowColor: '#000000', shadowBlur: 0, shadowOffsetX: 0, shadowOffsetY: 0 },
-                      { name: '👤 Shadow Cast', strokeWidth: 5, strokeOpacity: 1.0, hardness: 0.9, blur: 0, shadowEnabled: true, shadowColor: '#000000', shadowBlur: 6, shadowOffsetX: 4, shadowOffsetY: 4 }
-                    ].map((preset) => (
-                      <button
-                        key={preset.name}
-                        type="button"
-                        onClick={() => {
-                          setBrushSettings(prev => ({
-                            ...prev,
-                            strokeWidth: preset.strokeWidth,
-                            strokeOpacity: preset.strokeOpacity,
-                            hardness: preset.hardness,
-                            blur: preset.blur,
-                            shadowEnabled: preset.shadowEnabled,
-                            shadowColor: preset.useStrokeColorAsShadow ? prev.strokeColor : preset.shadowColor,
-                            shadowBlur: preset.shadowBlur,
-                            shadowOffsetX: preset.shadowOffsetX,
-                            shadowOffsetY: preset.shadowOffsetY
-                          }));
-                        }}
-                        className="bg-neutral-950/70 hover:bg-neutral-800 text-neutral-300 hover:text-white border border-neutral-800 hover:border-neutral-700 rounded-lg py-1 px-2 text-[10px] font-bold text-left transition-all truncate"
-                      >
-                        {preset.name}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* SIMPLIFIED COLOR CONTROLS */}
+                {/* STYLE & EFFECTS CONTROLS */}
                 <div className="space-y-3 bg-neutral-900/55 p-3 rounded-xl border border-neutral-850">
-                  <div className="flex items-center justify-between border-b border-neutral-850 pb-2 mb-1">
-                    <label className="text-[10px] text-neutral-300 font-black uppercase tracking-wider block">
-                      🎨 Color Engine
-                    </label>
-                    <div className="flex items-center gap-1.5">
-                      <div 
-                        className="w-4 h-4 rounded-md border border-neutral-700 shadow-inner" 
-                        style={{ backgroundColor: brushSettings.strokeColor, opacity: brushSettings.strokeOpacity }}
-                      />
-                      <span className="text-[9px] font-mono text-neutral-400 uppercase tracking-tight">{brushSettings.strokeColor}</span>
-                    </div>
-                  </div>
-
-                  {/* Option: Color Blue */}
-                  <div className="space-y-1">
-                    <span className="text-[9px] text-neutral-400 font-bold uppercase tracking-wide">Color Presets</span>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setBrushSettings(prev => ({ ...prev, strokeColor: '#007AFF' }))}
-                        className={`flex-1 py-1.5 px-3 rounded-lg border text-[10px] font-black tracking-wide uppercase transition-all flex items-center justify-center gap-1.5 ${
-                          brushSettings.strokeColor.toUpperCase() === '#007AFF' 
-                            ? 'bg-blue-600/25 border-blue-500 text-blue-400 shadow-md shadow-blue-500/10' 
-                            : 'bg-neutral-950/50 hover:bg-neutral-850 border-neutral-800 text-neutral-400 hover:text-neutral-200'
-                        }`}
-                      >
-                        <span className="w-2.5 h-2.5 rounded-full bg-blue-500 border border-blue-400 shrink-0" />
-                        Color Blue
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Option: Color Hue */}
+                  {/* Size / Thickness */}
                   <div className="space-y-1">
                     <div className="flex items-center justify-between">
-                      <span className="text-[9px] text-neutral-400 font-bold uppercase tracking-wide">Color Hue</span>
-                      <span className="text-[10px] text-emerald-400 font-black">{hexToHue(brushSettings.strokeColor)}°</span>
+                      <span className="text-[10px] text-neutral-400 font-bold uppercase tracking-wide">Stroke Thickness / Width</span>
+                      <span className="text-emerald-400 font-black text-[10px]">{brushSettings.strokeWidth}px</span>
                     </div>
-                    <div className="relative group flex items-center h-4">
-                      <input
-                        type="range"
-                        min="0"
-                        max="360"
-                        step="1"
-                        value={hexToHue(brushSettings.strokeColor)}
-                        onChange={(e) => {
-                          const hue = parseInt(e.target.value);
-                          const hex = hslToHex(hue);
-                          setBrushSettings(prev => ({ ...prev, strokeColor: hex }));
-                        }}
-                        style={{
-                          background: 'linear-gradient(to right, #ff0000 0%, #ffff00 17%, #00ff00 33%, #00ffff 50%, #0000ff 67%, #ff00ff 83%, #ff0000 100%)'
-                        }}
-                        className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-white"
-                      />
-                    </div>
+                    <input
+                      type="range"
+                      min="1"
+                      max="120"
+                      step="0.5"
+                      value={brushSettings.strokeWidth}
+                      onChange={(e) => setBrushSettings(prev => ({ ...prev, strokeWidth: parseFloat(e.target.value) }))}
+                      className="w-full h-1 bg-neutral-950 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                    />
                   </div>
 
                   {/* Option: Color Opacity */}
                   <div className="space-y-1">
                     <div className="flex items-center justify-between">
-                      <span className="text-[9px] text-neutral-400 font-bold uppercase tracking-wide">Color Opacity</span>
+                      <span className="text-[10px] text-neutral-400 font-bold uppercase tracking-wide">Brush Opacity</span>
                       <span className="text-[10px] text-emerald-400 font-black">{Math.round(brushSettings.strokeOpacity * 100)}%</span>
                     </div>
                     <input
@@ -4716,43 +4636,6 @@ export default function RightPanel({
                       step="0.01"
                       value={brushSettings.strokeOpacity}
                       onChange={(e) => setBrushSettings(prev => ({ ...prev, strokeOpacity: parseFloat(e.target.value) }))}
-                      className="w-full h-1 bg-neutral-950 rounded-lg appearance-none cursor-pointer accent-emerald-500"
-                    />
-                  </div>
-                </div>
-
-                {/* Physical Sliders */}
-                <div className="space-y-3 bg-neutral-900/55 p-3 rounded-xl border border-neutral-850">
-                  {/* Size */}
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] text-neutral-400 font-bold uppercase">Brush Size / Width</span>
-                      <span className="text-emerald-400 font-black text-[10px]">{brushSettings.strokeWidth}px</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="1"
-                      max="100"
-                      step="0.5"
-                      value={brushSettings.strokeWidth}
-                      onChange={(e) => setBrushSettings(prev => ({ ...prev, strokeWidth: parseFloat(e.target.value) }))}
-                      className="w-full h-1 bg-neutral-950 rounded-lg appearance-none cursor-pointer accent-emerald-500"
-                    />
-                  </div>
-
-                  {/* Hardness */}
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] text-neutral-400 font-bold uppercase">Brush Hardness</span>
-                      <span className="text-emerald-400 font-black text-[10px]">{Math.round(brushSettings.hardness * 100)}%</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.01"
-                      value={brushSettings.hardness}
-                      onChange={(e) => setBrushSettings(prev => ({ ...prev, hardness: parseFloat(e.target.value) }))}
                       className="w-full h-1 bg-neutral-950 rounded-lg appearance-none cursor-pointer accent-emerald-500"
                     />
                   </div>
