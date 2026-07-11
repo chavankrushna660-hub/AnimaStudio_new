@@ -561,6 +561,19 @@ export default function App() {
 
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
 
+  const [shortcutHint, setShortcutHint] = useState<string | null>(null);
+  const shortcutHintTimeoutRef = useRef<any>(null);
+
+  const triggerShortcutHint = (message: string) => {
+    if (shortcutHintTimeoutRef.current) {
+      clearTimeout(shortcutHintTimeoutRef.current);
+    }
+    setShortcutHint(message);
+    shortcutHintTimeoutRef.current = setTimeout(() => {
+      setShortcutHint(null);
+    }, 1800);
+  };
+
   // Canvas Size States
   const [artboardW, setArtboardW] = useState<number>(() => {
     if (typeof window !== 'undefined') {
@@ -669,6 +682,165 @@ export default function App() {
       window.removeEventListener('contextmenu', preventContextMenu);
       window.removeEventListener('keydown', preventDevTools);
       clearInterval(warningInterval);
+    };
+  }, []);
+
+  // Windows/Desktop Keyboard Shortcuts Handler
+  const shortcutsRef = useRef<any>(null);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // 1. strictly for windows/desktop, not for mobile small screens
+      if (typeof window !== 'undefined' && window.innerWidth < 1200) {
+        return;
+      }
+
+      // 2. Ignore if typing in an input, textarea, or contentEditable element
+      const activeTag = document.activeElement?.tagName.toLowerCase();
+      if (
+        activeTag === 'input' || 
+        activeTag === 'textarea' || 
+        (document.activeElement as any)?.isContentEditable
+      ) {
+        return;
+      }
+
+      const h = shortcutsRef.current;
+      if (!h) return;
+
+      const key = e.key.toLowerCase();
+      const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+
+      // Handle Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y
+      if (isCtrlOrCmd) {
+        if (key === 'z') {
+          e.preventDefault();
+          if (e.shiftKey) {
+            h.handleRedo();
+            h.triggerShortcutHint("Redo (Ctrl+Shift+Z)");
+          } else {
+            h.handleUndo();
+            h.triggerShortcutHint("Undo (Ctrl+Z)");
+          }
+          return;
+        }
+        if (key === 'y') {
+          e.preventDefault();
+          h.handleRedo();
+          h.triggerShortcutHint("Redo (Ctrl+Y)");
+          return;
+        }
+        return;
+      }
+
+      // Handle individual keys
+      switch (e.key) {
+        // Spacebar: Play/Pause animation
+        case ' ': {
+          e.preventDefault();
+          h.setIsPlaying((p: boolean) => {
+            const next = !p;
+            h.triggerShortcutHint(next ? "Animation Playing (Space)" : "Animation Paused");
+            return next;
+          });
+          break;
+        }
+        // 's' for select
+        case 's':
+        case 'S': {
+          e.preventDefault();
+          h.setActiveTool('SEL');
+          h.triggerShortcutHint("Tool: Select & Transform (S)");
+          break;
+        }
+        // 'p' for pen
+        case 'p':
+        case 'P': {
+          e.preventDefault();
+          h.setActiveTool('PEN');
+          h.triggerShortcutHint("Tool: Vector Pen (P)");
+          break;
+        }
+        // 'b' for brush
+        case 'b':
+        case 'B': {
+          e.preventDefault();
+          h.setActiveTool('BRS');
+          h.triggerShortcutHint("Tool: Brush (B)");
+          break;
+        }
+        // 'm' for mesh
+        case 'm':
+        case 'M': {
+          e.preventDefault();
+          h.setActiveTool('MSH');
+          h.triggerShortcutHint("Tool: Geometry Deform Mesh (M)");
+          break;
+        }
+        // 'f' for fill
+        case 'f':
+        case 'F': {
+          e.preventDefault();
+          h.setActiveTool('FIL');
+          h.triggerShortcutHint("Tool: Fill Bucket (F)");
+          break;
+        }
+        // 'l' for lasso
+        case 'l':
+        case 'L': {
+          e.preventDefault();
+          h.setActiveTool('LSO');
+          h.triggerShortcutHint("Tool: Lasso Selection (L)");
+          break;
+        }
+        // 'a' for add frame
+        case 'a':
+        case 'A': {
+          e.preventDefault();
+          h.addFrame();
+          h.triggerShortcutHint("Frame Added (A)");
+          break;
+        }
+        // 'e' for eraser
+        case 'e':
+        case 'E': {
+          e.preventDefault();
+          h.setActiveTool('ERS');
+          h.triggerShortcutHint("Tool: Eraser (E)");
+          break;
+        }
+        // 'v' for pivot point
+        case 'v':
+        case 'V': {
+          e.preventDefault();
+          h.setActiveTool('PVT');
+          h.triggerShortcutHint("Tool: Pivot Point (V)");
+          break;
+        }
+        // 'k' for knife
+        case 'k':
+        case 'K': {
+          e.preventDefault();
+          h.setActiveTool('KNF');
+          h.triggerShortcutHint("Tool: Knife (K)");
+          break;
+        }
+        // 'z' for zoom
+        case 'z':
+        case 'Z': {
+          e.preventDefault();
+          h.setActiveTool('ZOM');
+          h.triggerShortcutHint("Tool: Zoom & Pan (Z)");
+          break;
+        }
+        default:
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
     };
   }, []);
 
@@ -2284,6 +2456,16 @@ export default function App() {
     );
   };
 
+  shortcutsRef.current = {
+    isPlaying,
+    setIsPlaying,
+    setActiveTool,
+    addFrame,
+    handleUndo,
+    handleRedo,
+    triggerShortcutHint
+  };
+
   return (
     <div className={`w-screen h-screen overflow-hidden bg-neutral-950 relative ${theme === 'light' ? 'light-theme' : ''}`}>
       <div 
@@ -2797,6 +2979,17 @@ export default function App() {
           >
             ✕
           </button>
+        </div>
+      )}
+
+      {/* Sleek HUD Shortcut Hint Overlay */}
+      {shortcutHint && (
+        <div 
+          id="shortcut-hud-hint"
+          className="fixed top-6 left-1/2 -translate-x-1/2 z-50 bg-neutral-900/90 border border-amber-500/30 text-amber-400 font-extrabold px-6 py-2.5 rounded-full shadow-[0_0_25px_rgba(245,158,11,0.25)] text-xs tracking-wider uppercase animate-fade-in pointer-events-none backdrop-blur flex items-center gap-2"
+        >
+          <Sparkles className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+          <span>{shortcutHint}</span>
         </div>
       )}
       {/* 5. AUTH MODAL OVERLAY */}
