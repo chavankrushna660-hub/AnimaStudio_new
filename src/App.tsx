@@ -678,39 +678,45 @@ export default function App() {
   const loadedFrameIndexRef = useRef<number>(0);
   const lastSyncedObjectsRef = useRef<string>('');
 
+  // Keep a stable reference to the frames array to break the feedback loop during rapid dragging
+  const framesRef = useRef(frames);
+  useEffect(() => {
+    framesRef.current = frames;
+  }, [frames]);
+
   // Synchronize active objects back and forth between active frame and objects dictionary
   useEffect(() => {
-    // 1. If we changed frame index, load objects from the target frame
+    // 1. If we changed frame index, we MUST load objects from that target frame
     if (currentFrameIndex !== loadedFrameIndexRef.current) {
-      const targetFrame = frames[currentFrameIndex];
+      const targetFrame = framesRef.current[currentFrameIndex];
       if (targetFrame) {
         const frameObjects = targetFrame.objects || {};
-        if (Object.keys(frameObjects).length > 0) {
-          loadedFrameIndexRef.current = currentFrameIndex;
-          const frameObjectsStr = JSON.stringify(frameObjects);
+        const frameObjectsStr = JSON.stringify(frameObjects);
+        const currentObjectsStr = JSON.stringify(objects);
+
+        if (currentObjectsStr !== frameObjectsStr) {
+          // State has not caught up to the loaded frame objects yet
+          setObjects(JSON.parse(frameObjectsStr));
           lastSyncedObjectsRef.current = frameObjectsStr;
-          setObjects(prev => {
-            if (JSON.stringify(prev) !== frameObjectsStr) {
-              return JSON.parse(frameObjectsStr);
-            }
-            return prev;
-          });
-        } else if (currentFrameIndex > 0) {
-          // Fallback: copy from previous frame if the current frame is empty
-          const prevFrame = frames[currentFrameIndex - 1];
-          if (prevFrame && prevFrame.objects && Object.keys(prevFrame.objects).length > 0) {
-            const copiedObjects = JSON.parse(JSON.stringify(prevFrame.objects));
-            loadedFrameIndexRef.current = currentFrameIndex;
-            const copiedStr = JSON.stringify(copiedObjects);
+          return;
+        } else {
+          // State has fully caught up! Now we mark it as loaded
+          loadedFrameIndexRef.current = currentFrameIndex;
+          lastSyncedObjectsRef.current = frameObjectsStr;
+          return;
+        }
+      } else if (currentFrameIndex > 0) {
+        // Fallback: copy from previous frame if the current frame is empty or undefined
+        const prevFrame = framesRef.current[currentFrameIndex - 1];
+        if (prevFrame && prevFrame.objects && Object.keys(prevFrame.objects).length > 0) {
+          const copiedObjects = JSON.parse(JSON.stringify(prevFrame.objects));
+          const copiedStr = JSON.stringify(copiedObjects);
+          const currentObjectsStr = JSON.stringify(objects);
+
+          if (currentObjectsStr !== copiedStr) {
+            setObjects(copiedObjects);
             lastSyncedObjectsRef.current = copiedStr;
-            
-            setObjects(prev => {
-              if (JSON.stringify(prev) !== copiedStr) {
-                return copiedObjects;
-              }
-              return prev;
-            });
-            
+
             setFrames(prev => {
               if (!prev[currentFrameIndex]) return prev;
               const currentFrameObjectsInState = prev[currentFrameIndex].objects || {};
@@ -724,18 +730,35 @@ export default function App() {
               }
               return prev;
             });
+            return;
+          } else {
+            loadedFrameIndexRef.current = currentFrameIndex;
+            lastSyncedObjectsRef.current = copiedStr;
+            return;
+          }
+        } else {
+          const currentObjectsStr = JSON.stringify(objects);
+          if (currentObjectsStr !== '{}') {
+            setObjects({});
+            lastSyncedObjectsRef.current = '{}';
+            return;
           } else {
             loadedFrameIndexRef.current = currentFrameIndex;
             lastSyncedObjectsRef.current = '{}';
-            setObjects(prev => Object.keys(prev).length > 0 ? {} : prev);
+            return;
           }
+        }
+      } else {
+        const currentObjectsStr = JSON.stringify(objects);
+        if (currentObjectsStr !== '{}') {
+          setObjects({});
+          lastSyncedObjectsRef.current = '{}';
+          return;
         } else {
           loadedFrameIndexRef.current = currentFrameIndex;
           lastSyncedObjectsRef.current = '{}';
-          setObjects(prev => Object.keys(prev).length > 0 ? {} : prev);
+          return;
         }
-      } else {
-        loadedFrameIndexRef.current = currentFrameIndex;
       }
     } else {
       // 2. Otherwise, we are on the same frame, so sync any changes in 'objects' back to 'frames'
@@ -745,100 +768,109 @@ export default function App() {
         return;
       }
 
-      setFrames(prev => {
-        if (!prev[currentFrameIndex]) return prev;
-        const currentFrameObjectsInState = prev[currentFrameIndex].objects || {};
-        
-        const currentKeys = Object.keys(objects);
-        const savedKeys = Object.keys(currentFrameObjectsInState);
-        
-        const addedKeys = currentKeys.filter(k => !savedKeys.includes(k));
-        const deletedKeys = savedKeys.filter(k => !currentKeys.includes(k));
-        
-        if (addedKeys.length > 0 || deletedKeys.length > 0 || 
-            JSON.stringify(currentFrameObjectsInState) !== currentObjectsStr) {
+      // Debounce updating frames during rapid actions like dragging or drawing to completely eliminate infinite update loops!
+      const handler = setTimeout(() => {
+        const checkStr = JSON.stringify(objects);
+        if (checkStr !== lastSyncedObjectsRef.current) {
+          lastSyncedObjectsRef.current = checkStr;
           
-          lastSyncedObjectsRef.current = currentObjectsStr;
-          
-          const updated = prev.map((f, idx) => {
-            const frameObjects = JSON.parse(JSON.stringify(f.objects || {})); // Deep clone to prevent direct state mutation!
+          setFrames(prev => {
+            if (!prev[currentFrameIndex]) return prev;
+            const currentFrameObjectsInState = prev[currentFrameIndex].objects || {};
             
-            // Delete deleted objects from all frames
-            deletedKeys.forEach(k => {
-              delete frameObjects[k];
-            });
+            const currentKeys = Object.keys(objects);
+            const savedKeys = Object.keys(currentFrameObjectsInState);
             
-            // Sync new objects to all frames
-            addedKeys.forEach(k => {
-              frameObjects[k] = JSON.parse(JSON.stringify(objects[k]));
-            });
+            const addedKeys = currentKeys.filter(k => !savedKeys.includes(k));
+            const deletedKeys = savedKeys.filter(k => !currentKeys.includes(k));
+            
+            if (addedKeys.length > 0 || deletedKeys.length > 0 || 
+                JSON.stringify(currentFrameObjectsInState) !== checkStr) {
+              
+              const updated = prev.map((f, idx) => {
+                const frameObjects = JSON.parse(JSON.stringify(f.objects || {})); // Deep clone to prevent direct state mutation!
+                
+                // Delete deleted objects from all frames
+                deletedKeys.forEach(k => {
+                  delete frameObjects[k];
+                });
+                
+                // Sync new objects to all frames
+                addedKeys.forEach(k => {
+                  frameObjects[k] = JSON.parse(JSON.stringify(objects[k]));
+                });
 
-            // Sync existing objects' style, color, drawing structure, and text properties to all other frames
-            Object.keys(frameObjects).forEach(k => {
-              if (objects[k]) {
-                const src = objects[k];
-                const dest = frameObjects[k];
+                // Sync existing objects' style, color, drawing structure, and text properties to all other frames
+                Object.keys(frameObjects).forEach(k => {
+                  if (objects[k]) {
+                    const src = objects[k];
+                    const dest = frameObjects[k];
+                    
+                    if (src.strokeColor !== undefined) dest.strokeColor = src.strokeColor;
+                    if (src.strokeWidth !== undefined) dest.strokeWidth = src.strokeWidth;
+                    if (src.fillColor !== undefined) dest.fillColor = src.fillColor;
+                    if (src.lassoFills !== undefined) dest.lassoFills = JSON.parse(JSON.stringify(src.lassoFills));
+                    if (src.opacity !== undefined) dest.opacity = src.opacity;
+                    if (src.shadow !== undefined) dest.shadow = src.shadow ? JSON.parse(JSON.stringify(src.shadow)) : undefined;
+                    if (src.innerShadow !== undefined) dest.innerShadow = src.innerShadow ? JSON.parse(JSON.stringify(src.innerShadow)) : undefined;
+                    if (src.rimLight !== undefined) dest.rimLight = src.rimLight ? JSON.parse(JSON.stringify(src.rimLight)) : undefined;
+                    if (src.overlay !== undefined) dest.overlay = src.overlay ? JSON.parse(JSON.stringify(src.overlay)) : undefined;
+                    
+                    if (src.points !== undefined) dest.points = JSON.parse(JSON.stringify(src.points));
+                    if (src.subPaths !== undefined) dest.subPaths = src.subPaths ? JSON.parse(JSON.stringify(src.subPaths)) : undefined;
+                    if (src.name !== undefined) dest.name = src.name;
+                    if (src.type !== undefined) dest.type = src.type;
+                    if (src.text !== undefined) dest.text = src.text;
+                    if (src.fontSize !== undefined) dest.fontSize = src.fontSize;
+                    if (src.fontFamily !== undefined) dest.fontFamily = src.fontFamily;
+                    if (src.imageUrl !== undefined) dest.imageUrl = src.imageUrl;
+                    
+                    if (src.isLocked !== undefined) dest.isLocked = src.isLocked;
+                    if (src.isHidden !== undefined) dest.isHidden = src.isHidden;
+                    if (src.zIndex !== undefined) dest.zIndex = src.zIndex;
+                    
+                    if (src.keepAttachedTo !== undefined) dest.keepAttachedTo = src.keepAttachedTo;
+                    if (src.attachedGroupId !== undefined) dest.attachedGroupId = src.attachedGroupId;
+                    if (src.parentId !== undefined) dest.parentId = src.parentId;
+                    if (src.childrenIds !== undefined) dest.childrenIds = src.childrenIds ? JSON.parse(JSON.stringify(src.childrenIds)) : undefined;
+                    if (src.layerId !== undefined) dest.layerId = src.layerId;
+                    
+                    if (src.meshState !== undefined) dest.meshState = src.meshState ? JSON.parse(JSON.stringify(src.meshState)) : undefined;
+                    if (src.depth3D !== undefined) dest.depth3D = src.depth3D;
+                    if (src.hollowEnabled !== undefined) dest.hollowEnabled = src.hollowEnabled;
+                    if (src.innerSpace3D !== undefined) dest.innerSpace3D = src.innerSpace3D;
+                    if (src.selectedFaceIndex !== undefined) dest.selectedFaceIndex = src.selectedFaceIndex;
+                    if (src.selectedEdgeIndex !== undefined) dest.selectedEdgeIndex = src.selectedEdgeIndex;
+                    if (src.shape3DType !== undefined) dest.shape3DType = src.shape3DType;
+                    if (src.smartWarp !== undefined) dest.smartWarp = src.smartWarp ? JSON.parse(JSON.stringify(src.smartWarp)) : undefined;
+                    if (src.pins !== undefined) dest.pins = src.pins ? JSON.parse(JSON.stringify(src.pins)) : undefined;
+                    if (src.pivots !== undefined) dest.pivots = src.pivots ? JSON.parse(JSON.stringify(src.pivots)) : undefined;
+                  }
+                });
                 
-                if (src.strokeColor !== undefined) dest.strokeColor = src.strokeColor;
-                if (src.strokeWidth !== undefined) dest.strokeWidth = src.strokeWidth;
-                if (src.fillColor !== undefined) dest.fillColor = src.fillColor;
-                if (src.lassoFills !== undefined) dest.lassoFills = JSON.parse(JSON.stringify(src.lassoFills));
-                if (src.opacity !== undefined) dest.opacity = src.opacity;
-                if (src.shadow !== undefined) dest.shadow = src.shadow ? JSON.parse(JSON.stringify(src.shadow)) : undefined;
-                if (src.innerShadow !== undefined) dest.innerShadow = src.innerShadow ? JSON.parse(JSON.stringify(src.innerShadow)) : undefined;
-                if (src.rimLight !== undefined) dest.rimLight = src.rimLight ? JSON.parse(JSON.stringify(src.rimLight)) : undefined;
-                if (src.overlay !== undefined) dest.overlay = src.overlay ? JSON.parse(JSON.stringify(src.overlay)) : undefined;
-                
-                if (src.points !== undefined) dest.points = JSON.parse(JSON.stringify(src.points));
-                if (src.subPaths !== undefined) dest.subPaths = src.subPaths ? JSON.parse(JSON.stringify(src.subPaths)) : undefined;
-                if (src.name !== undefined) dest.name = src.name;
-                if (src.type !== undefined) dest.type = src.type;
-                if (src.text !== undefined) dest.text = src.text;
-                if (src.fontSize !== undefined) dest.fontSize = src.fontSize;
-                if (src.fontFamily !== undefined) dest.fontFamily = src.fontFamily;
-                if (src.imageUrl !== undefined) dest.imageUrl = src.imageUrl;
-                
-                if (src.isLocked !== undefined) dest.isLocked = src.isLocked;
-                if (src.isHidden !== undefined) dest.isHidden = src.isHidden;
-                if (src.zIndex !== undefined) dest.zIndex = src.zIndex;
-                
-                if (src.keepAttachedTo !== undefined) dest.keepAttachedTo = src.keepAttachedTo;
-                if (src.attachedGroupId !== undefined) dest.attachedGroupId = src.attachedGroupId;
-                if (src.parentId !== undefined) dest.parentId = src.parentId;
-                if (src.childrenIds !== undefined) dest.childrenIds = src.childrenIds ? JSON.parse(JSON.stringify(src.childrenIds)) : undefined;
-                if (src.layerId !== undefined) dest.layerId = src.layerId;
-                
-                if (src.meshState !== undefined) dest.meshState = src.meshState ? JSON.parse(JSON.stringify(src.meshState)) : undefined;
-                if (src.depth3D !== undefined) dest.depth3D = src.depth3D;
-                if (src.hollowEnabled !== undefined) dest.hollowEnabled = src.hollowEnabled;
-                if (src.innerSpace3D !== undefined) dest.innerSpace3D = src.innerSpace3D;
-                if (src.selectedFaceIndex !== undefined) dest.selectedFaceIndex = src.selectedFaceIndex;
-                if (src.selectedEdgeIndex !== undefined) dest.selectedEdgeIndex = src.selectedEdgeIndex;
-                if (src.shape3DType !== undefined) dest.shape3DType = src.shape3DType;
-                if (src.smartWarp !== undefined) dest.smartWarp = src.smartWarp ? JSON.parse(JSON.stringify(src.smartWarp)) : undefined;
-                if (src.pins !== undefined) dest.pins = src.pins ? JSON.parse(JSON.stringify(src.pins)) : undefined;
-                if (src.pivots !== undefined) dest.pivots = src.pivots ? JSON.parse(JSON.stringify(src.pivots)) : undefined;
-              }
-            });
-            
-            if (idx === currentFrameIndex) {
-              return {
-                ...f,
-                objects: JSON.parse(currentObjectsStr)
-              };
-            } else {
-              return {
-                ...f,
-                objects: frameObjects
-              };
+                if (idx === currentFrameIndex) {
+                  return {
+                    ...f,
+                    objects: JSON.parse(checkStr)
+                  };
+                } else {
+                  return {
+                    ...f,
+                    objects: frameObjects
+                  };
+                }
+              });
+              
+              return updated;
             }
+            return prev;
           });
-          
-          return updated;
         }
-        return prev;
-      });
+      }, 150);
+
+      return () => clearTimeout(handler);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentFrameIndex, objects]);
 
   // Export video recorder states
