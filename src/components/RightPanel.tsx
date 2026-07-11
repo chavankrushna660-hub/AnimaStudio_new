@@ -1468,7 +1468,7 @@ export default function RightPanel({
 
   return (
     <div
-      className={`absolute right-0 lg:relative h-full transition-all duration-200 shrink-0 z-30 ${
+      className={`absolute right-0 h-full transition-all duration-200 shrink-0 z-30 ${
         open ? 'w-80' : 'w-0'
       }`}
     >

@@ -397,7 +397,7 @@ export default function LeftPanel({
 
   return (
     <div
-      className={`absolute left-14 lg:relative h-full transition-all duration-200 shrink-0 z-30 ${
+      className={`absolute left-14 h-full transition-all duration-200 shrink-0 z-30 ${
         open ? 'w-64' : 'w-0'
       }`}
     >

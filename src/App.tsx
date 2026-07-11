@@ -393,8 +393,18 @@ export default function App() {
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
 
   // Canvas Size States
-  const [artboardW, setArtboardW] = useState<number>(1400);
-  const [artboardH, setArtboardH] = useState<number>(900);
+  const [artboardW, setArtboardW] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      return Math.max(800, window.innerWidth - 64);
+    }
+    return 1400;
+  });
+  const [artboardH, setArtboardH] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      return Math.max(500, window.innerHeight - 260);
+    }
+    return 900;
+  });
   const [showCanvasSizePanel, setShowCanvasSizePanel] = useState<boolean>(false);
 
   // Adaptive subdivision control
