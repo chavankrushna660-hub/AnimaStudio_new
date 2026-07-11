@@ -1950,7 +1950,7 @@ export default function App() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `AnimaStudio_Export_${Date.now()}.${extension}`;
+        a.download = `Animation_Export_${Date.now()}.${extension}`;
         document.body.appendChild(a);
         a.click();
         URL.revokeObjectURL(url);
@@ -2016,7 +2016,7 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `AnimaStudio_Project_${Date.now()}.json`;
+    a.download = `Animation_Project_${Date.now()}.json`;
     document.body.appendChild(a);
     a.click();
     URL.revokeObjectURL(url);
@@ -2113,16 +2113,14 @@ export default function App() {
       >
 
       {/* 1.5 TOP SPONSOR ADS BAR (2 Boxes, Centered, 76px Height, Spacious Margins) */}
-      {isMobile && (
-        <div className="w-full bg-transparent p-[2px] flex gap-2 items-center select-none shrink-0 mt-2 mb-3 px-3 animate-fade-in" id="top-ads-bar" style={{ border: 'none', outline: 'none' }}>
-          <div className="flex-1 h-[76px] min-w-0" style={{ border: 'none', outline: 'none' }}>
-            {renderAdBox(ADS_DATA[topAdIndex1], 'bottom')}
-          </div>
-          <div className="flex-1 h-[76px] min-w-0" style={{ border: 'none', outline: 'none' }}>
-            {renderAdBox(ADS_DATA[topAdIndex2], 'bottom')}
-          </div>
+      <div className="w-full bg-transparent p-[2px] flex gap-2 items-center select-none shrink-0 mt-1 mb-2 md:mt-0.5 md:mb-1 px-3 animate-fade-in" id="top-ads-bar" style={{ border: 'none', outline: 'none' }}>
+        <div className="flex-1 h-[76px] min-w-0" style={{ border: 'none', outline: 'none' }}>
+          {renderAdBox(ADS_DATA[topAdIndex1], 'bottom')}
         </div>
-      )}
+        <div className="flex-1 h-[76px] min-w-0" style={{ border: 'none', outline: 'none' }}>
+          {renderAdBox(ADS_DATA[topAdIndex2], 'bottom')}
+        </div>
+      </div>
 
       {/* 1. TOP NAVIGATION BAR */}
       <header className="h-14 bg-neutral-900 border-b border-neutral-800 px-2 sm:px-4 flex items-center justify-between shrink-0 select-none z-10 overflow-x-auto scrollbar-none flex-nowrap">
@@ -2132,7 +2130,7 @@ export default function App() {
           </div>
           <div className="block shrink-0">
             <h1 className="font-black text-[9px] sm:text-xs tracking-wider uppercase bg-clip-text text-transparent bg-gradient-to-r from-white to-neutral-400 leading-none">
-              ANIMASTUDIO
+              Animation
             </h1>
             <p className="text-[7.5px] sm:text-[9px] text-neutral-500 font-extrabold leading-none uppercase tracking-widest mt-0.5">
               VECTOR & RIGGING
@@ -2510,7 +2508,7 @@ export default function App() {
 
             const handleMouseMove = (moveEvent: MouseEvent) => {
               const deltaY = moveEvent.clientY - startY;
-              const newHeight = Math.max(125, Math.min(550, startHeight - deltaY));
+              const newHeight = Math.max(45, Math.min(550, startHeight - deltaY));
               setTimelineHeight(newHeight);
             };
 
@@ -2554,7 +2552,7 @@ export default function App() {
 
       {/* 3.5 BOTTOM SPONSOR ADS BAR (2 Boxes, Centered, 76px Height, Spacious Margins) */}
       {isMobile && (
-        <div className="w-full bg-transparent p-[2px] flex gap-2 items-center select-none shrink-0 mt-3 mb-2 px-3 animate-fade-in" id="bottom-ads-bar" style={{ border: 'none', outline: 'none' }}>
+        <div className="w-full bg-transparent p-[2px] flex gap-2 items-center select-none shrink-0 mt-2 mb-1 px-3 animate-fade-in" id="bottom-ads-bar" style={{ border: 'none', outline: 'none' }}>
           <div className="flex-1 h-[76px] min-w-0" style={{ border: 'none', outline: 'none' }}>
             {renderAdBox(ADS_DATA[bottomAdIndex1], 'top')}
           </div>
