@@ -366,6 +366,7 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [dbNotification, setDbNotification] = useState<{ type: 'success' | 'info' | 'error'; message: string } | null>(null);
   const [limitNotification, setLimitNotification] = useState<string | null>(null);
+  const [timelineHeight, setTimelineHeight] = useState<number>(185);
   
   // Theme states
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
@@ -2112,14 +2113,16 @@ export default function App() {
       >
 
       {/* 1.5 TOP SPONSOR ADS BAR (2 Boxes, Centered, 76px Height, Spacious Margins) */}
-      <div className="w-full bg-transparent p-[2px] flex gap-2 items-center select-none shrink-0 mt-2 mb-3 px-3 animate-fade-in" id="top-ads-bar" style={{ border: 'none', outline: 'none' }}>
-        <div className="flex-1 h-[76px] min-w-0" style={{ border: 'none', outline: 'none' }}>
-          {renderAdBox(ADS_DATA[topAdIndex1], 'bottom')}
+      {isMobile && (
+        <div className="w-full bg-transparent p-[2px] flex gap-2 items-center select-none shrink-0 mt-2 mb-3 px-3 animate-fade-in" id="top-ads-bar" style={{ border: 'none', outline: 'none' }}>
+          <div className="flex-1 h-[76px] min-w-0" style={{ border: 'none', outline: 'none' }}>
+            {renderAdBox(ADS_DATA[topAdIndex1], 'bottom')}
+          </div>
+          <div className="flex-1 h-[76px] min-w-0" style={{ border: 'none', outline: 'none' }}>
+            {renderAdBox(ADS_DATA[topAdIndex2], 'bottom')}
+          </div>
         </div>
-        <div className="flex-1 h-[76px] min-w-0" style={{ border: 'none', outline: 'none' }}>
-          {renderAdBox(ADS_DATA[topAdIndex2], 'bottom')}
-        </div>
-      </div>
+      )}
 
       {/* 1. TOP NAVIGATION BAR */}
       <header className="h-14 bg-neutral-900 border-b border-neutral-800 px-2 sm:px-4 flex items-center justify-between shrink-0 select-none z-10 overflow-x-auto scrollbar-none flex-nowrap">
@@ -2496,6 +2499,35 @@ export default function App() {
         />
       </div>
 
+      {/* 2.5 DESKTOP TIMELINE RESIZER BAR */}
+      {!isMobile && (
+        <div
+          className="h-2 bg-neutral-900 hover:bg-amber-500 cursor-ns-resize transition-colors duration-200 flex-shrink-0 relative z-30 select-none group flex items-center justify-center border-t border-b border-neutral-800 hover:border-amber-400"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            const startY = e.clientY;
+            const startHeight = timelineHeight;
+
+            const handleMouseMove = (moveEvent: MouseEvent) => {
+              const deltaY = moveEvent.clientY - startY;
+              const newHeight = Math.max(125, Math.min(550, startHeight - deltaY));
+              setTimelineHeight(newHeight);
+            };
+
+            const handleMouseUp = () => {
+              document.removeEventListener('mousemove', handleMouseMove);
+              document.removeEventListener('mouseup', handleMouseUp);
+            };
+
+            document.addEventListener('mousemove', handleMouseMove);
+            document.addEventListener('mouseup', handleMouseUp);
+          }}
+        >
+          {/* Subtle grab bar accent in the center */}
+          <div className="w-14 h-1 rounded-full bg-neutral-700 group-hover:bg-amber-300 transition-colors" />
+        </div>
+      )}
+
       {/* 3. BOTTOM FRAMES TIMELINE */}
       <Timeline
         frames={frames}
@@ -2517,17 +2549,20 @@ export default function App() {
         setIsPlaying={setIsPlaying}
         showCanvasSizePanel={showCanvasSizePanel}
         setShowCanvasSizePanel={setShowCanvasSizePanel}
+        style={!isMobile ? { height: timelineHeight } : undefined}
       />
 
       {/* 3.5 BOTTOM SPONSOR ADS BAR (2 Boxes, Centered, 76px Height, Spacious Margins) */}
-      <div className="w-full bg-transparent p-[2px] flex gap-2 items-center select-none shrink-0 mt-3 mb-2 px-3 animate-fade-in" id="bottom-ads-bar" style={{ border: 'none', outline: 'none' }}>
-        <div className="flex-1 h-[76px] min-w-0" style={{ border: 'none', outline: 'none' }}>
-          {renderAdBox(ADS_DATA[bottomAdIndex1], 'top')}
+      {isMobile && (
+        <div className="w-full bg-transparent p-[2px] flex gap-2 items-center select-none shrink-0 mt-3 mb-2 px-3 animate-fade-in" id="bottom-ads-bar" style={{ border: 'none', outline: 'none' }}>
+          <div className="flex-1 h-[76px] min-w-0" style={{ border: 'none', outline: 'none' }}>
+            {renderAdBox(ADS_DATA[bottomAdIndex1], 'top')}
+          </div>
+          <div className="flex-1 h-[76px] min-w-0" style={{ border: 'none', outline: 'none' }}>
+            {renderAdBox(ADS_DATA[bottomAdIndex2], 'top')}
+          </div>
         </div>
-        <div className="flex-1 h-[76px] min-w-0" style={{ border: 'none', outline: 'none' }}>
-          {renderAdBox(ADS_DATA[bottomAdIndex2], 'top')}
-        </div>
-      </div>
+      )}
 
       {/* 4. NOTIFICATION & TOAST OVERLAYS */}
       {dbNotification && (

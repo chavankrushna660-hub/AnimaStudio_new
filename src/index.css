@@ -160,24 +160,18 @@
 
 /* Keep critical notice modals, toasts, and auth overlays dark for high visual hierarchy */
 .light-theme #limit-toast-notification,
-.light-theme #db-toast-notification,
-.light-theme #auth-modal,
-.light-theme div[class*="fixed inset-0 z-"] {
+.light-theme #db-toast-notification {
   background-color: #0f172a !important;
   color: #f8fafc !important;
 }
 
 .light-theme #limit-toast-notification *,
-.light-theme #db-toast-notification *,
-.light-theme #auth-modal *,
-.light-theme div[class*="fixed inset-0 z-"] * {
+.light-theme #db-toast-notification * {
   color: #f8fafc !important;
   border-color: #334155 !important;
 }
 
 .light-theme #limit-toast-notification button,
-.light-theme #db-toast-notification button,
-.light-theme #auth-modal button,
-.light-theme div[class*="fixed inset-0 z-"] button {
+.light-theme #db-toast-notification button {
   color: #0f172a !important;
 }

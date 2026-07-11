@@ -35,6 +35,7 @@ interface TimelineProps {
   setIsPlaying: (playing: boolean) => void;
   showCanvasSizePanel?: boolean;
   setShowCanvasSizePanel?: (show: boolean) => void;
+  style?: React.CSSProperties;
 }
 
 export default function Timeline({
@@ -57,6 +58,7 @@ export default function Timeline({
   setIsPlaying,
   showCanvasSizePanel = false,
   setShowCanvasSizePanel,
+  style,
 }: TimelineProps) {
   const [loopEnabled, setLoopEnabled] = useState(true);
   const [copiedFrameIndex, setCopiedFrameIndex] = useState<number | null>(null);
@@ -116,7 +118,7 @@ export default function Timeline({
   };
 
   return (
-    <div className="bg-neutral-950 border-t border-neutral-800 p-4 shrink-0 flex flex-col gap-3 font-semibold select-none">
+    <div style={style} className="bg-neutral-950 border-t border-neutral-800 p-4 shrink-0 flex flex-col gap-3 font-semibold select-none overflow-y-auto">
       {/* Playback Controls & Frame Rate Header */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         {/* Left: Playback Buttons */}
