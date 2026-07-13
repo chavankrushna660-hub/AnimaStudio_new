@@ -30,7 +30,7 @@ import {
   Palette,
   MapPin
 } from 'lucide-react';
-import { VectorObject, Bone, Layer, Pivot, Transform, Point, Frame, RealismSettings, SmartMeshColorState, SmartWarpState, ColorMeshPoint, ColorMeshCell, BrushSettings } from '../types';
+import { VectorObject, Bone, Layer, Pivot, Transform, Point, Frame, RealismSettings, SmartMeshColorState, SmartWarpState, ColorMeshPoint, ColorMeshCell, BrushSettings, LiquifyBrushSettings } from '../types';
 import { distance, localToWorld, worldToLocal, calculateBoundingBox, isPointInPolygon, findClosestView360 } from '../utils/math';
 import { extrude2DTo3D, deleteFace3D, extrudeFace3D, extrudeEdge3D } from '../utils/engine3D';
 
@@ -118,6 +118,8 @@ interface RightPanelProps {
   selectedDeformPointType?: 'standard' | 'grid' | '3d' | null;
   deformPointTransform?: Transform;
   updateDeformPointTransform?: (property: string, value: number) => void;
+  liquifySettings?: LiquifyBrushSettings;
+  setLiquifySettings?: React.Dispatch<React.SetStateAction<LiquifyBrushSettings>>;
 }
 
 const isChildInsideParent = (
@@ -178,6 +180,8 @@ export default function RightPanel({
   selectedDeformPointType,
   deformPointTransform,
   updateDeformPointTransform,
+  liquifySettings,
+  setLiquifySettings,
 }: RightPanelProps) {
   // Batch/Smart Controls check state
   const [smartCheckedIds, setSmartCheckedIds] = useState<{ [id: string]: boolean }>({});
@@ -405,6 +409,143 @@ export default function RightPanel({
     updateObject(obj.id, updates);
   };
 
+  // Cage Deform helpers
+  const handleInitCage = (obj: VectorObject) => {
+    const box = calculateBoundingBox(obj.points && obj.points.length > 0 ? obj.points : [{ x: -50, y: -50 }, { x: 50, y: 50 }]);
+    const padX = box.width * 0.15 || 15;
+    const padY = box.height * 0.15 || 15;
+    const minX = box.x - padX;
+    const maxX = box.x + box.width + padX;
+    const minY = box.y - padY;
+    const maxY = box.y + box.height + padY;
+    const midX = box.x + box.width / 2;
+    const midY = box.y + box.height / 2;
+
+    const points = [
+      { id: 'c0', originalX: minX, originalY: minY, currentX: minX, currentY: minY },
+      { id: 'c1', originalX: midX, originalY: minY, currentX: midX, currentY: minY },
+      { id: 'c2', originalX: maxX, originalY: minY, currentX: maxX, currentY: minY },
+      { id: 'c3', originalX: maxX, originalY: midY, currentX: maxX, currentY: midY },
+      { id: 'c4', originalX: maxX, originalY: maxY, currentX: maxX, currentY: maxY },
+      { id: 'c5', originalX: midX, originalY: maxY, currentX: midX, currentY: maxY },
+      { id: 'c6', originalX: minX, originalY: maxY, currentX: minX, currentY: maxY },
+      { id: 'c7', originalX: minX, originalY: midY, currentX: minX, currentY: midY }
+    ];
+    updateObject(obj.id, {
+      cageState: {
+        active: true,
+        points,
+        showGrid: true
+      }
+    });
+  };
+
+  const handleUpdateCageConfig = (updates: Partial<any>) => {
+    if (!selectedObject || !selectedObject.cageState) return;
+    updateObject(selectedObject.id, {
+      cageState: {
+        ...selectedObject.cageState,
+        ...updates
+      }
+    });
+  };
+
+  const handleResetCage = (obj: VectorObject) => {
+    if (!obj.cageState) return;
+    const resetPoints = obj.cageState.points.map((pt: any) => ({
+      ...pt,
+      currentX: pt.originalX,
+      currentY: pt.originalY
+    }));
+    updateObject(obj.id, {
+      cageState: {
+        ...obj.cageState,
+        points: resetPoints
+      }
+    });
+  };
+
+  const handleDisableCage = (obj: VectorObject) => {
+    updateObject(obj.id, {
+      cageState: {
+        active: false,
+        points: [],
+        showGrid: false
+      }
+    });
+  };
+
+  // Liquify helpers
+  const handleInitLiquifyMesh = (obj: VectorObject) => {
+    const box = calculateBoundingBox(obj.points && obj.points.length > 0 ? obj.points : [{ x: -50, y: -50 }, { x: 50, y: 50 }]);
+    const densityX = 10;
+    const densityY = 10;
+    const cellW = (box.width || 100) / (densityX - 1);
+    const cellH = (box.height || 100) / (densityY - 1);
+
+    const mPoints = [];
+    for (let y = 0; y < densityY; y++) {
+      for (let x = 0; x < densityX; x++) {
+        const px = box.x + x * cellW;
+        const py = box.y + y * cellH;
+        mPoints.push({
+          id: `pt_${x}_${y}`,
+          originalX: px,
+          originalY: py,
+          currentX: px,
+          currentY: py,
+          pinned: false,
+          pinType: null as any
+        });
+      }
+    }
+
+    updateObject(obj.id, {
+      meshState: {
+        active: true,
+        densityX,
+        densityY,
+        points: mPoints,
+        originalPoints: JSON.parse(JSON.stringify(mPoints)),
+        pointSize: 10,
+        showGrid: true,
+        showPoints: false,
+        previewMode: true
+      }
+    });
+  };
+
+  const handleResetLiquify = (obj: VectorObject) => {
+    if (!obj.meshState) return;
+    const resetPoints = obj.meshState.points.map((pt: any) => ({
+      ...pt,
+      currentX: pt.originalX,
+      currentY: pt.originalY
+    }));
+    updateObject(obj.id, {
+      meshState: {
+        ...obj.meshState,
+        points: resetPoints
+      }
+    });
+  };
+
+  const handleDisableLiquify = (obj: VectorObject) => {
+    updateObject(obj.id, {
+      meshState: {
+        active: false,
+        densityX: 10,
+        densityY: 10,
+        points: [],
+        originalPoints: [],
+        pointSize: 10,
+        showGrid: false,
+        showPoints: false,
+        previewMode: false
+      }
+    });
+  };
+
   // Permanent Attachment state
   const [attachmentPieces, setAttachmentPieces] = useState<string[]>([]);
   const [attachSelectedId, setAttachSelectedId] = useState('');
@@ -628,6 +769,60 @@ export default function RightPanel({
             ? Number((startObj.opacity + t * (endObj.opacity - startObj.opacity)).toFixed(2))
             : startObj.opacity;
 
+          // Interpolate Puppet pins if lengths match
+          let pins = startObj.pins;
+          if (startObj.pins && endObj.pins && startObj.pins.length === endObj.pins.length) {
+            pins = startObj.pins.map((pin, pIdx) => {
+              const ep = endObj.pins[pIdx];
+              const curX = pin.currentLocalX !== undefined ? pin.currentLocalX : pin.localX;
+              const curY = pin.currentLocalY !== undefined ? pin.currentLocalY : pin.localY;
+              const eCurX = ep.currentLocalX !== undefined ? ep.currentLocalX : ep.localX;
+              const eCurY = ep.currentLocalY !== undefined ? ep.currentLocalY : ep.localY;
+              return {
+                ...pin,
+                currentLocalX: Number((curX + t * (eCurX - curX)).toFixed(2)),
+                currentLocalY: Number((curY + t * (eCurY - curY)).toFixed(2)),
+              };
+            });
+          }
+
+          // Interpolate SmartWarp pins if lengths match
+          let smartWarp = startObj.smartWarp;
+          if (startObj.smartWarp && endObj.smartWarp && startObj.smartWarp.pins && endObj.smartWarp.pins && startObj.smartWarp.pins.length === endObj.smartWarp.pins.length) {
+            const interpolatedSmartWarpPins = startObj.smartWarp.pins.map((pin, pIdx) => {
+              const ep = endObj.smartWarp.pins[pIdx];
+              return {
+                ...pin,
+                x: Number((pin.x + t * (ep.x - pin.x)).toFixed(2)),
+                y: Number((pin.y + t * (ep.y - pin.y)).toFixed(2)),
+              };
+            });
+            smartWarp = {
+              ...startObj.smartWarp,
+              pins: interpolatedSmartWarpPins
+            };
+          }
+
+          // Interpolate Mesh Deformation Grid points if active on both
+          let meshState = startObj.meshState;
+          if (startObj.meshState && endObj.meshState && startObj.meshState.active && endObj.meshState.active) {
+            let meshPoints = startObj.meshState.points;
+            if (startObj.meshState.points && endObj.meshState.points && startObj.meshState.points.length === endObj.meshState.points.length) {
+              meshPoints = startObj.meshState.points.map((p, pIdx) => {
+                const ep = endObj.meshState.points[pIdx];
+                return {
+                  ...p,
+                  currentX: Number((p.currentX + t * (ep.currentX - p.currentX)).toFixed(2)),
+                  currentY: Number((p.currentY + t * (ep.currentY - p.currentY)).toFixed(2))
+                };
+              });
+            }
+            meshState = {
+              ...startObj.meshState,
+              points: meshPoints
+            };
+          }
+
           frameObjects[objId] = {
             ...startObj,
             transform: interpolatedTransform,
@@ -635,6 +830,9 @@ export default function RightPanel({
             subPaths,
             pivots,
             opacity,
+            pins,
+            smartWarp,
+            meshState,
           };
         } else if (startObj) {
           frameObjects[objId] = JSON.parse(JSON.stringify(startObj));
@@ -2183,6 +2381,234 @@ export default function RightPanel({
                               ✓ Complete
                             </button>
                           </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* CAGE DEFORM PANEL */}
+                {activeTool === 'CAG' && (
+                  <div className="space-y-4 bg-emerald-500/5 p-4 rounded-2xl border border-emerald-400/20 shadow-lg shadow-black/20 animate-fade-in">
+                    <div className="flex items-center justify-between border-b border-emerald-500/10 pb-2.5">
+                      <span className="text-xs font-black uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                        <Box className="w-4 h-4 text-emerald-500 animate-pulse" />
+                        CAGE DEFORMATION
+                      </span>
+                    </div>
+
+                    {!selectedObject ? (
+                      <p className="text-[10px] text-neutral-400 font-bold leading-normal">
+                        Select a drawing on the canvas first to activate cage deformation!
+                      </p>
+                    ) : !selectedObject.cageState || !selectedObject.cageState.active ? (
+                      <div className="space-y-3">
+                        <p className="text-[10px] text-neutral-400 leading-normal font-bold">
+                          Create an outer boundary control cage (8 handles) surrounding your selected object. Moving handles deforms the entire shape smoothly like a modern high-end vector program!
+                        </p>
+                        <button
+                          onClick={() => handleInitCage(selectedObject)}
+                          className="w-full py-2 bg-emerald-500 text-neutral-950 hover:bg-emerald-400 text-[10px] font-black rounded-lg transition-all uppercase tracking-wider"
+                        >
+                          Initialize Control Cage
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-4 text-xs">
+                        {/* Show Grid option */}
+                        <div className="space-y-1.5 pt-1">
+                          <label className="flex items-center gap-2 text-xs text-neutral-300 select-none cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={selectedObject.cageState.showGrid}
+                              onChange={(e) => handleUpdateCageConfig({ showGrid: e.target.checked })}
+                              className="accent-emerald-500 rounded border-neutral-800"
+                            />
+                            <span>Show Cage Grid Wireframe</span>
+                          </label>
+                        </div>
+
+                        {/* List Cage Points for reference */}
+                        <div className="space-y-2 border-t border-neutral-800/40 pt-2.5">
+                          <div className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider">
+                            Control Handles ({selectedObject.cageState.points.length})
+                          </div>
+                          <p className="text-[10px] text-neutral-500 italic">
+                            Drag any green corner or edge handle on the canvas to deform your shape in real-time!
+                          </p>
+                        </div>
+
+                        {/* Cage controls */}
+                        <div className="space-y-2 border-t border-neutral-800/40 pt-2.5">
+                          <div className="grid grid-cols-2 gap-2">
+                            <button
+                              onClick={() => {
+                                if (window.confirm("Reset control cage handles?")) {
+                                  handleResetCage(selectedObject);
+                                }
+                              }}
+                              className="py-1.5 bg-neutral-900 hover:bg-rose-950 text-neutral-400 hover:text-rose-300 text-[10px] font-black rounded-lg border border-neutral-800 hover:border-rose-900 transition-all uppercase tracking-wider"
+                            >
+                              Reset Cage
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (window.confirm("Disable control cage? This clears all cage-deformed states.")) {
+                                  handleDisableCage(selectedObject);
+                                }
+                              }}
+                              className="py-1.5 bg-neutral-900 hover:bg-rose-950 text-neutral-400 hover:text-rose-300 text-[10px] font-black rounded-lg border border-neutral-800 hover:border-rose-900 transition-all uppercase tracking-wider"
+                            >
+                              Clear Cage
+                            </button>
+                          </div>
+
+                          <button
+                            onClick={() => setActiveTool('SEL')}
+                            className="w-full py-1.5 bg-emerald-500 text-neutral-950 hover:bg-emerald-400 text-[10px] font-black rounded-lg transition-all uppercase tracking-wider text-center block mt-2"
+                          >
+                            ✓ Complete
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* LIQUIFY BRUSH PANEL */}
+                {activeTool === 'LQB' && (
+                  <div className="space-y-4 bg-pink-500/5 p-4 rounded-2xl border border-pink-400/20 shadow-lg shadow-black/20 animate-fade-in">
+                    <div className="flex items-center justify-between border-b border-pink-500/10 pb-2.5">
+                      <span className="text-xs font-black uppercase tracking-wider text-pink-400 flex items-center gap-1.5">
+                        <Sparkles className="w-4 h-4 text-pink-500 animate-pulse" />
+                        LIQUIFY WARP BRUSH
+                      </span>
+                    </div>
+
+                    {!selectedObject ? (
+                      <p className="text-[10px] text-neutral-400 font-bold leading-normal">
+                        Select a drawing on the canvas first to use the Liquify Brush!
+                      </p>
+                    ) : !selectedObject.meshState || !selectedObject.meshState.active ? (
+                      <div className="space-y-3">
+                        <p className="text-[10px] text-neutral-400 leading-normal font-bold">
+                          The Liquify Brush lets you warp, push, pinch, twist or expand areas of your shape directly. Initializes a smooth high-density geometry warp mesh first!
+                        </p>
+                        <button
+                          onClick={() => handleInitLiquifyMesh(selectedObject)}
+                          className="w-full py-2 bg-pink-500 text-neutral-950 hover:bg-pink-400 text-[10px] font-black rounded-lg transition-all uppercase tracking-wider"
+                        >
+                          Initialize Warp Mesh
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-4 text-xs">
+                        {/* Brush settings */}
+                        <div className="space-y-3">
+                          {/* Size */}
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between text-[10px] text-neutral-400">
+                              <span className="font-bold uppercase tracking-wider">Brush Size</span>
+                              <span className="text-pink-400 font-bold font-mono">{(liquifySettings?.brushSize) ?? 60}px</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="20"
+                              max="150"
+                              value={(liquifySettings?.brushSize) ?? 60}
+                              onChange={(e) => setLiquifySettings?.(prev => ({ ...prev, brushSize: parseInt(e.target.value) }))}
+                              className="w-full accent-pink-500"
+                            />
+                          </div>
+
+                          {/* Strength */}
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between text-[10px] text-neutral-400">
+                              <span className="font-bold uppercase tracking-wider">Brush Strength</span>
+                              <span className="text-pink-400 font-bold font-mono">{Math.round(((liquifySettings?.brushStrength) ?? 0.3) * 100)}%</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="5"
+                              max="100"
+                              value={Math.round(((liquifySettings?.brushStrength) ?? 0.3) * 100)}
+                              onChange={(e) => setLiquifySettings?.(prev => ({ ...prev, brushStrength: parseFloat((parseInt(e.target.value) / 100).toFixed(2)) }))}
+                              className="w-full accent-pink-500"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Brush Modes */}
+                        <div className="space-y-2 border-t border-neutral-800/40 pt-2.5">
+                          <label className="text-[10px] text-neutral-400 block font-black uppercase tracking-wide">Liquify Mode:</label>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            {[
+                              { id: 'push', name: 'Push (Forward)' },
+                              { id: 'pinch', name: 'Pinch (Shrink)' },
+                              { id: 'bulge', name: 'Bulge (Bloat)' },
+                              { id: 'twist-cw', name: 'Twist (CW)' },
+                              { id: 'twist-ccw', name: 'Twist (CCW)' },
+                              { id: 'restore', name: 'Reconstruct' }
+                            ].map((mode) => (
+                              <button
+                                key={mode.id}
+                                onClick={() => setLiquifySettings?.(prev => ({ ...prev, brushMode: mode.id as any }))}
+                                className={`py-1.5 px-1 text-[9px] font-black rounded-lg uppercase transition-all ${
+                                  ((liquifySettings?.brushMode) ?? 'push') === mode.id
+                                    ? 'bg-pink-500 text-neutral-950 shadow-md shadow-pink-500/20'
+                                    : 'bg-neutral-800 text-neutral-400 hover:text-white'
+                                }`}
+                              >
+                                {mode.name}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Show Mesh wireframe check */}
+                        <div className="space-y-1.5 border-t border-neutral-800/40 pt-2.5">
+                          <label className="flex items-center gap-2 text-xs text-neutral-300 select-none cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={selectedObject.meshState.showGrid}
+                              onChange={(e) => updateObject(selectedObject.id, { meshState: { ...selectedObject.meshState, showGrid: e.target.checked } })}
+                              className="accent-pink-500 rounded border-neutral-800"
+                            />
+                            <span>Show Deformation Mesh Grid</span>
+                          </label>
+                        </div>
+
+                        {/* Controls */}
+                        <div className="space-y-2 border-t border-neutral-800/40 pt-2.5">
+                          <div className="grid grid-cols-2 gap-2">
+                            <button
+                              onClick={() => {
+                                if (window.confirm("Reset warp mesh? This reverses all brush strokes.")) {
+                                  handleResetLiquify(selectedObject);
+                                }
+                              }}
+                              className="py-1.5 bg-neutral-900 hover:bg-rose-950 text-neutral-400 hover:text-rose-300 text-[10px] font-black rounded-lg border border-neutral-800 hover:border-rose-900 transition-all uppercase tracking-wider"
+                            >
+                              Restore Original
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (window.confirm("Clear warp mesh? This deletes the mesh entirely.")) {
+                                  handleDisableLiquify(selectedObject);
+                                }
+                              }}
+                              className="py-1.5 bg-neutral-900 hover:bg-rose-950 text-neutral-400 hover:text-rose-300 text-[10px] font-black rounded-lg border border-neutral-800 hover:border-rose-900 transition-all uppercase tracking-wider"
+                            >
+                              Clear Mesh
+                            </button>
+                          </div>
+
+                          <button
+                            onClick={() => setActiveTool('SEL')}
+                            className="w-full py-1.5 bg-pink-500 text-neutral-950 hover:bg-pink-400 text-[10px] font-black rounded-lg transition-all uppercase tracking-wider text-center block mt-2"
+                          >
+                            ✓ Complete
+                          </button>
                         </div>
                       </div>
                     )}

@@ -37,7 +37,7 @@ import LeftPanel from './components/LeftPanel';
 import RightPanel from './components/RightPanel';
 import CanvasArea from './components/CanvasArea';
 import Timeline from './components/Timeline';
-import { VectorObject, Bone, Layer, Frame, Point, RealismSettings, View360, BrushSettings, Transform } from './types';
+import { VectorObject, Bone, Layer, Frame, Point, RealismSettings, View360, BrushSettings, Transform, LiquifyBrushSettings } from './types';
 import { localToWorld, rotatePoint, calculateBoundingBox } from './utils/math';
 import { 
   validateSimpleAuth, 
@@ -463,6 +463,7 @@ export default function App() {
   const [currentFrameIndex, setCurrentFrameIndex] = useState(0);
   const [fps, setFps] = useState(12);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [autoTween, setAutoTween] = useState(true);
 
   // Layers list
   const [layers, setLayers] = useState<Layer[]>([
@@ -502,6 +503,13 @@ export default function App() {
     shadowBlur: 4,
     shadowOffsetX: 2,
     shadowOffsetY: 2,
+  });
+
+  // Liquify brush settings
+  const [liquifySettings, setLiquifySettings] = useState<LiquifyBrushSettings>({
+    brushSize: 60,
+    brushStrength: 0.3,
+    brushMode: 'push'
   });
 
   // Realism Maker Settings
@@ -1075,6 +1083,7 @@ export default function App() {
   // Ref to track the currently loaded frame index to prevent race conditions & update loops
   const loadedFrameIndexRef = useRef<number>(0);
   const lastSyncedObjectsRef = useRef<string>('');
+  const isDirtyRef = useRef<boolean>(false);
 
   // Keep a stable reference to the frames array to break the feedback loop during rapid dragging
   const framesRef = useRef(frames);
@@ -1086,77 +1095,77 @@ export default function App() {
   useEffect(() => {
     // 1. If we changed frame index, we MUST load objects from that target frame
     if (currentFrameIndex !== loadedFrameIndexRef.current) {
+      const oldFrameIndex = loadedFrameIndexRef.current;
+      const currentObjectsStr = JSON.stringify(objects);
+
+      // Synchronously save any changes from the frame we are leaving before we load the new frame!
+      if (isDirtyRef.current && oldFrameIndex >= 0 && oldFrameIndex < framesRef.current.length) {
+        setFrames(prev => {
+          if (!prev[oldFrameIndex]) return prev;
+          const currentFrameObjectsInState = prev[oldFrameIndex].objects || {};
+          if (JSON.stringify(currentFrameObjectsInState) !== currentObjectsStr) {
+            const updated = [...prev];
+            updated[oldFrameIndex] = {
+              ...updated[oldFrameIndex],
+              objects: JSON.parse(currentObjectsStr)
+            };
+            return updated;
+          }
+          return prev;
+        });
+
+        if (framesRef.current[oldFrameIndex]) {
+          framesRef.current[oldFrameIndex].objects = JSON.parse(currentObjectsStr);
+        }
+        isDirtyRef.current = false;
+      }
+
+      // Now fetch and load target frame
       const targetFrame = framesRef.current[currentFrameIndex];
       if (targetFrame) {
         const frameObjects = targetFrame.objects || {};
         const frameObjectsStr = JSON.stringify(frameObjects);
-        const currentObjectsStr = JSON.stringify(objects);
 
-        if (currentObjectsStr !== frameObjectsStr) {
-          // State has not caught up to the loaded frame objects yet
-          setObjects(JSON.parse(frameObjectsStr));
-          lastSyncedObjectsRef.current = frameObjectsStr;
-          return;
-        } else {
-          // State has fully caught up! Now we mark it as loaded
-          loadedFrameIndexRef.current = currentFrameIndex;
-          lastSyncedObjectsRef.current = frameObjectsStr;
-          return;
-        }
+        setObjects(JSON.parse(frameObjectsStr));
+        lastSyncedObjectsRef.current = frameObjectsStr;
+        loadedFrameIndexRef.current = currentFrameIndex;
+        isDirtyRef.current = false;
+        return;
       } else if (currentFrameIndex > 0) {
         // Fallback: copy from previous frame if the current frame is empty or undefined
         const prevFrame = framesRef.current[currentFrameIndex - 1];
         if (prevFrame && prevFrame.objects && Object.keys(prevFrame.objects).length > 0) {
           const copiedObjects = JSON.parse(JSON.stringify(prevFrame.objects));
           const copiedStr = JSON.stringify(copiedObjects);
-          const currentObjectsStr = JSON.stringify(objects);
 
-          if (currentObjectsStr !== copiedStr) {
-            setObjects(copiedObjects);
-            lastSyncedObjectsRef.current = copiedStr;
+          setObjects(copiedObjects);
+          lastSyncedObjectsRef.current = copiedStr;
+          loadedFrameIndexRef.current = currentFrameIndex;
+          isDirtyRef.current = false;
 
-            setFrames(prev => {
-              if (!prev[currentFrameIndex]) return prev;
-              const currentFrameObjectsInState = prev[currentFrameIndex].objects || {};
-              if (JSON.stringify(currentFrameObjectsInState) !== copiedStr) {
-                const updated = [...prev];
-                updated[currentFrameIndex] = {
-                  ...updated[currentFrameIndex],
-                  objects: copiedObjects
-                };
-                return updated;
-              }
-              return prev;
-            });
-            return;
-          } else {
-            loadedFrameIndexRef.current = currentFrameIndex;
-            lastSyncedObjectsRef.current = copiedStr;
-            return;
-          }
+          setFrames(prev => {
+            if (!prev[currentFrameIndex]) return prev;
+            const updated = [...prev];
+            updated[currentFrameIndex] = {
+              ...updated[currentFrameIndex],
+              objects: copiedObjects
+            };
+            return updated;
+          });
+          return;
         } else {
-          const currentObjectsStr = JSON.stringify(objects);
-          if (currentObjectsStr !== '{}') {
-            setObjects({});
-            lastSyncedObjectsRef.current = '{}';
-            return;
-          } else {
-            loadedFrameIndexRef.current = currentFrameIndex;
-            lastSyncedObjectsRef.current = '{}';
-            return;
-          }
-        }
-      } else {
-        const currentObjectsStr = JSON.stringify(objects);
-        if (currentObjectsStr !== '{}') {
           setObjects({});
           lastSyncedObjectsRef.current = '{}';
-          return;
-        } else {
           loadedFrameIndexRef.current = currentFrameIndex;
-          lastSyncedObjectsRef.current = '{}';
+          isDirtyRef.current = false;
           return;
         }
+      } else {
+        setObjects({});
+        lastSyncedObjectsRef.current = '{}';
+        loadedFrameIndexRef.current = currentFrameIndex;
+        isDirtyRef.current = false;
+        return;
       }
     } else {
       // 2. Otherwise, we are on the same frame, so sync any changes in 'objects' back to 'frames'
@@ -1165,6 +1174,8 @@ export default function App() {
       if (currentObjectsStr === lastSyncedObjectsRef.current) {
         return;
       }
+
+      isDirtyRef.current = true;
 
       // Debounce updating frames during rapid actions like dragging or drawing to completely eliminate infinite update loops!
       const handler = setTimeout(() => {
@@ -1233,16 +1244,95 @@ export default function App() {
                     if (src.childrenIds !== undefined) dest.childrenIds = src.childrenIds ? JSON.parse(JSON.stringify(src.childrenIds)) : undefined;
                     if (src.layerId !== undefined) dest.layerId = src.layerId;
                     
-                    if (src.meshState !== undefined) dest.meshState = src.meshState ? JSON.parse(JSON.stringify(src.meshState)) : undefined;
+                    // Sync presence, active status, density, and configuration of meshState, but preserve unique deformed mesh points per frame
+                    if (src.meshState !== undefined) {
+                      if (dest.meshState === undefined) {
+                        dest.meshState = JSON.parse(JSON.stringify(src.meshState));
+                      } else {
+                        dest.meshState.active = src.meshState.active;
+                        dest.meshState.densityX = src.meshState.densityX;
+                        dest.meshState.densityY = src.meshState.densityY;
+                        dest.meshState.showGrid = src.meshState.showGrid;
+                        dest.meshState.showPoints = src.meshState.showPoints;
+                        // If density changed, or if lengths don't match, we must reset the points to match source
+                        if (!dest.meshState.points || dest.meshState.points.length !== src.meshState.points.length) {
+                          dest.meshState.points = JSON.parse(JSON.stringify(src.meshState.points));
+                        }
+                      }
+                    } else {
+                      dest.meshState = undefined;
+                    }
+
+                    // Sync presence and configuration of smartWarp, but preserve unique deformed pin positions per frame
+                    if (src.smartWarp !== undefined) {
+                      if (dest.smartWarp === undefined) {
+                        dest.smartWarp = JSON.parse(JSON.stringify(src.smartWarp));
+                      } else {
+                        dest.smartWarp.active = src.smartWarp.active;
+                        dest.smartWarp.pinSize = src.smartWarp.pinSize;
+                        dest.smartWarp.influenceRadius = src.smartWarp.influenceRadius;
+                        dest.smartWarp.influenceFalloff = src.smartWarp.influenceFalloff;
+                        dest.smartWarp.showInfluenceArea = src.smartWarp.showInfluenceArea;
+                        // If pin structure changes (add/delete pin), we must align pins but try to preserve existing ones
+                        if (!dest.smartWarp.pins || dest.smartWarp.pins.length !== src.smartWarp.pins.length) {
+                          dest.smartWarp.pins = JSON.parse(JSON.stringify(src.smartWarp.pins));
+                        } else {
+                          // Match pins by ID, but keep their current x/y
+                          dest.smartWarp.pins = src.smartWarp.pins.map((srcPin: any) => {
+                            const destPin = dest.smartWarp.pins.find((p: any) => p.id === srcPin.id);
+                            return destPin ? { ...srcPin, x: destPin.x, y: destPin.y } : JSON.parse(JSON.stringify(srcPin));
+                          });
+                        }
+                      }
+                    } else {
+                      dest.smartWarp = undefined;
+                    }
+
+                    // Sync presence and configuration of cageState, but preserve unique deformed cage point positions per frame
+                    if (src.cageState !== undefined) {
+                      if (dest.cageState === undefined) {
+                        dest.cageState = JSON.parse(JSON.stringify(src.cageState));
+                      } else {
+                        dest.cageState.active = src.cageState.active;
+                        dest.cageState.showGrid = src.cageState.showGrid;
+                        if (!dest.cageState.points || dest.cageState.points.length !== src.cageState.points.length) {
+                          dest.cageState.points = JSON.parse(JSON.stringify(src.cageState.points));
+                        } else {
+                          // Match cage points by ID, keeping currentX/currentY
+                          dest.cageState.points = src.cageState.points.map((srcPt: any) => {
+                            const destPt = dest.cageState.points.find((p: any) => p.id === srcPt.id);
+                            return destPt ? { ...srcPt, currentX: destPt.currentX, currentY: destPt.currentY } : JSON.parse(JSON.stringify(srcPt));
+                          });
+                        }
+                      }
+                    } else {
+                      dest.cageState = undefined;
+                    }
+
+                    // Sync puppet pins, preserving individual pin movements
+                    if (src.pins !== undefined) {
+                      if (dest.pins === undefined) {
+                        dest.pins = JSON.parse(JSON.stringify(src.pins));
+                      } else if (dest.pins.length !== src.pins.length) {
+                        dest.pins = JSON.parse(JSON.stringify(src.pins));
+                      } else {
+                        // Match pins by ID, keeping currentLocalX/currentLocalY
+                        dest.pins = src.pins.map((srcPin: any) => {
+                          const destPin = dest.pins.find((p: any) => p.id === srcPin.id);
+                          return destPin ? { ...srcPin, currentLocalX: destPin.currentLocalX, currentLocalY: destPin.currentLocalY } : JSON.parse(JSON.stringify(srcPin));
+                        });
+                      }
+                    } else {
+                      dest.pins = undefined;
+                    }
+                    
+                    // DO NOT sync pivots to other frames, as these represent animatable keyframe values that should be recorded uniquely on each frame!
                     if (src.depth3D !== undefined) dest.depth3D = src.depth3D;
                     if (src.hollowEnabled !== undefined) dest.hollowEnabled = src.hollowEnabled;
                     if (src.innerSpace3D !== undefined) dest.innerSpace3D = src.innerSpace3D;
                     if (src.selectedFaceIndex !== undefined) dest.selectedFaceIndex = src.selectedFaceIndex;
                     if (src.selectedEdgeIndex !== undefined) dest.selectedEdgeIndex = src.selectedEdgeIndex;
                     if (src.shape3DType !== undefined) dest.shape3DType = src.shape3DType;
-                    if (src.smartWarp !== undefined) dest.smartWarp = src.smartWarp ? JSON.parse(JSON.stringify(src.smartWarp)) : undefined;
-                    if (src.pins !== undefined) dest.pins = src.pins ? JSON.parse(JSON.stringify(src.pins)) : undefined;
-                    if (src.pivots !== undefined) dest.pivots = src.pivots ? JSON.parse(JSON.stringify(src.pivots)) : undefined;
                   }
                 });
                 
@@ -2334,8 +2424,21 @@ export default function App() {
       extension = 'webm';
     }
 
+    let mediaRecorder: MediaRecorder;
     try {
-      const mediaRecorder = new MediaRecorder(stream, options);
+      try {
+        mediaRecorder = new MediaRecorder(stream, options);
+      } catch (err) {
+        console.warn("Failed to initialize MediaRecorder with options, falling back to default constructor", err);
+        mediaRecorder = new MediaRecorder(stream);
+        // Fall back extension determination based on simple check
+        if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('video/mp4')) {
+          extension = 'mp4';
+        } else {
+          extension = 'webm';
+        }
+      }
+
       mediaRecorder.ondataavailable = (event) => {
         if (event.data && event.data.size > 0) {
           recordedChunksRef.current.push(event.data);
@@ -2830,6 +2933,7 @@ export default function App() {
           activeTool={activeTool}
           frames={frames}
           currentFrameIndex={currentFrameIndex}
+          autoTween={autoTween}
           bones={bones}
           setBones={setBones}
           activeLayerId={activeLayerId}
@@ -2866,6 +2970,9 @@ export default function App() {
           setSelectedDeformPointType={setSelectedDeformPointType}
           setOriginalDeformPointCoords={setOriginalDeformPointCoords}
           setDeformPointTransform={setDeformPointTransform}
+          isRecording={isRecording}
+          liquifySettings={liquifySettings}
+          setLiquifySettings={setLiquifySettings}
         />
 
         {/* Right Collapsible Properties, Sliders, Smart Pinned Controls */}
@@ -2920,6 +3027,8 @@ export default function App() {
           selectedDeformPointType={selectedDeformPointType}
           deformPointTransform={deformPointTransform}
           updateDeformPointTransform={updateDeformPointTransform}
+          liquifySettings={liquifySettings}
+          setLiquifySettings={setLiquifySettings}
         />
       </div>
 
@@ -2971,6 +3080,8 @@ export default function App() {
         setFps={setFps}
         isPlaying={isPlaying}
         setIsPlaying={setIsPlaying}
+        autoTween={autoTween}
+        setAutoTween={setAutoTween}
         showCanvasSizePanel={showCanvasSizePanel}
         setShowCanvasSizePanel={setShowCanvasSizePanel}
         style={!isMobile ? { height: timelineHeight } : undefined}

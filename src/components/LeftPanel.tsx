@@ -273,6 +273,8 @@ export default function LeftPanel({
     setLayers(prev => prev.map(l => l.id === layerId ? { ...l, ...updates } as Layer : l));
   };
 
+  const isTouchDevice = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+
   // Render object item recursively for hierarchy representation
   const renderTreeItem = (obj: VectorObject, depth: number) => {
     const hasChildren = obj.childrenIds.length > 0;
@@ -282,11 +284,24 @@ export default function LeftPanel({
     return (
       <div key={obj.id} className="flex flex-col">
         <div
-          draggable
+          draggable={!isTouchDevice}
           onDragStart={(e) => handleDragStart(obj.id, e)}
           onDragOver={handleDragOver}
           onDrop={(e) => handleDrop(obj.id, e)}
           onClick={() => {
+            if (selectedObjectId === obj.id) {
+              setSelectedObjectId(null);
+            } else {
+              setSelectedObjectId(obj.id);
+            }
+          }}
+          onTouchEnd={(e) => {
+            // Avoid triggering when tapping inner buttons or inputs
+            const target = e.target as HTMLElement;
+            if (target.closest('button') || target.closest('input')) {
+              return;
+            }
+            e.preventDefault(); // Stop synthetic click delay and bypass draggable touch interference on mobile screens
             if (selectedObjectId === obj.id) {
               setSelectedObjectId(null);
             } else {

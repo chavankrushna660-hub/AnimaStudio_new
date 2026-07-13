@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { RotateCcw, Sparkles, Feather, ZoomIn, ZoomOut } from 'lucide-react';
-import { Point, VectorObject, Bone, Pivot, Frame, Transform, RealismSettings, LassoControlPoint, SmartWarpPin, BrushSettings } from '../types';
+import { RotateCcw, Sparkles, Feather, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
+import { Point, VectorObject, Bone, Pivot, Frame, Transform, RealismSettings, LassoControlPoint, SmartWarpPin, BrushSettings, LiquifyBrushSettings } from '../types';
 import { transform3DVertex, project3DVertex, getFaceLightColor, deformVertices3D } from '../utils/engine3D';
 import { 
   distance, 
@@ -13,6 +13,7 @@ import {
   rotatePoint,
   findClosestView360
 } from '../utils/math';
+import { getInterpolatedObjects } from '../utils/interpolation';
 
 // Mesh Warp Bilinear Interpolation helper
 const getWarpedPoint = (p: Point, meshState: any, bounds: any) => {
@@ -252,6 +253,46 @@ const deformWithSmartWarp = (p: Point, smartWarp: any): Point => {
   };
 };
 
+// Cage deformation helper using Shepard's Inverse Distance Weighting (IDW)
+const deformWithCage = (p: Point, cageState: any): Point => {
+  if (!cageState || !cageState.points || cageState.points.length === 0) return p;
+
+  const points = cageState.points;
+  let totalWeight = 0;
+  let dx = 0;
+  let dy = 0;
+
+  // Check if point P is exactly on a cage original point to prevent division by zero
+  for (const pt of points) {
+    const dist = distance(p, { x: pt.originalX, y: pt.originalY });
+    if (dist < 0.1) {
+      return {
+        x: p.x + (pt.currentX - pt.originalX),
+        y: p.y + (pt.currentY - pt.originalY)
+      };
+    }
+  }
+
+  // Calculate Shepard weights
+  for (const pt of points) {
+    const dist = distance(p, { x: pt.originalX, y: pt.originalY });
+    const weight = 1 / Math.pow(dist, 2); // Inverse distance squared
+    totalWeight += weight;
+    dx += (pt.currentX - pt.originalX) * weight;
+    dy += (pt.currentY - pt.originalY) * weight;
+  }
+
+  if (totalWeight > 0) {
+    dx /= totalWeight;
+    dy /= totalWeight;
+  }
+
+  return {
+    x: Number((p.x + dx).toFixed(2)),
+    y: Number((p.y + dy).toFixed(2))
+  };
+};
+
 // Textured triangle renderer for 2D HTML5 Canvas
 const drawTexturedTriangle = (
   ctx: CanvasRenderingContext2D,
@@ -333,7 +374,9 @@ const isChildInsideParent = (
   // Get child world points with testTransform
   const childPivot = child.pivots[0] || { localX: 0, localY: 0 };
   let localPoints = child.points;
-  if (child.meshState && child.meshState.active) {
+  if (child.cageState && child.cageState.active) {
+    localPoints = child.points.map(p => deformWithCage(p, child.cageState));
+  } else if (child.meshState && child.meshState.active) {
     const bounds = calculateBoundingBox(child.points);
     localPoints = child.points.map(p => getWarpedPoint(p, child.meshState, bounds));
   } else if (child.pins && child.pins.length > 0) {
@@ -508,6 +551,7 @@ interface CanvasAreaProps {
   activeTool: string;
   frames: Frame[];
   currentFrameIndex: number;
+  autoTween?: boolean;
   bones: Bone[];
   setBones: React.Dispatch<React.SetStateAction<Bone[]>>;
   activeLayerId: string;
@@ -544,16 +588,88 @@ interface CanvasAreaProps {
   setSelectedDeformPointType?: (type: 'standard' | 'grid' | '3d' | null) => void;
   setOriginalDeformPointCoords?: (coords: { x: number; y: number; z?: number } | null) => void;
   setDeformPointTransform?: (t: Transform) => void;
+  isRecording?: boolean;
+  liquifySettings?: LiquifyBrushSettings;
+  setLiquifySettings?: React.Dispatch<React.SetStateAction<LiquifyBrushSettings>>;
 }
 
+const initializeCageState = (obj: VectorObject): any => {
+  const bounds = calculateBoundingBox(obj.points);
+  const minX = bounds.x;
+  const minY = bounds.y;
+  const maxX = bounds.x + bounds.width;
+  const maxY = bounds.y + bounds.height;
+  const midX = (minX + maxX) / 2;
+  const midY = (minY + maxY) / 2;
+
+  const coords = [
+    { x: minX, y: minY },       // TL
+    { x: midX, y: minY },       // TM
+    { x: maxX, y: minY },       // TR
+    { x: maxX, y: midY },       // MR
+    { x: maxX, y: maxY },       // BR
+    { x: midX, y: maxY },       // BM
+    { x: minX, y: maxY },       // BL
+    { x: minX, y: midY }        // ML
+  ];
+
+  const points = coords.map((c, i) => ({
+    id: `cage_pt_${i}_${Date.now()}`,
+    originalX: Number(c.x.toFixed(2)),
+    originalY: Number(c.y.toFixed(2)),
+    currentX: Number(c.x.toFixed(2)),
+    currentY: Number(c.y.toFixed(2))
+  }));
+
+  return {
+    active: true,
+    points,
+    showGrid: true
+  };
+};
+
+const initializeMeshState = (obj: VectorObject, densityX = 10, densityY = 10): any => {
+  const bounds = calculateBoundingBox(obj.points);
+  const points: any[] = [];
+  const stepX = bounds.width / (densityX - 1);
+  const stepY = bounds.height / (densityY - 1);
+  for (let y = 0; y < densityY; y++) {
+    for (let x = 0; x < densityX; x++) {
+      const px = bounds.x + x * stepX;
+      const py = bounds.y + y * stepY;
+      points.push({
+        id: `mpt_${Date.now()}_${y}_${x}`,
+        originalX: Number(px.toFixed(2)),
+        originalY: Number(py.toFixed(2)),
+        currentX: Number(px.toFixed(2)),
+        currentY: Number(py.toFixed(2)),
+        pinned: false,
+        pinType: null
+      });
+    }
+  }
+  return {
+    active: true,
+    densityX,
+    densityY,
+    points,
+    originalPoints: JSON.parse(JSON.stringify(points)),
+    pointSize: 10,
+    showGrid: true,
+    showPoints: true,
+    previewMode: true
+  };
+};
+
 export default function CanvasArea({
-  objects,
+  objects: rawObjects,
   setObjects,
   selectedObjectId,
   setSelectedObjectId,
   activeTool,
   frames,
   currentFrameIndex,
+  autoTween = true,
   bones,
   setBones,
   activeLayerId,
@@ -590,7 +706,19 @@ export default function CanvasArea({
   setSelectedDeformPointType,
   setOriginalDeformPointCoords,
   setDeformPointTransform,
+  isRecording = false,
+  liquifySettings,
+  setLiquifySettings,
 }: CanvasAreaProps) {
+  const activeObjects: { [id: string]: VectorObject } = React.useMemo(() => {
+    if (autoTween) {
+      return getInterpolatedObjects(frames, currentFrameIndex, rawObjects);
+    }
+    return rawObjects;
+  }, [autoTween, frames, currentFrameIndex, rawObjects]);
+
+  const objects: { [id: string]: VectorObject } = activeObjects;
+
   const containerRef = useRef<HTMLDivElement>(null);
   const backCanvasRef = useRef<HTMLCanvasElement>(null);
   const frontCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -629,6 +757,19 @@ export default function CanvasArea({
       });
     } catch (err) {
       console.error("Recenter canvas failed", err);
+    }
+  };
+
+  const fitCanvasToViewport = () => {
+    try {
+      const w = Math.round(dimensions.width);
+      const h = Math.round(dimensions.height);
+      setArtboardW(w);
+      setArtboardH(h);
+      setZoomScale(1.0);
+      setZoomOffset({ x: 0, y: 0 });
+    } catch (err) {
+      console.error("Fit canvas to viewport failed", err);
     }
   };
 
@@ -947,6 +1088,7 @@ export default function CanvasArea({
   const lastPinchOffsetRef = useRef<Point>({ x: 0, y: 0 });
   const lastPinchScaleRef = useRef<number>(1);
   const selectedObjInitialTransformRef = useRef<Transform | null>(null);
+  const lastLiquifyLocalPosRef = useRef<Point | null>(null);
 
   // Get coordinates relative to canvas bounding box with zoom/pan applied
   const getCanvasCoords = (e: React.PointerEvent<HTMLCanvasElement>): Point => {
@@ -1807,6 +1949,94 @@ export default function CanvasArea({
       return;
     }
 
+    // CAG (Cage Deform) tool pointer down logic
+    if (activeTool === 'CAG') {
+      let activeId = selectedObjectId;
+      if (!activeId) {
+        const clickedObj = performHitTest(coords);
+        if (clickedObj) {
+          setSelectedObjectId(clickedObj.id);
+          activeId = clickedObj.id;
+        }
+      }
+
+      if (activeId && objects[activeId]) {
+        let obj = objects[activeId];
+        
+        // Auto-initialize cage state if not present or inactive
+        if (!obj.cageState || !obj.cageState.active) {
+          const cs = initializeCageState(obj);
+          setObjects(prev => ({
+            ...prev,
+            [activeId!]: {
+              ...prev[activeId!],
+              cageState: cs
+            }
+          }));
+          obj = { ...obj, cageState: cs };
+        }
+
+        if (obj.cageState && obj.cageState.points) {
+          // Check if we clicked on an existing cage point to drag it
+          let clickedPtIdx = -1;
+          let minPtDist = 30; // Drag handle click radius
+          obj.cageState.points.forEach((pt, idx) => {
+            const worldPt = localToWorld({ x: pt.currentX, y: pt.currentY }, obj.transform, obj.pivots[0]);
+            const d = distance(coords, worldPt);
+            if (d < minPtDist) {
+              minPtDist = d;
+              clickedPtIdx = idx;
+            }
+          });
+
+          if (clickedPtIdx !== -1) {
+            setDragMode('cagePoint' as any);
+            setDraggedMeshPointIndex(clickedPtIdx);
+            setDragStartPoint(coords);
+            historyPush();
+            return;
+          }
+        }
+      }
+      return;
+    }
+
+    // LQB (Liquify Brush) tool pointer down logic
+    if (activeTool === 'LQB') {
+      let activeId = selectedObjectId;
+      if (!activeId) {
+        const clickedObj = performHitTest(coords);
+        if (clickedObj) {
+          setSelectedObjectId(clickedObj.id);
+          activeId = clickedObj.id;
+        }
+      }
+
+      if (activeId && objects[activeId]) {
+        let obj = objects[activeId];
+        
+        // Auto-initialize mesh state if not present or inactive for non-destructive keyframeable liquify warping
+        if (!obj.meshState || !obj.meshState.active) {
+          const ms = initializeMeshState(obj);
+          setObjects(prev => ({
+            ...prev,
+            [activeId!]: {
+              ...prev[activeId!],
+              meshState: ms
+            }
+          }));
+          obj = { ...obj, meshState: ms };
+        }
+
+        const localPos = worldToLocal(coords, obj.transform, obj.pivots[0]);
+        lastLiquifyLocalPosRef.current = localPos;
+        setDragMode('liquify' as any);
+        setDragStartPoint(coords);
+        historyPush();
+      }
+      return;
+    }
+
     // 10. Select & Transform Logic
     if (activeTool === 'SEL') {
       if (selectedObjectId) {
@@ -2159,6 +2389,128 @@ export default function CanvasArea({
             }
           };
         });
+      }
+      return;
+    }
+
+    if (dragMode === ('cagePoint' as any) && selectedObjectId && draggedMeshPointIndex !== null) {
+      const obj = objects[selectedObjectId];
+      if (obj && obj.cageState) {
+        const localPos = worldToLocal(coords, obj.transform, obj.pivots[0]);
+        setObjects(prev => {
+          if (!prev[selectedObjectId] || !prev[selectedObjectId].cageState) return prev;
+          const cs = prev[selectedObjectId].cageState;
+          const updatedPoints = [...cs.points];
+          if (updatedPoints[draggedMeshPointIndex]) {
+            updatedPoints[draggedMeshPointIndex] = {
+              ...updatedPoints[draggedMeshPointIndex],
+              currentX: Number(localPos.x.toFixed(2)),
+              currentY: Number(localPos.y.toFixed(2))
+            };
+          }
+          return {
+            ...prev,
+            [selectedObjectId]: {
+              ...prev[selectedObjectId],
+              cageState: {
+                ...cs,
+                points: updatedPoints
+              }
+            }
+          };
+        });
+      }
+      return;
+    }
+
+    if (dragMode === ('liquify' as any) && selectedObjectId) {
+      const obj = objects[selectedObjectId];
+      if (obj && obj.meshState && obj.meshState.points && lastLiquifyLocalPosRef.current) {
+        const currentLocal = worldToLocal(coords, obj.transform, obj.pivots[0]);
+        const prevLocal = lastLiquifyLocalPosRef.current;
+        
+        // Compute displacement vector in local space
+        const vx = currentLocal.x - prevLocal.x;
+        const vy = currentLocal.y - prevLocal.y;
+        
+        // Brush parameters
+        const bSize = liquifySettings?.brushSize ?? 60;
+        const bStrength = liquifySettings?.brushStrength ?? 0.3;
+        const bMode = liquifySettings?.brushMode ?? 'push';
+
+        const updatedPoints = obj.meshState.points.map((pt: any) => {
+          // Distance from brush center (the previous mouse position or the current mouse position in local space)
+          const dx = pt.currentX - currentLocal.x;
+          const dy = pt.currentY - currentLocal.y;
+          const distVal = Math.sqrt(dx * dx + dy * dy);
+          
+          if (distVal < bSize) {
+            // Smooth falloff weight (quadratic)
+            const w = Math.pow(1 - distVal / bSize, 2);
+            let nx = pt.currentX;
+            let ny = pt.currentY;
+
+            if (bMode === 'push') {
+              nx += vx * w * bStrength;
+              ny += vy * w * bStrength;
+            } else if (bMode === 'pinch') {
+              // Pull towards brush center
+              const pvx = currentLocal.x - pt.currentX;
+              const pvy = currentLocal.y - pt.currentY;
+              nx += pvx * w * bStrength * 0.4;
+              ny += pvy * w * bStrength * 0.4;
+            } else if (bMode === 'bulge') {
+              // Push away from brush center
+              const bvx = pt.currentX - currentLocal.x;
+              const bvy = pt.currentY - currentLocal.y;
+              nx += bvx * w * bStrength * 0.4;
+              ny += bvy * w * bStrength * 0.4;
+            } else if (bMode === 'twist-cw') {
+              // Rotate CW around brush center
+              const rx = pt.currentX - currentLocal.x;
+              const ry = pt.currentY - currentLocal.y;
+              // tangent is (-ry, rx)
+              nx += -ry * w * bStrength * 0.15;
+              ny += rx * w * bStrength * 0.15;
+            } else if (bMode === 'twist-ccw') {
+              // Rotate CCW around brush center
+              const rx = pt.currentX - currentLocal.x;
+              const ry = pt.currentY - currentLocal.y;
+              // tangent is (ry, -rx)
+              nx += ry * w * bStrength * 0.15;
+              ny += -rx * w * bStrength * 0.15;
+            } else if (bMode === 'restore') {
+              // Pull back to original coordinates
+              const ox = pt.originalX - pt.currentX;
+              const oy = pt.originalY - pt.currentY;
+              nx += ox * w * bStrength * 0.4;
+              ny += oy * w * bStrength * 0.4;
+            }
+
+            return {
+              ...pt,
+              currentX: Number(nx.toFixed(2)),
+              currentY: Number(ny.toFixed(2))
+            };
+          }
+          return pt;
+        });
+
+        setObjects(prev => {
+          if (!prev[selectedObjectId] || !prev[selectedObjectId].meshState) return prev;
+          return {
+            ...prev,
+            [selectedObjectId]: {
+              ...prev[selectedObjectId],
+              meshState: {
+                ...prev[selectedObjectId].meshState!,
+                points: updatedPoints
+              }
+            }
+          };
+        });
+
+        lastLiquifyLocalPosRef.current = currentLocal;
       }
       return;
     }
@@ -3186,6 +3538,8 @@ export default function CanvasArea({
     const ctx = frontCanvas.getContext('2d');
     if (!ctx) return;
 
+    const effectiveSelectedObjectId = isRecording ? null : selectedObjectId;
+
     // Clear and Redraw physical viewport with slate workspace background (pasteboard)
     ctx.fillStyle = '#17171a';
     ctx.fillRect(0, 0, frontCanvas.width, frontCanvas.height);
@@ -3203,31 +3557,29 @@ export default function CanvasArea({
     ctx.fillStyle = '#FFFFFF';
     ctx.fillRect(artboardX, artboardY, artboardW, artboardH);
 
-    // Draw active artboard boundaries (Border lines showing canvas start/end)
-    ctx.strokeStyle = '#f59e0b'; // Prominent Amber outline indicating the exact canvas boundary
-    ctx.lineWidth = 3;
-    ctx.strokeRect(artboardX, artboardY, artboardW, artboardH);
+    if (!isRecording) {
+      // Draw active artboard boundaries (Border lines showing canvas start/end)
+      ctx.strokeStyle = '#f59e0b'; // Prominent Amber outline indicating the exact canvas boundary
+      ctx.lineWidth = 3;
+      ctx.strokeRect(artboardX, artboardY, artboardW, artboardH);
 
-    // High contrast canvas start/end label markings
-    ctx.fillStyle = '#fbbf24'; // High visibility amber labels
-    ctx.font = 'bold 12px monospace';
-    ctx.fillText('◀ CANVAS START (0, 0)', artboardX + 12, artboardY + 24);
-    ctx.fillText(`CANVAS END (${artboardW}, ${artboardH}) ▶`, artboardX + artboardW - 195, artboardY + artboardH - 12);
 
-    // Add visual crosshair corner marks to assist precision drawing alignment
-    ctx.strokeStyle = '#f59e0b';
-    ctx.lineWidth = 1.5;
-    // Top-Left Cross
-    ctx.beginPath();
-    ctx.moveTo(artboardX - 12, artboardY); ctx.lineTo(artboardX + 24, artboardY);
-    ctx.moveTo(artboardX, artboardY - 12); ctx.lineTo(artboardX, artboardY + 24);
-    ctx.stroke();
 
-    // Bottom-Right Cross
-    ctx.beginPath();
-    ctx.moveTo(artboardX + artboardW - 24, artboardY + artboardH); ctx.lineTo(artboardX + artboardW + 12, artboardY + artboardH);
-    ctx.moveTo(artboardX + artboardW, artboardY + artboardH - 24); ctx.lineTo(artboardX + artboardW, artboardY + artboardH + 12);
-    ctx.stroke();
+      // Add visual crosshair corner marks to assist precision drawing alignment
+      ctx.strokeStyle = '#f59e0b';
+      ctx.lineWidth = 1.5;
+      // Top-Left Cross
+      ctx.beginPath();
+      ctx.moveTo(artboardX - 12, artboardY); ctx.lineTo(artboardX + 24, artboardY);
+      ctx.moveTo(artboardX, artboardY - 12); ctx.lineTo(artboardX, artboardY + 24);
+      ctx.stroke();
+
+      // Bottom-Right Cross
+      ctx.beginPath();
+      ctx.moveTo(artboardX + artboardW - 24, artboardY + artboardH); ctx.lineTo(artboardX + artboardW + 12, artboardY + artboardH);
+      ctx.moveTo(artboardX + artboardW, artboardY + artboardH - 24); ctx.lineTo(artboardX + artboardW, artboardY + artboardH + 12);
+      ctx.stroke();
+    }
 
     // STRICT ARTBOARD CLIPPING - Prevents any artwork, deform, or other elements from leaking outside the canvas boundaries
     ctx.save();
@@ -3293,6 +3645,8 @@ export default function CanvasArea({
         });
       } else if (drawObj.lassoDeformState && drawObj.lassoDeformState.active) {
         localPoints = drawObj.points.map(p => deformWithLasso(p, drawObj));
+      } else if (drawObj.cageState && drawObj.cageState.active) {
+        localPoints = drawObj.points.map(p => deformWithCage(p, drawObj.cageState));
       } else if (drawObj.meshState && drawObj.meshState.active) {
         localPoints = drawObj.points.map(p => getWarpedPoint(p, drawObj.meshState, bounds));
       } else if (drawObj.pins && drawObj.pins.length > 0) {
@@ -3327,6 +3681,8 @@ export default function CanvasArea({
               });
             } else if (drawObj.lassoDeformState && drawObj.lassoDeformState.active) {
               localSubPoints = sub.map(p => deformWithLasso(p, drawObj));
+            } else if (drawObj.cageState && drawObj.cageState.active) {
+              localSubPoints = sub.map(p => deformWithCage(p, drawObj.cageState));
             } else if (drawObj.meshState && drawObj.meshState.active) {
               const subBounds = calculateBoundingBox(sub);
               localSubPoints = sub.map(p => getWarpedPoint(p, drawObj.meshState, subBounds));
@@ -3524,7 +3880,7 @@ export default function CanvasArea({
         }
 
         // Render Rigged Skeletal Bones on top of selected 3D Model
-        if (selectedObjectId === drawObj.id && (drawObj as any).bones3D && (drawObj as any).bones3D.length > 0) {
+        if (effectiveSelectedObjectId === drawObj.id && (drawObj as any).bones3D && (drawObj as any).bones3D.length > 0) {
           ctx.save();
           (drawObj as any).bones3D.forEach((bone: any) => {
             const startP = projected[bone.startVertexIdx];
@@ -3571,7 +3927,7 @@ export default function CanvasArea({
         }
 
         // Draw vertex handles for deforming/cutting/bone adding in MSH/BON tools
-        if (selectedObjectId === drawObj.id && (activeTool === 'MSH' || activeTool === 'BON')) {
+        if (effectiveSelectedObjectId === drawObj.id && (activeTool === 'MSH' || activeTool === 'BON')) {
           ctx.save();
           projected.forEach((p, idx) => {
             const isSelected = selectedDeformPointIndex === idx && selectedDeformPointType === '3d';
@@ -3587,7 +3943,7 @@ export default function CanvasArea({
         }
 
         // Draw active drawing bone guide if isDrawing3DBone is true
-        if (isDrawing3DBone && bone3DStartVtxIdx !== null && selectedObjectId === drawObj.id) {
+        if (isDrawing3DBone && bone3DStartVtxIdx !== null && effectiveSelectedObjectId === drawObj.id) {
           const startP = projected[bone3DStartVtxIdx];
           if (startP) {
             ctx.save();
@@ -3612,6 +3968,7 @@ export default function CanvasArea({
         let img = imagesCacheRef.current[drawObj.imageUrl];
         if (!img) {
           img = new Image();
+          img.crossOrigin = 'anonymous';
           img.src = drawObj.imageUrl;
           img.onload = () => {
             imagesCacheRef.current[drawObj.imageUrl!] = img;
@@ -3965,8 +4322,8 @@ export default function CanvasArea({
     });
 
     // Draw select overlay bounding boxes & 10+ handles
-    if (selectedObjectId && objects[selectedObjectId] && activeTool !== 'ZOM') {
-      const rawObj = objects[selectedObjectId];
+    if (effectiveSelectedObjectId && objects[effectiveSelectedObjectId] && activeTool !== 'ZOM') {
+      const rawObj = objects[effectiveSelectedObjectId];
       const obj = resolve360Object(rawObj, objects);
       const box = calculateBoundingBox(getAllObjectPoints(rawObj));
       const pivot = obj.pivots[0] || { localX: 0, localY: 0 };
@@ -4034,8 +4391,8 @@ export default function CanvasArea({
     }
 
     // Render active Geometry Mesh deform wireframe/handles
-    if (activeTool === 'MSH' && selectedObjectId && objects[selectedObjectId]) {
-      const obj = objects[selectedObjectId];
+    if (activeTool === 'MSH' && effectiveSelectedObjectId && objects[effectiveSelectedObjectId]) {
+      const obj = objects[effectiveSelectedObjectId];
       
       if (obj.meshState && obj.meshState.active) {
         const { densityX, densityY, points, showGrid, showPoints } = obj.meshState;
@@ -4125,8 +4482,8 @@ export default function CanvasArea({
     }
 
     // Render active Smart Mesh Coloring overlay (mesh grid, dots, brush cursor preview)
-    if (activeTool === 'MCL' && selectedObjectId && objects[selectedObjectId]) {
-      const obj = objects[selectedObjectId];
+    if (activeTool === 'MCL' && effectiveSelectedObjectId && objects[effectiveSelectedObjectId]) {
+      const obj = objects[effectiveSelectedObjectId];
       if (obj.smartMeshColor) {
         const { densityX, densityY, points } = obj.smartMeshColor;
         const localPivot = obj.pivots[0] || { localX: 0, localY: 0 };
@@ -4203,9 +4560,115 @@ export default function CanvasArea({
       }
     }
 
+    // CAG (Cage Deform) overlay wireframe/handles
+    if (activeTool === 'CAG' && effectiveSelectedObjectId && objects[effectiveSelectedObjectId]) {
+      const obj = objects[effectiveSelectedObjectId];
+      if (obj.cageState && obj.cageState.active && obj.cageState.points) {
+        const { points, showGrid } = obj.cageState;
+        const localPivot = obj.pivots[0] || { localX: 0, localY: 0 };
+        ctx.save();
+
+        // 1. Convert all cage points to world space
+        const worldPts = points.map(pt => localToWorld({ x: pt.currentX, y: pt.currentY }, obj.transform, localPivot));
+
+        // 2. Draw Cage boundary lines
+        if (showGrid && worldPts.length === 8) {
+          ctx.beginPath();
+          ctx.moveTo(worldPts[0].x, worldPts[0].y);
+          ctx.lineTo(worldPts[1].x, worldPts[1].y);
+          ctx.lineTo(worldPts[2].x, worldPts[2].y);
+          ctx.lineTo(worldPts[3].x, worldPts[3].y);
+          ctx.lineTo(worldPts[4].x, worldPts[4].y);
+          ctx.lineTo(worldPts[5].x, worldPts[5].y);
+          ctx.lineTo(worldPts[6].x, worldPts[6].y);
+          ctx.lineTo(worldPts[7].x, worldPts[7].y);
+          ctx.closePath();
+          ctx.strokeStyle = '#10B981'; // Emerald green
+          ctx.lineWidth = 1.8;
+          ctx.setLineDash([4, 4]);
+          ctx.stroke();
+
+          // X cross grid
+          ctx.beginPath();
+          ctx.moveTo(worldPts[0].x, worldPts[0].y);
+          ctx.lineTo(worldPts[4].x, worldPts[4].y);
+          ctx.moveTo(worldPts[2].x, worldPts[2].y);
+          ctx.lineTo(worldPts[6].x, worldPts[6].y);
+          ctx.strokeStyle = 'rgba(16, 185, 129, 0.2)';
+          ctx.lineWidth = 1.0;
+          ctx.stroke();
+        }
+
+        // 3. Draw Cage point handles
+        worldPts.forEach((pt, idx) => {
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, 7, 0, Math.PI * 2);
+          ctx.fillStyle = (dragMode === ('cagePoint' as any) && draggedMeshPointIndex === idx) ? '#F59E0B' : '#10B981';
+          ctx.fill();
+          ctx.strokeStyle = '#FFFFFF';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(pt.x - 2, pt.y - 2, 4, 4);
+        });
+
+        ctx.restore();
+      }
+    }
+
+    // LQB (Liquify Brush) overlays and circle brush cursor preview
+    if (activeTool === 'LQB' && effectiveSelectedObjectId && objects[effectiveSelectedObjectId]) {
+      const obj = objects[effectiveSelectedObjectId];
+      if (obj.meshState && obj.meshState.active && obj.meshState.showGrid) {
+        const { densityX, densityY, points } = obj.meshState;
+        ctx.save();
+        const worldMeshPoints = points.map(mpt => localToWorld({ x: mpt.currentX, y: mpt.currentY }, obj.transform, obj.pivots[0]));
+        ctx.beginPath();
+        ctx.strokeStyle = 'rgba(236, 72, 153, 0.25)'; // Soft pink grid
+        ctx.lineWidth = 1.0;
+        for (let y = 0; y < densityY; y++) {
+          for (let x = 0; x < densityX - 1; x++) {
+            const p1 = worldMeshPoints[y * densityX + x];
+            const p2 = worldMeshPoints[y * densityX + (x + 1)];
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+          }
+        }
+        for (let x = 0; x < densityX; x++) {
+          for (let y = 0; y < densityY - 1; y++) {
+            const p1 = worldMeshPoints[y * densityX + x];
+            const p2 = worldMeshPoints[(y + 1) * densityX + x];
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+          }
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+
+    if (activeTool === 'LQB' && currentCursorPos) {
+      const bSize = liquifySettings?.brushSize ?? 60;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(currentCursorPos.x, currentCursorPos.y, bSize, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(236, 72, 153, 0.85)'; // Pink/Rose brush circle
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 4]);
+      ctx.stroke();
+
+      // Inner center crosshair dot
+      ctx.beginPath();
+      ctx.arc(currentCursorPos.x, currentCursorPos.y, 2, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(236, 72, 153, 0.85)';
+      ctx.fill();
+      ctx.restore();
+    }
+
     // Render active Smart Pin Warp overlay (selectable/draggable puppet-like deformation pins)
-    if (activeTool === 'SWP' && selectedObjectId && objects[selectedObjectId]) {
-      const obj = objects[selectedObjectId];
+    if (activeTool === 'SWP' && effectiveSelectedObjectId && objects[effectiveSelectedObjectId]) {
+      const obj = objects[effectiveSelectedObjectId];
       if (obj.smartWarp) {
         const { pins, pinSize, influenceRadius, showInfluenceArea } = obj.smartWarp;
         const localPivot = obj.pivots[0] || { localX: 0, localY: 0 };
@@ -4246,8 +4709,8 @@ export default function CanvasArea({
     }
 
     // Render Puppet Pins overlay for selected object if present
-    if (selectedObjectId && objects[selectedObjectId]) {
-      const obj = objects[selectedObjectId];
+    if (effectiveSelectedObjectId && objects[effectiveSelectedObjectId]) {
+      const obj = objects[effectiveSelectedObjectId];
       if (obj.pins && obj.pins.length > 0) {
         ctx.save();
         obj.pins.forEach((pin, idx) => {
@@ -4274,8 +4737,8 @@ export default function CanvasArea({
     }
 
     // Render Lasso Deform Selection region polygon overlay for selected object
-    if (selectedObjectId && objects[selectedObjectId]) {
-      const obj = objects[selectedObjectId];
+    if (effectiveSelectedObjectId && objects[effectiveSelectedObjectId]) {
+      const obj = objects[effectiveSelectedObjectId];
       if (obj.lassoDeformState && obj.lassoDeformState.lassoPoints && obj.lassoDeformState.lassoPoints.length >= 3) {
         ctx.save();
         
@@ -4302,8 +4765,8 @@ export default function CanvasArea({
     }
 
     // Render Lasso Mesh Control Points overlay for selected object if present
-    if (selectedObjectId && objects[selectedObjectId]) {
-      const obj = objects[selectedObjectId];
+    if (effectiveSelectedObjectId && objects[effectiveSelectedObjectId]) {
+      const obj = objects[effectiveSelectedObjectId];
       if (obj.lassoControlPoints && obj.lassoControlPoints.length > 0) {
         ctx.save();
         const localPivot = obj.pivots[0] || { localX: 0, localY: 0 };
@@ -4362,7 +4825,7 @@ export default function CanvasArea({
     }
 
     // Render active bones list linkage overlays
-    if (showBones || activeTool === 'BON') {
+    if (!isRecording && (showBones || activeTool === 'BON')) {
       bones.forEach((bone) => {
         const startObj = objects[bone.startObjectId];
         const endObj = objects[bone.endObjectId];
@@ -4406,7 +4869,7 @@ export default function CanvasArea({
     }
 
     // Render active bone tool drawing / rubberband snapping preview
-    if (activeTool === 'BON' && boneStartPoint) {
+    if (!isRecording && activeTool === 'BON' && boneStartPoint) {
       ctx.save();
       // Rubberband connection line
       ctx.beginPath();
@@ -4468,7 +4931,7 @@ export default function CanvasArea({
     }
 
     // Render current active Lasso selection path
-    if (lassoPoints && lassoPoints.length > 0) {
+    if (!isRecording && lassoPoints && lassoPoints.length > 0) {
       ctx.save();
       ctx.beginPath();
       ctx.moveTo(lassoPoints[0].x, lassoPoints[0].y);
@@ -4562,7 +5025,8 @@ export default function CanvasArea({
     lassoMode,
     penLassoPoints,
     artboardW,
-    artboardH
+    artboardH,
+    isRecording
   ]);
 
   return (
@@ -4881,6 +5345,15 @@ export default function CanvasArea({
           title="Recenter & Fit Canvas to Viewport"
         >
           <RotateCcw className="h-3.5 w-3.5" />
+        </button>
+
+        <button
+          id="btn-fit-workspace"
+          onClick={fitCanvasToViewport}
+          className="hidden lg:flex p-1.5 rounded-full hover:bg-gray-100 text-gray-500 hover:text-gray-900 transition-colors items-center justify-center cursor-pointer"
+          title="Fit Canvas & Resolution to Workspace (strictly PC / Large Screens)"
+        >
+          <Maximize2 className="h-3.5 w-3.5 text-amber-500" />
         </button>
       </div>
     </div>

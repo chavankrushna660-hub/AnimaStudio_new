@@ -51,6 +51,8 @@ export default function Toolbar({
     { id: 'MSH', name: 'Mesh Wrap', label: 'Geometry Deform (MSH)', icon: CropIcon, desc: 'Deform drawing geometry by dragging individual vertices deeply' },
     { id: 'MCL', name: 'Mesh Coloring', label: 'Smart Mesh Color (MCL)', icon: PaletteIcon, desc: 'Paint directly on simplified mesh cells or points to color your drawing' },
     { id: 'SWP', name: 'Smart Warp', label: 'Smart Pin Warp (SWP)', icon: PinIcon, desc: 'Add large clickable pins to easily deform drawing geometry' },
+    { id: 'CAG', name: 'Cage Deform', label: 'Cage Deform (CAG)', icon: BoxIcon, desc: 'Deform the drawing boundary cage to warp the shape smoothly' },
+    { id: 'LQB', name: 'Liquify Brush', label: 'Liquify Brush (LQB)', icon: SparklesIcon, desc: 'Push, pinch, bulge, or twist drawing geometry with a brush' },
     { id: 'CON', name: 'Constraint', label: 'Constraints (CON)', icon: AlignCenterIcon },
     { id: 'MOT', name: 'Motion Path', label: 'Motion Path (MOT)', icon: TrendingUpIcon },
     { id: 'EYE', name: 'Eyedropper', label: 'Eyedropper (EYE)', icon: EyedropperIcon },

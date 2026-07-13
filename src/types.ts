@@ -221,6 +221,27 @@ export interface VectorObject {
   originalSubPathsBackup?: Point[][];
   smartMeshColor?: SmartMeshColorState;
   smartWarp?: SmartWarpState;
+  cageState?: CageState;
+}
+
+export interface CagePoint {
+  id: string;
+  originalX: number;
+  originalY: number;
+  currentX: number;
+  currentY: number;
+}
+
+export interface CageState {
+  active: boolean;
+  points: CagePoint[];
+  showGrid: boolean;
+}
+
+export interface LiquifyBrushSettings {
+  brushSize: number;
+  brushStrength: number;
+  brushMode: 'push' | 'pull' | 'pinch' | 'bulge' | 'twist-cw' | 'twist-ccw' | 'restore';
 }
 
 export interface ColorMeshPoint {

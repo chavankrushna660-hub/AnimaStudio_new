@@ -12,7 +12,8 @@ import {
   Eye, 
   EyeOff,
   GitPullRequest,
-  Maximize
+  Maximize,
+  Sparkles
 } from 'lucide-react';
 
 interface TimelineProps {
@@ -33,6 +34,8 @@ interface TimelineProps {
   setFps: (fps: number) => void;
   isPlaying: boolean;
   setIsPlaying: (playing: boolean) => void;
+  autoTween: boolean;
+  setAutoTween: (enabled: boolean) => void;
   showCanvasSizePanel?: boolean;
   setShowCanvasSizePanel?: (show: boolean) => void;
   style?: React.CSSProperties;
@@ -56,6 +59,8 @@ export default function Timeline({
   setFps,
   isPlaying,
   setIsPlaying,
+  autoTween = true,
+  setAutoTween,
   showCanvasSizePanel = false,
   setShowCanvasSizePanel,
   style,
@@ -224,6 +229,21 @@ export default function Timeline({
               title="Onion Skin Config"
             >
               <Settings className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          <div className="flex items-center gap-1 bg-neutral-900 border border-neutral-800/80 p-1 rounded-xl">
+            <button
+              onClick={() => setAutoTween(!autoTween)}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-black transition-colors ${
+                autoTween 
+                  ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' 
+                  : 'text-neutral-500 hover:bg-neutral-800/60'
+              }`}
+              title="Toggle real-time automatic tweening interpolation between keyframes during playback and scrubbing"
+            >
+              <Sparkles className="w-3.5 h-3.5 shrink-0" />
+              <span className="text-[9px] sm:text-xs">AUTO-TWEEN</span>
             </button>
           </div>
 
