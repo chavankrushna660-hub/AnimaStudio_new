@@ -20,7 +20,8 @@ import {
   LayoutGrid,
   Sparkles,
   Box,
-  ZoomIn
+  ZoomIn,
+  Share2
 } from 'lucide-react';
 
 interface ToolbarProps {
@@ -49,6 +50,7 @@ export default function Toolbar({
     { id: '360', name: '360° Studio', label: '360° Pseudo-3D (360)', icon: CompassIcon, desc: 'Create and animate 360-degree pseudo-3D objects' },
     { id: 'SHP', name: 'Shape', label: 'Shapes Tool (SHP)', icon: ShapesIcon },
     { id: 'MSH', name: 'Mesh Wrap', label: 'Geometry Deform (MSH)', icon: CropIcon, desc: 'Deform drawing geometry by dragging individual vertices deeply' },
+    { id: 'SPL', name: 'Spline Reshape', label: 'Spline Reshape (SPL)', icon: Share2Icon, desc: 'Fit stroke to a cubic bezier path and deform or stretch smoothly' },
     { id: 'MCL', name: 'Mesh Coloring', label: 'Smart Mesh Color (MCL)', icon: PaletteIcon, desc: 'Paint directly on simplified mesh cells or points to color your drawing' },
     { id: 'SWP', name: 'Smart Warp', label: 'Smart Pin Warp (SWP)', icon: PinIcon, desc: 'Add large clickable pins to easily deform drawing geometry' },
     { id: 'CAG', name: 'Cage Deform', label: 'Cage Deform (CAG)', icon: BoxIcon, desc: 'Deform the drawing boundary cage to warp the shape smoothly' },
@@ -142,3 +144,4 @@ function SparklesIcon(props: any) { return <Sparkles {...props} /> }
 function BoxIcon(props: any) { return <Box {...props} /> }
 function CompassIcon(props: any) { return <Compass {...props} /> }
 function ZoomInIcon(props: any) { return <ZoomIn {...props} /> }
+function Share2Icon(props: any) { return <Share2 {...props} /> }

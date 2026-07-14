@@ -97,6 +97,17 @@ export interface MeshState {
   showGrid: boolean;
   showPoints: boolean;
   previewMode: boolean;
+  
+  // HyperGraph fields
+  editMode?: 'node' | 'lattice' | 'curve' | 'symmetry';
+  latticeDensity?: number;
+  latticePoints?: MeshPoint[];
+  falloffRadius?: number;
+  symmetryActive?: boolean;
+  symmetryAxis?: 'horizontal' | 'vertical';
+  curvePoints?: Point[];
+  selectedLatticeIndex?: number | null;
+  linkedClusters?: { [index: number]: number[] }; // mapped master index to connected indices
 }
 
 export interface ObjectShadow {
@@ -222,6 +233,14 @@ export interface VectorObject {
   smartMeshColor?: SmartMeshColorState;
   smartWarp?: SmartWarpState;
   cageState?: CageState;
+  
+  // Spline-Based Stroke fields
+  splineActive?: boolean;
+  splinePoints?: Point[]; // Bezier curve points
+  splineControlPoints?: { start: Point; cp1: Point; cp2: Point; end: Point }[];
+  splineTwistPoints?: { t: number; rotation: number; scale: number; id: string }[];
+  splineUniformStretch?: boolean;
+  splineOriginalPoints?: Point[];
 }
 
 export interface CagePoint {

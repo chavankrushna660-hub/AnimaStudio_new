@@ -1215,18 +1215,7 @@ export default function App() {
                     const src = objects[k];
                     const dest = frameObjects[k];
                     
-                    if (src.strokeColor !== undefined) dest.strokeColor = src.strokeColor;
-                    if (src.strokeWidth !== undefined) dest.strokeWidth = src.strokeWidth;
-                    if (src.fillColor !== undefined) dest.fillColor = src.fillColor;
-                    if (src.lassoFills !== undefined) dest.lassoFills = JSON.parse(JSON.stringify(src.lassoFills));
-                    if (src.opacity !== undefined) dest.opacity = src.opacity;
-                    if (src.shadow !== undefined) dest.shadow = src.shadow ? JSON.parse(JSON.stringify(src.shadow)) : undefined;
-                    if (src.innerShadow !== undefined) dest.innerShadow = src.innerShadow ? JSON.parse(JSON.stringify(src.innerShadow)) : undefined;
-                    if (src.rimLight !== undefined) dest.rimLight = src.rimLight ? JSON.parse(JSON.stringify(src.rimLight)) : undefined;
-                    if (src.overlay !== undefined) dest.overlay = src.overlay ? JSON.parse(JSON.stringify(src.overlay)) : undefined;
-                    
-                    if (src.points !== undefined) dest.points = JSON.parse(JSON.stringify(src.points));
-                    if (src.subPaths !== undefined) dest.subPaths = src.subPaths ? JSON.parse(JSON.stringify(src.subPaths)) : undefined;
+                    // Animatable/Keyframeable properties (strokeColor, fillColor, opacity, effects, and original path points) are preserved uniquely per frame for full keyframing capability!
                     if (src.name !== undefined) dest.name = src.name;
                     if (src.type !== undefined) dest.type = src.type;
                     if (src.text !== undefined) dest.text = src.text;
@@ -1254,13 +1243,111 @@ export default function App() {
                         dest.meshState.densityY = src.meshState.densityY;
                         dest.meshState.showGrid = src.meshState.showGrid;
                         dest.meshState.showPoints = src.meshState.showPoints;
+                        dest.meshState.previewMode = src.meshState.previewMode;
+                        dest.meshState.pointSize = src.meshState.pointSize;
+                        
+                        // Sync HyperGraph / Deform config properties
+                        dest.meshState.editMode = src.meshState.editMode;
+                        dest.meshState.latticeDensity = src.meshState.latticeDensity;
+                        dest.meshState.falloffRadius = src.meshState.falloffRadius;
+                        dest.meshState.symmetryActive = src.meshState.symmetryActive;
+                        dest.meshState.symmetryAxis = src.meshState.symmetryAxis;
+                        dest.meshState.selectedLatticeIndex = src.meshState.selectedLatticeIndex;
+                        dest.meshState.linkedClusters = src.meshState.linkedClusters ? JSON.parse(JSON.stringify(src.meshState.linkedClusters)) : undefined;
+                        
+                        if (src.meshState.curvePoints !== undefined) {
+                          dest.meshState.curvePoints = JSON.parse(JSON.stringify(src.meshState.curvePoints));
+                        } else {
+                          dest.meshState.curvePoints = undefined;
+                        }
+                        
+                        if (src.meshState.originalPoints !== undefined) {
+                          dest.meshState.originalPoints = JSON.parse(JSON.stringify(src.meshState.originalPoints));
+                        }
+
                         // If density changed, or if lengths don't match, we must reset the points to match source
                         if (!dest.meshState.points || dest.meshState.points.length !== src.meshState.points.length) {
                           dest.meshState.points = JSON.parse(JSON.stringify(src.meshState.points));
                         }
+
+                        // Sync lattice points structure, preserving unique positions per frame
+                        if (src.meshState.latticePoints !== undefined) {
+                          if (dest.meshState.latticePoints === undefined || dest.meshState.latticePoints.length !== src.meshState.latticePoints.length) {
+                            dest.meshState.latticePoints = JSON.parse(JSON.stringify(src.meshState.latticePoints));
+                          } else {
+                            dest.meshState.latticePoints = src.meshState.latticePoints.map((srcLpt: any) => {
+                              const destLpt = dest.meshState.latticePoints.find((p: any) => p.id === srcLpt.id);
+                              return destLpt ? { ...srcLpt, x: destLpt.x, y: destLpt.y } : JSON.parse(JSON.stringify(srcLpt));
+                            });
+                          }
+                        } else {
+                          dest.meshState.latticePoints = undefined;
+                        }
                       }
                     } else {
                       dest.meshState = undefined;
+                    }
+
+                    // Sync spline active state and control/twist configurations, while preserving unique frame positions
+                    if (src.splineActive !== undefined) {
+                      dest.splineActive = src.splineActive;
+                      dest.splineUniformStretch = src.splineUniformStretch;
+                      
+                      if (src.splinePoints !== undefined) {
+                        dest.splinePoints = JSON.parse(JSON.stringify(src.splinePoints));
+                      } else {
+                        dest.splinePoints = undefined;
+                      }
+
+                      if (src.splineOriginalPoints !== undefined) {
+                        dest.splineOriginalPoints = JSON.parse(JSON.stringify(src.splineOriginalPoints));
+                      } else {
+                        dest.splineOriginalPoints = undefined;
+                      }
+
+                      // Sync spline control points structure, keeping unique positions per frame
+                      if (src.splineControlPoints !== undefined) {
+                        if (dest.splineControlPoints === undefined || dest.splineControlPoints.length !== src.splineControlPoints.length) {
+                          dest.splineControlPoints = JSON.parse(JSON.stringify(src.splineControlPoints));
+                        } else {
+                          dest.splineControlPoints = src.splineControlPoints.map((srcSeg: any, segIdx: number) => {
+                            const destSeg = dest.splineControlPoints[segIdx];
+                            if (destSeg) {
+                              return {
+                                ...srcSeg,
+                                start: { ...destSeg.start },
+                                cp1: { ...destSeg.cp1 },
+                                cp2: { ...destSeg.cp2 },
+                                end: { ...destSeg.end }
+                              };
+                            }
+                            return JSON.parse(JSON.stringify(srcSeg));
+                          });
+                        }
+                      } else {
+                        dest.splineControlPoints = undefined;
+                      }
+
+                      // Sync spline twist points, keeping unique rotation and scale per frame
+                      if (src.splineTwistPoints !== undefined) {
+                        if (dest.splineTwistPoints === undefined || dest.splineTwistPoints.length !== src.splineTwistPoints.length) {
+                          dest.splineTwistPoints = JSON.parse(JSON.stringify(src.splineTwistPoints));
+                        } else {
+                          dest.splineTwistPoints = src.splineTwistPoints.map((srcTp: any) => {
+                            const destTp = dest.splineTwistPoints.find((p: any) => p.id === srcTp.id);
+                            return destTp ? { ...srcTp, rotation: destTp.rotation, scale: destTp.scale, t: destTp.t } : JSON.parse(JSON.stringify(srcTp));
+                          });
+                        }
+                      } else {
+                        dest.splineTwistPoints = undefined;
+                      }
+                    } else {
+                      dest.splineActive = undefined;
+                      dest.splinePoints = undefined;
+                      dest.splineControlPoints = undefined;
+                      dest.splineTwistPoints = undefined;
+                      dest.splineUniformStretch = undefined;
+                      dest.splineOriginalPoints = undefined;
                     }
 
                     // Sync presence and configuration of smartWarp, but preserve unique deformed pin positions per frame

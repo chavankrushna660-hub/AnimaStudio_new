@@ -142,10 +142,76 @@ export const interpolateTwoObjects = (startObj: VectorObject, endObj: VectorObje
         };
       });
     }
+
+    let latticePoints = startObj.meshState.latticePoints;
+    if (startObj.meshState.latticePoints && endObj.meshState.latticePoints && startObj.meshState.latticePoints.length === endObj.meshState.latticePoints.length) {
+      latticePoints = startObj.meshState.latticePoints.map((lp, lpIdx) => {
+        const elp = endObj.meshState.latticePoints![lpIdx] as any;
+        const lpAny = lp as any;
+        return {
+          ...lp,
+          x: Number((lpAny.x + t * (elp.x - lpAny.x)).toFixed(2)),
+          y: Number((lpAny.y + t * (elp.y - lpAny.y)).toFixed(2))
+        };
+      });
+    }
+
     meshState = {
       ...startObj.meshState,
-      points: meshPoints
+      points: meshPoints,
+      latticePoints
     };
+  }
+
+  // Interpolate Spline Deformation if active on both
+  let splineControlPoints = startObj.splineControlPoints;
+  if (startObj.splineActive && endObj.splineActive && startObj.splineControlPoints && endObj.splineControlPoints && startObj.splineControlPoints.length === endObj.splineControlPoints.length) {
+    splineControlPoints = startObj.splineControlPoints.map((seg, segIdx) => {
+      const eseg = endObj.splineControlPoints![segIdx];
+      return {
+        start: {
+          x: Number((seg.start.x + t * (eseg.start.x - seg.start.x)).toFixed(2)),
+          y: Number((seg.start.y + t * (eseg.start.y - seg.start.y)).toFixed(2)),
+        },
+        cp1: {
+          x: Number((seg.cp1.x + t * (eseg.cp1.x - seg.cp1.x)).toFixed(2)),
+          y: Number((seg.cp1.y + t * (eseg.cp1.y - seg.cp1.y)).toFixed(2)),
+        },
+        cp2: {
+          x: Number((seg.cp2.x + t * (eseg.cp2.x - seg.cp2.x)).toFixed(2)),
+          y: Number((seg.cp2.y + t * (eseg.cp2.y - seg.cp2.y)).toFixed(2)),
+        },
+        end: {
+          x: Number((seg.end.x + t * (eseg.end.x - seg.end.x)).toFixed(2)),
+          y: Number((seg.end.y + t * (eseg.end.y - seg.end.y)).toFixed(2)),
+        }
+      };
+    });
+  }
+
+  let splineTwistPoints = startObj.splineTwistPoints;
+  if (startObj.splineActive && endObj.splineActive && startObj.splineTwistPoints && endObj.splineTwistPoints && startObj.splineTwistPoints.length === endObj.splineTwistPoints.length) {
+    splineTwistPoints = startObj.splineTwistPoints.map((tp, tpIdx) => {
+      const etp = endObj.splineTwistPoints![tpIdx];
+      return {
+        ...tp,
+        t: Number((tp.t + t * (etp.t - tp.t)).toFixed(3)),
+        rotation: Number((tp.rotation + t * (etp.rotation - tp.rotation)).toFixed(2)),
+        scale: Number((tp.scale + t * (etp.scale - tp.scale)).toFixed(3))
+      };
+    });
+  }
+
+  let splinePoints = startObj.splinePoints;
+  if (startObj.splineActive && endObj.splineActive && startObj.splinePoints && endObj.splinePoints && startObj.splinePoints.length === endObj.splinePoints.length) {
+    splinePoints = startObj.splinePoints.map((pt, pIdx) => {
+      const ept = endObj.splinePoints![pIdx];
+      return {
+        ...pt,
+        x: Number((pt.x + t * (ept.x - pt.x)).toFixed(2)),
+        y: Number((pt.y + t * (ept.y - pt.y)).toFixed(2))
+      };
+    });
   }
 
   // Interpolate 3D vertices and 3D transform if active
@@ -203,6 +269,9 @@ export const interpolateTwoObjects = (startObj: VectorObject, endObj: VectorObje
     transform3D,
     vertices3D,
     lassoControlPoints,
+    splineControlPoints,
+    splineTwistPoints,
+    splinePoints,
   };
 };
 
@@ -273,7 +342,7 @@ export const getInterpolatedObjects = (
     }
 
     if (keyA.index === keyB.index || c === keyA.index || c === keyB.index) {
-      interpolated[objId] = c === keyB.index ? keyB.obj : keyA.obj;
+      interpolated[objId] = activeObj || (c === keyB.index ? keyB.obj : keyA.obj);
     } else {
       const t = (c - keyA.index) / (keyB.index - keyA.index);
       interpolated[objId] = interpolateTwoObjects(keyA.obj, keyB.obj, t);

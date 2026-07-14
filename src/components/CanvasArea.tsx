@@ -253,6 +253,110 @@ const deformWithSmartWarp = (p: Point, smartWarp: any): Point => {
   };
 };
 
+// 🌟 Spline Bezier Evaluation Helpers
+const evaluateCubicBezier = (p0: Point, p1: Point, p2: Point, p3: Point, t: number): Point => {
+  const mt = 1 - t;
+  const mt2 = mt * mt;
+  const mt3 = mt2 * mt;
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return {
+    x: mt3 * p0.x + 3 * mt2 * t * p1.x + 3 * mt * t2 * p2.x + t3 * p3.x,
+    y: mt3 * p0.y + 3 * mt2 * t * p1.y + 3 * mt * t2 * p2.y + t3 * p3.y
+  };
+};
+
+const evaluateCubicBezierDerivative = (p0: Point, p1: Point, p2: Point, p3: Point, t: number): Point => {
+  const mt = 1 - t;
+  return {
+    x: 3 * mt * mt * (p1.x - p0.x) + 6 * mt * t * (p2.x - p1.x) + 3 * t * t * (p3.x - p2.x),
+    y: 3 * mt * mt * (p1.y - p0.y) + 6 * mt * t * (p2.y - p1.y) + 3 * t * t * (p3.y - p2.y)
+  };
+};
+
+const evaluateSplineCurrent = (segments: any[], t: number): Point => {
+  if (!segments || segments.length === 0) return { x: 0, y: 0 };
+  const numSegments = segments.length;
+  const segIdx = Math.max(0, Math.min(numSegments - 1, Math.floor(t * numSegments)));
+  const segT = (t * numSegments) - segIdx;
+  const segment = segments[segIdx];
+  return evaluateCubicBezier(segment.start, segment.cp1, segment.cp2, segment.end, segT);
+};
+
+const deformWithSpline = (p: Point, obj: any, idx: number, total: number): Point => {
+  if (!obj.splineActive || !obj.splineControlPoints || obj.splineControlPoints.length === 0) return p;
+  
+  const segments = obj.splineControlPoints;
+  const nSegs = segments.length;
+  
+  let t = total > 1 ? idx / (total - 1) : 0.5;
+  t = Math.max(0, Math.min(1, t));
+  
+  // Find which segment this point belongs to
+  const segIdx = Math.max(0, Math.min(nSegs - 1, Math.floor(t * nSegs)));
+  const segT = (t * nSegs) - segIdx;
+  
+  const segment = segments[segIdx];
+  const curPt = evaluateCubicBezier(segment.start, segment.cp1, segment.cp2, segment.end, segT);
+  const curDeriv = evaluateCubicBezierDerivative(segment.start, segment.cp1, segment.cp2, segment.end, segT);
+  
+  // Calculate local orientation angle of current segment
+  const curAngle = Math.atan2(curDeriv.y, curDeriv.x);
+  
+  // Base offset from original shape
+  let offset = { x: 0, y: 0 };
+  if (obj.splineOriginalPoints && obj.splineOriginalPoints[idx]) {
+    const origPt = obj.splineOriginalPoints[idx];
+    // Find base coordinate for comparison
+    // Let's find equivalent starting coordinate on simple linear interpolation of initial spline control points.
+    // At initialization, we evaluate initial spline position. Since we don't store initial curve,
+    // we can approximate or compute relative offset at init.
+    // A great approach is: if we stored absolute offset inside original points:
+    // origOffset = origPt - C_initial(t)
+    // To make it fully stable, let's look at relative position to original spline.
+    // If we just store the absolute local offset, we can calculate it:
+    // If the original shape points are in splineOriginalPoints, we can rotate/scale them nicely!
+    const initPt = obj.points[idx] || p;
+    offset = { x: initPt.x - origPt.x, y: initPt.y - origPt.y };
+  } else {
+    // Fallback: simple delta relative to local straight line
+    const startPt = segments[0].start;
+    const endPt = segments[nSegs - 1].end;
+    const lineX = startPt.x + t * (endPt.x - startPt.x);
+    const lineY = startPt.y + t * (endPt.y - startPt.y);
+    offset = { x: p.x - lineX, y: p.y - lineY };
+  }
+  
+  // Twist Points rotation & scale factor
+  let twistAngle = 0;
+  let twistScale = 1.0;
+  if (obj.splineTwistPoints && obj.splineTwistPoints.length > 0) {
+    obj.splineTwistPoints.forEach((tp: any) => {
+      const d = Math.abs(t - tp.t);
+      const falloff = Math.max(0, 1 - d / 0.35); // range of influence
+      if (falloff > 0) {
+        twistAngle += (tp.rotation * Math.PI / 180) * falloff;
+        twistScale += (tp.scale - 1) * falloff;
+      }
+    });
+  }
+  
+  // Rotate offset by tangent angle change and twistAngle
+  const totalAngle = twistAngle;
+  const cosA = Math.cos(totalAngle);
+  const sinA = Math.sin(totalAngle);
+  
+  const rotatedOffset = {
+    x: (offset.x * cosA - offset.y * sinA) * twistScale,
+    y: (offset.x * sinA + offset.y * cosA) * twistScale
+  };
+  
+  return {
+    x: Number((curPt.x + rotatedOffset.x).toFixed(2)),
+    y: Number((curPt.y + rotatedOffset.y).toFixed(2))
+  };
+};
+
 // Cage deformation helper using Shepard's Inverse Distance Weighting (IDW)
 const deformWithCage = (p: Point, cageState: any): Point => {
   if (!cageState || !cageState.points || cageState.points.length === 0) return p;
@@ -1046,12 +1150,17 @@ export default function CanvasArea({
   const [isDrawingLasso, setIsDrawingLasso] = useState(false);
   
   // Transform & drag gesture state
-  const [dragMode, setDragMode] = useState<'none' | 'move' | 'rotate' | 'scale' | 'pivot' | 'pin' | 'meshPoint' | 'meshGridPoint' | 'puppetPin' | 'lassoControlPoint' | 'directRigBone' | 'zoom' | 'pan' | 'paintColor' | 'smartWarpPin'>('none');
+  const [dragMode, setDragMode] = useState<'none' | 'move' | 'rotate' | 'scale' | 'pivot' | 'pin' | 'meshPoint' | 'meshGridPoint' | 'puppetPin' | 'lassoControlPoint' | 'directRigBone' | 'zoom' | 'pan' | 'paintColor' | 'smartWarpPin' | 'splineHandle' | 'latticePoint'>('none');
   const [dragStartPoint, setDragStartPoint] = useState<Point>({ x: 0, y: 0 });
   const [initialTransform, setInitialTransform] = useState<any>(null);
   const [activeHandleIndex, setActiveHandleIndex] = useState<number | null>(null);
   const [draggedMeshPointIndex, setDraggedMeshPointIndex] = useState<number | null>(null);
   const [draggedDirectRigBoneId, setDraggedDirectRigBoneId] = useState<string | null>(null);
+  
+  // Spline editing states
+  const [draggedSplineIndex, setDraggedSplineIndex] = useState<number | null>(null);
+  const [draggedSplinePart, setDraggedSplinePart] = useState<'start' | 'end' | 'cp1' | 'cp2' | 'twist' | null>(null);
+  const [draggedTwistIndex, setDraggedTwistIndex] = useState<number | null>(null);
   
   // Selection anti-unselect 3-tap counter
   const [tapCount, setTapCount] = useState<number>(0);
@@ -1792,8 +1901,28 @@ export default function CanvasArea({
           }
         }
         
-        // 1. If mesh wrap grid is active, prioritize dragging mesh grid control points!
+        // 1. If mesh wrap grid is active, prioritize dragging mesh grid control points or lattice points!
         else if (obj.meshState && obj.meshState.active) {
+          // Check lattice points first if in lattice mode
+          if (obj.meshState.editMode === 'lattice' && obj.meshState.latticePoints && obj.meshState.latticePoints.length > 0) {
+            let clickedLptIdx = -1;
+            let minLptDist = 14;
+            obj.meshState.latticePoints.forEach((lpt: any, idx: number) => {
+              const worldPt = localToWorld({ x: lpt.x, y: lpt.y }, obj.transform, obj.pivots[0]);
+              const d = distance(coords, worldPt);
+              if (d < minLptDist) {
+                minLptDist = d;
+                clickedLptIdx = idx;
+              }
+            });
+            if (clickedLptIdx !== -1) {
+              setDragMode('latticePoint');
+              setDraggedMeshPointIndex(clickedLptIdx);
+              setDragStartPoint(coords);
+              return;
+            }
+          }
+
           let clickedMptIndex = -1;
           let minMptDist = 14; // Pixels threshold in world space
           obj.meshState.points.forEach((mpt, idx) => {
@@ -1856,6 +1985,74 @@ export default function CanvasArea({
       }
 
       // If we didn't drag any mesh point, select drawing
+      const clickedObj = performHitTest(coords);
+      if (clickedObj) {
+        setSelectedObjectId(clickedObj.id);
+      }
+      return;
+    }
+
+    // 9.6. Spline Reshape Tool pointer down logic
+    if (activeTool === 'SPL') {
+      if (selectedObjectId && objects[selectedObjectId]) {
+        const obj = objects[selectedObjectId];
+        const pivot = obj.pivots[0] || { localX: 0, localY: 0 };
+        
+        // A. Check if we clicked a Twist Point marker
+        if (obj.splineTwistPoints && obj.splineTwistPoints.length > 0 && obj.splineControlPoints) {
+          let clickedTwistIdx = -1;
+          let minTwistDist = 14;
+          obj.splineTwistPoints.forEach((tp: any, idx: number) => {
+            const localPos = evaluateSplineCurrent(obj.splineControlPoints!, tp.t);
+            const worldPt = localToWorld(localPos, obj.transform, pivot);
+            const d = distance(coords, worldPt);
+            if (d < minTwistDist) {
+              minTwistDist = d;
+              clickedTwistIdx = idx;
+            }
+          });
+          if (clickedTwistIdx !== -1) {
+            setDragMode('splineHandle');
+            setDraggedSplineIndex(clickedTwistIdx);
+            setDraggedSplinePart('twist');
+            setDragStartPoint(coords);
+            return;
+          }
+        }
+        
+        // B. Check if we clicked any control points or handles
+        if (obj.splineControlPoints && obj.splineControlPoints.length > 0) {
+          let clickedSegIdx = -1;
+          let clickedPart: 'start' | 'end' | 'cp1' | 'cp2' | null = null;
+          let minDist = 14;
+          
+          obj.splineControlPoints.forEach((seg: any, idx: number) => {
+            const worldStart = localToWorld(seg.start, obj.transform, pivot);
+            const worldEnd = localToWorld(seg.end, obj.transform, pivot);
+            const worldCp1 = localToWorld(seg.cp1, obj.transform, pivot);
+            const worldCp2 = localToWorld(seg.cp2, obj.transform, pivot);
+            
+            const dStart = distance(coords, worldStart);
+            const dEnd = distance(coords, worldEnd);
+            const dCp1 = distance(coords, worldCp1);
+            const dCp2 = distance(coords, worldCp2);
+            
+            if (dStart < minDist) { minDist = dStart; clickedSegIdx = idx; clickedPart = 'start'; }
+            if (dEnd < minDist) { minDist = dEnd; clickedSegIdx = idx; clickedPart = 'end'; }
+            if (dCp1 < minDist) { minDist = dCp1; clickedSegIdx = idx; clickedPart = 'cp1'; }
+            if (dCp2 < minDist) { minDist = dCp2; clickedSegIdx = idx; clickedPart = 'cp2'; }
+          });
+          
+          if (clickedSegIdx !== -1 && clickedPart) {
+            setDragMode('splineHandle');
+            setDraggedSplineIndex(clickedSegIdx);
+            setDraggedSplinePart(clickedPart);
+            setDragStartPoint(coords);
+            return;
+          }
+        }
+      }
+      
       const clickedObj = performHitTest(coords);
       if (clickedObj) {
         setSelectedObjectId(clickedObj.id);
@@ -2279,14 +2476,76 @@ export default function CanvasArea({
         const localPos = worldToLocal(coords, obj.transform, obj.pivots[0]);
         setObjects(prev => {
           if (!prev[selectedObjectId]) return prev;
-          const updatedMeshStatePoints = [...prev[selectedObjectId].meshState!.points];
-          if (updatedMeshStatePoints[draggedMeshPointIndex]) {
-            updatedMeshStatePoints[draggedMeshPointIndex] = {
-              ...updatedMeshStatePoints[draggedMeshPointIndex],
-              currentX: Number(localPos.x.toFixed(2)),
-              currentY: Number(localPos.y.toFixed(2))
-            };
+          const originalPoints = prev[selectedObjectId].meshState!.points;
+          const updatedMeshStatePoints = originalPoints.map(p => ({ ...p }));
+          
+          const targetPoint = updatedMeshStatePoints[draggedMeshPointIndex];
+          if (targetPoint) {
+            const dx = localPos.x - targetPoint.currentX;
+            const dy = localPos.y - targetPoint.currentY;
+            
+            // Direct drag on target
+            targetPoint.currentX = Number(localPos.x.toFixed(2));
+            targetPoint.currentY = Number(localPos.y.toFixed(2));
+            
+            // Soft-selection Node mode with falloff
+            const editMode = prev[selectedObjectId].meshState!.editMode || 'node';
+            const falloffRadius = prev[selectedObjectId].meshState!.falloffRadius || 0;
+            if (editMode === 'node' && falloffRadius > 0) {
+              const origX = targetPoint.originalX;
+              const origY = targetPoint.originalY;
+              
+              updatedMeshStatePoints.forEach((mpt, idx) => {
+                if (idx === draggedMeshPointIndex) return;
+                const d = Math.sqrt((mpt.originalX - origX) ** 2 + (mpt.originalY - origY) ** 2);
+                if (d < falloffRadius) {
+                  const weight = Math.pow(1 - d / falloffRadius, 2); // quadratic falloff
+                  mpt.currentX = Number((mpt.currentX + dx * weight).toFixed(2));
+                  mpt.currentY = Number((mpt.currentY + dy * weight).toFixed(2));
+                }
+              });
+            }
+            
+            // Symmetry Active Mirroring
+            const symmetryActive = prev[selectedObjectId].meshState!.symmetryActive;
+            const symmetryAxis = prev[selectedObjectId].meshState!.symmetryAxis || 'horizontal';
+            if (symmetryActive) {
+              // Estimate center of mesh points
+              let sumOrigX = 0, sumOrigY = 0;
+              originalPoints.forEach(p => { sumOrigX += p.originalX; sumOrigY += p.originalY; });
+              const centerX = sumOrigX / originalPoints.length;
+              const centerY = sumOrigY / originalPoints.length;
+              
+              const origTargetX = targetPoint.originalX;
+              const origTargetY = targetPoint.originalY;
+              
+              // Symmetrical coordinates
+              const symOrigX = symmetryAxis === 'horizontal' ? (2 * centerX - origTargetX) : origTargetX;
+              const symOrigY = symmetryAxis === 'vertical' ? (2 * centerY - origTargetY) : origTargetY;
+              
+              // Find the point closest to the symmetrical coordinates
+              let closestIdx = -1;
+              let minD = Infinity;
+              updatedMeshStatePoints.forEach((mpt, idx) => {
+                if (idx === draggedMeshPointIndex) return;
+                const d = Math.sqrt((mpt.originalX - symOrigX) ** 2 + (mpt.originalY - symOrigY) ** 2);
+                if (d < minD) {
+                  minD = d;
+                  closestIdx = idx;
+                }
+              });
+              
+              if (closestIdx !== -1) {
+                const symPt = updatedMeshStatePoints[closestIdx];
+                const symDx = symmetryAxis === 'horizontal' ? -dx : dx;
+                const symDy = symmetryAxis === 'vertical' ? -dy : dy;
+                
+                symPt.currentX = Number((symPt.currentX + symDx).toFixed(2));
+                symPt.currentY = Number((symPt.currentY + symDy).toFixed(2));
+              }
+            }
           }
+          
           return {
             ...prev,
             [selectedObjectId]: {
@@ -2295,6 +2554,184 @@ export default function CanvasArea({
                 ...prev[selectedObjectId].meshState!,
                 points: updatedMeshStatePoints
               }
+            }
+          };
+        });
+      }
+      return;
+    }
+
+    if (dragMode === 'latticePoint' && selectedObjectId && draggedMeshPointIndex !== null) {
+      const obj = objects[selectedObjectId];
+      if (obj && obj.meshState && obj.meshState.latticePoints) {
+        const localPos = worldToLocal(coords, obj.transform, obj.pivots[0]);
+        setObjects(prev => {
+          if (!prev[selectedObjectId] || !prev[selectedObjectId].meshState?.latticePoints) return prev;
+          
+          const updatedLatticePoints = prev[selectedObjectId].meshState!.latticePoints!.map(p => ({ ...p }));
+          const targetLpt = updatedLatticePoints[draggedMeshPointIndex];
+          if (!targetLpt) return prev;
+          
+          const dx = localPos.x - targetLpt.x;
+          const dy = localPos.y - targetLpt.y;
+          
+          // Update the dragged lattice point
+          targetLpt.x = Number(localPos.x.toFixed(2));
+          targetLpt.y = Number(localPos.y.toFixed(2));
+          
+          // Deform underlying mesh points using Inverse Distance Weighting (IDW) from all lattice points
+          const updatedMeshPoints = prev[selectedObjectId].meshState!.points.map(mpt => {
+            let totalWeight = 0;
+            let meshDx = 0;
+            let meshDy = 0;
+            
+            // Check if mesh point is exactly at any lattice point
+            for (let k = 0; k < updatedLatticePoints.length; k++) {
+              const lpt = updatedLatticePoints[k];
+              const dist = Math.sqrt((mpt.originalX - lpt.originalX) ** 2 + (mpt.originalY - lpt.originalY) ** 2);
+              if (dist < 1.0) {
+                const curLptDx = lpt.x - lpt.originalX;
+                const curLptDy = lpt.y - lpt.originalY;
+                return {
+                  ...mpt,
+                  currentX: Number((mpt.originalX + curLptDx).toFixed(2)),
+                  currentY: Number((mpt.originalY + curLptDy).toFixed(2))
+                };
+              }
+            }
+            
+            for (let k = 0; k < updatedLatticePoints.length; k++) {
+              const lpt = updatedLatticePoints[k];
+              const dist = Math.sqrt((mpt.originalX - lpt.originalX) ** 2 + (mpt.originalY - lpt.originalY) ** 2);
+              const w = 1.0 / Math.pow(dist, 2); // inverse distance squared weight
+              totalWeight += w;
+              meshDx += (lpt.x - lpt.originalX) * w;
+              meshDy += (lpt.y - lpt.originalY) * w;
+            }
+            
+            if (totalWeight > 0) {
+              meshDx /= totalWeight;
+              meshDy /= totalWeight;
+            }
+            
+            return {
+              ...mpt,
+              currentX: Number((mpt.originalX + meshDx).toFixed(2)),
+              currentY: Number((mpt.originalY + meshDy).toFixed(2))
+            };
+          });
+          
+          return {
+            ...prev,
+            [selectedObjectId]: {
+              ...prev[selectedObjectId],
+              meshState: {
+                ...prev[selectedObjectId].meshState!,
+                latticePoints: updatedLatticePoints,
+                points: updatedMeshPoints
+              }
+            }
+          };
+        });
+      }
+      return;
+    }
+
+    if (dragMode === 'splineHandle' && selectedObjectId && draggedSplineIndex !== null && draggedSplinePart) {
+      const obj = objects[selectedObjectId];
+      if (obj && obj.splineControlPoints) {
+        const localPos = worldToLocal(coords, obj.transform, obj.pivots[0]);
+        setObjects(prev => {
+          if (!prev[selectedObjectId] || !prev[selectedObjectId].splineControlPoints) return prev;
+          
+          const updatedSplineCPs = prev[selectedObjectId].splineControlPoints!.map(cp => ({
+            start: { ...cp.start },
+            cp1: { ...cp.cp1 },
+            cp2: { ...cp.cp2 },
+            end: { ...cp.end }
+          }));
+          
+          // Twist point dragging
+          if (draggedSplinePart === 'twist') {
+            const updatedTwists = prev[selectedObjectId].splineTwistPoints!.map(tp => ({ ...tp }));
+            const tp = updatedTwists[draggedSplineIndex];
+            if (tp) {
+              const dx = coords.x - dragStartPoint.x;
+              const dy = coords.y - dragStartPoint.y;
+              tp.rotation = Number((tp.rotation + dx * 0.5).toFixed(1));
+              tp.scale = Number(Math.max(0.1, tp.scale - dy * 0.01).toFixed(2));
+            }
+            return {
+              ...prev,
+              [selectedObjectId]: {
+                ...prev[selectedObjectId],
+                splineTwistPoints: updatedTwists
+              }
+            };
+          }
+          
+          const seg = updatedSplineCPs[draggedSplineIndex];
+          if (!seg) return prev;
+          
+          // Uniform stretch logic on dragging end point of last segment
+          if (prev[selectedObjectId].splineUniformStretch && draggedSplinePart === 'end' && draggedSplineIndex === updatedSplineCPs.length - 1) {
+            const startPt = updatedSplineCPs[0].start;
+            const oldEndPt = seg.end;
+            const newEndPt = localPos;
+            
+            const dOld = { x: oldEndPt.x - startPt.x, y: oldEndPt.y - startPt.y };
+            const dNew = { x: newEndPt.x - startPt.x, y: newEndPt.y - startPt.y };
+            
+            const lenOld = Math.sqrt(dOld.x * dOld.x + dOld.y * dOld.y);
+            const lenNew = Math.sqrt(dNew.x * dNew.x + dNew.y * dNew.y);
+            
+            if (lenOld > 1) {
+              const scale = lenNew / lenOld;
+              const angleOld = Math.atan2(dOld.y, dOld.x);
+              const angleNew = Math.atan2(dNew.y, dNew.x);
+              const dAngle = angleNew - angleOld;
+              
+              for (let i = 0; i < updatedSplineCPs.length; i++) {
+                const transformPt = (pt: Point) => {
+                  const dx = pt.x - startPt.x;
+                  const dy = pt.y - startPt.y;
+                  const r = Math.sqrt(dx * dx + dy * dy) * scale;
+                  const a = Math.atan2(dy, dx) + dAngle;
+                  return { x: startPt.x + r * Math.cos(a), y: startPt.y + r * Math.sin(a) };
+                };
+                
+                updatedSplineCPs[i] = {
+                  start: i === 0 ? startPt : transformPt(updatedSplineCPs[i].start),
+                  cp1: transformPt(updatedSplineCPs[i].cp1),
+                  cp2: transformPt(updatedSplineCPs[i].cp2),
+                  end: transformPt(updatedSplineCPs[i].end)
+                };
+              }
+            }
+          } else {
+            // Standard point/handle update
+            if (draggedSplinePart === 'start') {
+              seg.start = localPos;
+              if (draggedSplineIndex > 0) {
+                updatedSplineCPs[draggedSplineIndex - 1].end = localPos;
+              }
+            } else if (draggedSplinePart === 'end') {
+              seg.end = localPos;
+              if (draggedSplineIndex < updatedSplineCPs.length - 1) {
+                updatedSplineCPs[draggedSplineIndex + 1].start = localPos;
+              }
+            } else if (draggedSplinePart === 'cp1') {
+              seg.cp1 = localPos;
+            } else if (draggedSplinePart === 'cp2') {
+              seg.cp2 = localPos;
+            }
+          }
+          
+          return {
+            ...prev,
+            [selectedObjectId]: {
+              ...prev[selectedObjectId],
+              splineControlPoints: updatedSplineCPs
             }
           };
         });
@@ -3230,7 +3667,7 @@ export default function CanvasArea({
       setElasticWarningId(null);
     }
 
-    if (dragMode === 'meshPoint' || dragMode === 'meshGridPoint' || dragMode === 'puppetPin' || dragMode === 'lassoControlPoint' || dragMode === 'smartWarpPin' || dragMode === 'paintColor') {
+    if (dragMode === 'meshPoint' || dragMode === 'meshGridPoint' || dragMode === 'puppetPin' || dragMode === 'lassoControlPoint' || dragMode === 'smartWarpPin' || dragMode === 'paintColor' || dragMode === 'latticePoint' || dragMode === 'splineHandle') {
       if (dragMode === 'meshPoint' && selectedObjectId && draggedMeshPointIndex !== null) {
         const obj = objects[selectedObjectId];
         if (obj && obj.type === '3d' && obj.vertices3D && adaptiveSubdivisionEnabled) {
@@ -3361,6 +3798,9 @@ export default function CanvasArea({
 
       setDragMode('none');
       setDraggedMeshPointIndex(null);
+      setDraggedSplineIndex(null);
+      setDraggedSplinePart(null);
+      setDraggedTwistIndex(null);
       setIsPlayingState(false);
       historyPush();
     }
@@ -3649,6 +4089,8 @@ export default function CanvasArea({
         localPoints = drawObj.points.map(p => deformWithCage(p, drawObj.cageState));
       } else if (drawObj.meshState && drawObj.meshState.active) {
         localPoints = drawObj.points.map(p => getWarpedPoint(p, drawObj.meshState, bounds));
+      } else if (drawObj.splineActive && drawObj.splineControlPoints && drawObj.splineControlPoints.length > 0) {
+        localPoints = drawObj.points.map((p, idx) => deformWithSpline(p, drawObj, idx, drawObj.points.length));
       } else if (drawObj.pins && drawObj.pins.length > 0) {
         localPoints = drawObj.points.map(p => deformWithPuppetPins(p, drawObj.pins));
       } else if (drawObj.smartWarp && drawObj.smartWarp.pins && drawObj.smartWarp.pins.length > 0) {
@@ -3686,6 +4128,8 @@ export default function CanvasArea({
             } else if (drawObj.meshState && drawObj.meshState.active) {
               const subBounds = calculateBoundingBox(sub);
               localSubPoints = sub.map(p => getWarpedPoint(p, drawObj.meshState, subBounds));
+            } else if (drawObj.splineActive && drawObj.splineControlPoints && drawObj.splineControlPoints.length > 0) {
+              localSubPoints = sub.map((p, idx) => deformWithSpline(p, drawObj, idx, sub.length));
             } else if (drawObj.pins && drawObj.pins.length > 0) {
               localSubPoints = sub.map(p => deformWithPuppetPins(p, drawObj.pins));
             } else if (drawObj.smartWarp && drawObj.smartWarp.pins && drawObj.smartWarp.pins.length > 0) {
@@ -4431,8 +4875,8 @@ export default function CanvasArea({
           ctx.stroke();
         }
         
-        // 2. Draw Mesh Grid points
-        if (showPoints) {
+        // 2. Draw Mesh Grid points (only in node mode)
+        if (showPoints && obj.meshState.editMode !== 'lattice') {
           worldMeshPoints.forEach((mpt, idx) => {
             const isSelected = selectedDeformPointIndex === idx && selectedDeformPointType === 'grid';
             ctx.beginPath();
@@ -4444,6 +4888,78 @@ export default function CanvasArea({
             ctx.stroke();
           });
         }
+
+        // 3. Render Lattice Overlay Grid & Handles (if in lattice mode)
+        if (obj.meshState.editMode === 'lattice' && obj.meshState.latticePoints && obj.meshState.latticePoints.length > 0) {
+          const lpts = obj.meshState.latticePoints;
+          const worldLatticePoints = lpts.map((lpt: any) => {
+            return localToWorld({ x: lpt.x, y: lpt.y }, obj.transform, obj.pivots[0]);
+          });
+
+          // Draw green grid for lattice
+          ctx.beginPath();
+          ctx.strokeStyle = '#10B981'; // Green-500
+          ctx.lineWidth = 1.8;
+          ctx.setLineDash([4, 4]);
+          
+          // Connect standard lattice boundaries (assuming a grid based on density or density-like layout)
+          // For general stability, we connect points that are closely aligned or simply connect all lattice points in sequence
+          for (let i = 0; i < worldLatticePoints.length; i++) {
+            for (let j = i + 1; j < worldLatticePoints.length; j++) {
+              // Draw line if they are adjacent in the original grid
+              const origDist = Math.sqrt((lpts[i].originalX - lpts[j].originalX) ** 2 + (lpts[i].originalY - lpts[j].originalY) ** 2);
+              if (origDist < 80) { // arbitrary connection threshold for lattice grid adjacency
+                ctx.moveTo(worldLatticePoints[i].x, worldLatticePoints[i].y);
+                ctx.lineTo(worldLatticePoints[j].x, worldLatticePoints[j].y);
+              }
+            }
+          }
+          ctx.stroke();
+          ctx.setLineDash([]); // Reset
+
+          // Draw lattice handle dots
+          worldLatticePoints.forEach((lpt, idx) => {
+            const isSelected = dragMode === 'latticePoint' && draggedMeshPointIndex === idx;
+            ctx.beginPath();
+            ctx.arc(lpt.x, lpt.y, isSelected ? 9 : 7, 0, Math.PI * 2);
+            ctx.fillStyle = '#10B981'; // Emerald Green
+            ctx.fill();
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+          });
+        }
+
+        // 4. Draw Symmetry Axis Guide
+        if (obj.meshState.symmetryActive) {
+          // Find center of current bounding box
+          let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+          worldMeshPoints.forEach(p => {
+            if (p.x < minX) minX = p.x;
+            if (p.x > maxX) maxX = p.x;
+            if (p.y < minY) minY = p.y;
+            if (p.y > maxY) maxY = p.y;
+          });
+          const midX = (minX + maxX) / 2;
+          const midY = (minY + maxY) / 2;
+
+          ctx.beginPath();
+          ctx.strokeStyle = '#EF4444'; // Red Symmetry line
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([5, 5]);
+          if (obj.meshState.symmetryAxis === 'horizontal') {
+            // Vertical symmetry line (mirrors left to right)
+            ctx.moveTo(midX, minY - 30);
+            ctx.lineTo(midX, maxY + 30);
+          } else {
+            // Horizontal symmetry line (mirrors top to bottom)
+            ctx.moveTo(minX - 30, midY);
+            ctx.lineTo(maxX + 30, midY);
+          }
+          ctx.stroke();
+          ctx.setLineDash([]); // Reset
+        }
+
         ctx.restore();
       } else {
         // Draw standard vector outline if no active mesh grid
@@ -4477,6 +4993,95 @@ export default function CanvasArea({
           ctx.fillStyle = '#FFFFFF';
           ctx.fill();
         });
+        ctx.restore();
+      }
+    }
+
+    // Render active Spline Reshape overlay (Bezier curve path, control handles, Twist points)
+    if (activeTool === 'SPL' && effectiveSelectedObjectId && objects[effectiveSelectedObjectId]) {
+      const obj = objects[effectiveSelectedObjectId];
+      if (obj.splineActive && obj.splineControlPoints && obj.splineControlPoints.length > 0) {
+        const pivot = obj.pivots[0] || { localX: 0, localY: 0 };
+        ctx.save();
+        
+        // 1. Draw spline control segments and handles
+        obj.splineControlPoints.forEach((seg: any, idx: number) => {
+          const worldStart = localToWorld(seg.start, obj.transform, pivot);
+          const worldEnd = localToWorld(seg.end, obj.transform, pivot);
+          const worldCp1 = localToWorld(seg.cp1, obj.transform, pivot);
+          const worldCp2 = localToWorld(seg.cp2, obj.transform, pivot);
+          
+          // Draw dashed lines from points to control handles
+          ctx.beginPath();
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([2, 3]);
+          ctx.moveTo(worldStart.x, worldStart.y);
+          ctx.lineTo(worldCp1.x, worldCp1.y);
+          ctx.moveTo(worldEnd.x, worldEnd.y);
+          ctx.lineTo(worldCp2.x, worldCp2.y);
+          ctx.stroke();
+          ctx.setLineDash([]); // Reset
+          
+          // Draw on-curve spline points
+          ctx.beginPath();
+          ctx.arc(worldStart.x, worldStart.y, (dragMode === 'splineHandle' && draggedSplineIndex === idx && draggedSplinePart === 'start') ? 8 : 6, 0, Math.PI * 2);
+          ctx.fillStyle = '#06B6D4'; // Cyan
+          ctx.fill();
+          ctx.strokeStyle = '#FFFFFF';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+
+          ctx.beginPath();
+          ctx.arc(worldEnd.x, worldEnd.y, (dragMode === 'splineHandle' && draggedSplineIndex === idx && draggedSplinePart === 'end') ? 8 : 6, 0, Math.PI * 2);
+          ctx.fillStyle = '#06B6D4'; // Cyan
+          ctx.fill();
+          ctx.strokeStyle = '#FFFFFF';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+          
+          // Draw control handles (cp1, cp2) as small squares
+          const drawHandleSquare = (pt: Point, active: boolean) => {
+            const size = active ? 8 : 6;
+            ctx.beginPath();
+            ctx.rect(pt.x - size / 2, pt.y - size / 2, size, size);
+            ctx.fillStyle = '#E11D48'; // Rose
+            ctx.fill();
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 1.2;
+            ctx.stroke();
+          };
+          
+          drawHandleSquare(worldCp1, dragMode === 'splineHandle' && draggedSplineIndex === idx && draggedSplinePart === 'cp1');
+          drawHandleSquare(worldCp2, dragMode === 'splineHandle' && draggedSplineIndex === idx && draggedSplinePart === 'cp2');
+        });
+        
+        // 2. Draw Twist Points
+        if (obj.splineTwistPoints && obj.splineTwistPoints.length > 0) {
+          obj.splineTwistPoints.forEach((tp: any, twistIdx: number) => {
+            const localPos = evaluateSplineCurrent(obj.splineControlPoints!, tp.t);
+            const worldPt = localToWorld(localPos, obj.transform, pivot);
+            
+            const isDragged = (dragMode === 'splineHandle' && draggedSplineIndex === twistIdx && draggedSplinePart === 'twist');
+            ctx.beginPath();
+            ctx.arc(worldPt.x, worldPt.y, isDragged ? 10 : 8, 0, Math.PI * 2);
+            ctx.fillStyle = '#A855F7'; // Purple
+            ctx.fill();
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+            
+            // Draw a tiny line indicating twist angle
+            ctx.beginPath();
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = '#FFFFFF';
+            const rad = (tp.rotation * Math.PI / 180);
+            ctx.moveTo(worldPt.x, worldPt.y);
+            ctx.lineTo(worldPt.x + Math.cos(rad) * 12, worldPt.y + Math.sin(rad) * 12);
+            ctx.stroke();
+          });
+        }
+        
         ctx.restore();
       }
     }

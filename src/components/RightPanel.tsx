@@ -1048,7 +1048,78 @@ export default function RightPanel({
         pointSize: 30,
         showGrid: true,
         showPoints: true,
-        previewMode: true
+        previewMode: true,
+        editMode: 'node',
+        falloffRadius: 100,
+        symmetryActive: false,
+        symmetryAxis: 'horizontal'
+      }
+    });
+  };
+
+  const handleInitSpline = (segmentsCount: number = 3) => {
+    if (!selectedObject) return;
+    const bounds = calculateBoundingBox(selectedObject.points);
+    const startX = bounds.x;
+    const endX = bounds.x + bounds.width;
+    const midY = bounds.y + bounds.height / 2;
+    
+    const splineControlPoints: any[] = [];
+    const stepX = bounds.width / segmentsCount;
+    
+    for (let i = 0; i < segmentsCount; i++) {
+      const segStart = { x: startX + i * stepX, y: midY };
+      const segEnd = { x: startX + (i + 1) * stepX, y: midY };
+      
+      splineControlPoints.push({
+        start: segStart,
+        cp1: { x: segStart.x + stepX * 0.33, y: midY },
+        cp2: { x: segEnd.x - stepX * 0.33, y: midY },
+        end: segEnd
+      });
+    }
+    
+    const splineTwistPoints = [
+      { id: 'twist_0', t: 0.25, rotation: 0, scale: 1.0 },
+      { id: 'twist_1', t: 0.5, rotation: 0, scale: 1.0 },
+      { id: 'twist_2', t: 0.75, rotation: 0, scale: 1.0 }
+    ];
+    
+    updateObject(selectedObject.id, {
+      splineActive: true,
+      splineControlPoints,
+      splineTwistPoints,
+      splineUniformStretch: true,
+      splineOriginalPoints: JSON.parse(JSON.stringify(selectedObject.points))
+    });
+  };
+
+  const handleInitLattice = (densityX: number = 4, densityY: number = 4) => {
+    if (!selectedObject || !selectedObject.meshState) return;
+    const bounds = calculateBoundingBox(selectedObject.points);
+    const stepX = bounds.width / (densityX - 1);
+    const stepY = bounds.height / (densityY - 1);
+    const latticePoints: any[] = [];
+    
+    for (let y = 0; y < densityY; y++) {
+      for (let x = 0; x < densityX; x++) {
+        const px = bounds.x + x * stepX;
+        const py = bounds.y + y * stepY;
+        latticePoints.push({
+          id: `lpt_${Date.now()}_${y}_${x}`,
+          originalX: px,
+          originalY: py,
+          x: px,
+          y: py
+        });
+      }
+    }
+    
+    updateObject(selectedObject.id, {
+      meshState: {
+        ...selectedObject.meshState,
+        editMode: 'lattice',
+        latticePoints
       }
     });
   };
@@ -1908,6 +1979,128 @@ export default function RightPanel({
                       </div>
                     ) : (
                       <div className="space-y-4 text-xs">
+                        {/* Edit Mode Selector (Node vs Lattice) */}
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] text-neutral-400 block font-black uppercase tracking-wide">Deformation Edit Mode:</label>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <button
+                              onClick={() => updateObject(selectedObject.id, {
+                                meshState: {
+                                  ...selectedObject.meshState!,
+                                  editMode: 'node'
+                                }
+                              })}
+                              className={`py-1.5 text-[10px] font-black rounded-lg transition-all ${
+                                (selectedObject.meshState.editMode || 'node') === 'node'
+                                  ? 'bg-amber-500 text-neutral-950'
+                                  : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+                              }`}
+                            >
+                              DIRECT NODE
+                            </button>
+                            <button
+                              onClick={() => {
+                                handleInitLattice(4, 4);
+                              }}
+                              className={`py-1.5 text-[10px] font-black rounded-lg transition-all ${
+                                selectedObject.meshState.editMode === 'lattice'
+                                  ? 'bg-amber-500 text-neutral-950'
+                                  : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+                              }`}
+                            >
+                              LATTICE CAGE
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Node-specific controls */}
+                        {(selectedObject.meshState.editMode || 'node') === 'node' && (
+                          <div className="space-y-3 bg-neutral-900/40 p-3 rounded-xl border border-neutral-800/60">
+                            {/* Falloff Radius */}
+                            <div className="space-y-1">
+                              <div className="flex items-center justify-between text-[10px] text-neutral-400">
+                                <span className="font-bold">Soft Selection Falloff</span>
+                                <span className="text-amber-400 font-bold">{selectedObject.meshState.falloffRadius ?? 100}px</span>
+                              </div>
+                              <input
+                                type="range"
+                                min="0"
+                                max="400"
+                                value={selectedObject.meshState.falloffRadius ?? 100}
+                                onChange={(e) => updateObject(selectedObject.id, {
+                                  meshState: {
+                                    ...selectedObject.meshState!,
+                                    falloffRadius: parseInt(e.target.value)
+                                  }
+                                })}
+                                className="w-full accent-amber-500"
+                              />
+                            </div>
+
+                            {/* Symmetry */}
+                            <div className="space-y-2 pt-1 border-t border-neutral-800/40">
+                              <label className="flex items-center gap-2 text-[10px] text-neutral-300 select-none cursor-pointer font-bold">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedObject.meshState.symmetryActive ?? false}
+                                  onChange={(e) => updateObject(selectedObject.id, {
+                                    meshState: {
+                                      ...selectedObject.meshState!,
+                                      symmetryActive: e.target.checked
+                                    }
+                                  })}
+                                  className="accent-amber-500 rounded border-neutral-800"
+                                />
+                                <span>Enable Symmetry Mapping</span>
+                              </label>
+
+                              {selectedObject.meshState.symmetryActive && (
+                                <div className="flex items-center gap-3 pl-5">
+                                  <span className="text-[9px] text-neutral-400 uppercase font-black">Axis:</span>
+                                  <label className="flex items-center gap-1 text-[10px] text-neutral-300 cursor-pointer">
+                                    <input
+                                      type="radio"
+                                      name="symmetryAxis"
+                                      checked={(selectedObject.meshState.symmetryAxis || 'horizontal') === 'horizontal'}
+                                      onChange={() => updateObject(selectedObject.id, {
+                                        meshState: {
+                                          ...selectedObject.meshState!,
+                                          symmetryAxis: 'horizontal'
+                                        }
+                                      })}
+                                      className="accent-amber-500"
+                                    />
+                                    <span>Horizontal (X)</span>
+                                  </label>
+                                  <label className="flex items-center gap-1 text-[10px] text-neutral-300 cursor-pointer">
+                                    <input
+                                      type="radio"
+                                      name="symmetryAxis"
+                                      checked={selectedObject.meshState.symmetryAxis === 'vertical'}
+                                      onChange={() => updateObject(selectedObject.id, {
+                                        meshState: {
+                                          ...selectedObject.meshState!,
+                                          symmetryAxis: 'vertical'
+                                        }
+                                      })}
+                                      className="accent-amber-500"
+                                    />
+                                    <span>Vertical (Y)</span>
+                                  </label>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Lattice Mode Indicator */}
+                        {selectedObject.meshState.editMode === 'lattice' && (
+                          <div className="bg-emerald-950/20 border border-emerald-500/20 p-2.5 rounded-xl text-[10px] text-neutral-400 font-medium leading-relaxed">
+                            <span className="text-emerald-400 font-bold block mb-1">Lattice Control Active:</span>
+                            Drag the green lattice guide points on the canvas to warp the underlying geometry grid smoothly!
+                          </div>
+                        )}
+
                         {/* Point Size */}
                         <div className="space-y-1">
                           <div className="flex items-center justify-between text-xs text-neutral-400">
@@ -2018,6 +2211,259 @@ export default function RightPanel({
                               // Cancel deformation
                               updateObject(selectedObject.id, {
                                 meshState: undefined
+                              });
+                              setActiveTool('SEL');
+                            }}
+                            className="py-2 bg-neutral-800 text-neutral-400 hover:text-white hover:bg-neutral-700 font-bold rounded-xl transition-all"
+                          >
+                            Discard
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* SPLINE RESHAPE OPTIONS */}
+                {activeTool === 'SPL' && (
+                  <div className="space-y-4 bg-cyan-500/5 p-4 rounded-2xl border border-cyan-400/20 shadow-lg shadow-black/20">
+                    <div className="flex items-center justify-between border-b border-cyan-500/10 pb-2.5">
+                      <span className="text-xs font-black uppercase tracking-wider text-cyan-400 flex items-center gap-1.5">
+                        <Sparkles className="w-4 h-4 text-cyan-500 animate-pulse" />
+                        SPLINE RESHAPE SYSTEM
+                      </span>
+                    </div>
+
+                    {!selectedObject.splineActive ? (
+                      <div className="space-y-3 text-xs">
+                        <p className="text-[10px] text-neutral-400 leading-normal font-bold">
+                          Convert target vectors into a parametric Bezier curve to deform, stretch, rotate, and twist vectors along the curve dynamically!
+                        </p>
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] text-neutral-400 block font-black uppercase tracking-wide">Spline Density Preset:</label>
+                          <div className="grid grid-cols-3 gap-1.5">
+                            <button
+                              onClick={() => handleInitSpline(2)}
+                              className="py-1.5 bg-neutral-800 hover:bg-cyan-500 hover:text-neutral-950 text-neutral-300 text-[10px] font-black rounded-lg transition-all"
+                            >
+                              LOW (2 SEG)
+                            </button>
+                            <button
+                              onClick={() => handleInitSpline(3)}
+                              className="py-1.5 bg-neutral-800 hover:bg-cyan-500 hover:text-neutral-950 text-neutral-300 text-[10px] font-black rounded-lg transition-all"
+                            >
+                              MED (3 SEG)
+                            </button>
+                            <button
+                              onClick={() => handleInitSpline(4)}
+                              className="py-1.5 bg-neutral-800 hover:bg-cyan-500 hover:text-neutral-950 text-neutral-300 text-[10px] font-black rounded-lg transition-all"
+                            >
+                              HIGH (4 SEG)
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-4 text-xs">
+                        {/* Uniform stretch toggle */}
+                        <label className="flex items-center gap-2 text-xs text-neutral-300 select-none cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={selectedObject.splineUniformStretch ?? true}
+                            onChange={(e) => updateObject(selectedObject.id, {
+                              splineUniformStretch: e.target.checked
+                            })}
+                            className="accent-cyan-500 rounded border-neutral-800"
+                          />
+                          <span>Uniform Conformal Stretch</span>
+                        </label>
+
+                        {/* Twist points display / sliders */}
+                        <div className="space-y-2.5 pt-1.5 border-t border-neutral-800/40">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-black uppercase text-neutral-400">Twist & Scale Points:</span>
+                            <button
+                              onClick={() => {
+                                const twists = [...(selectedObject.splineTwistPoints || [])];
+                                twists.push({ id: 'twist_' + Date.now(), t: 0.5, rotation: 45, scale: 1.2 });
+                                updateObject(selectedObject.id, { splineTwistPoints: twists });
+                              }}
+                              className="text-[9px] font-black text-cyan-400 hover:text-cyan-300 uppercase tracking-wide bg-cyan-950/40 px-2 py-0.5 rounded border border-cyan-800/30 transition-all"
+                            >
+                              + Add Twist Point
+                            </button>
+                          </div>
+
+                          <div className="max-h-[140px] overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                            {(selectedObject.splineTwistPoints || []).map((tp, idx) => (
+                              <div key={idx} className="bg-neutral-900/60 p-2 rounded-xl border border-neutral-800/60 space-y-1.5">
+                                <div className="flex items-center justify-between text-[9px] text-neutral-400 font-bold uppercase">
+                                  <span>Twist Point #{idx+1} (t: {tp.t.toFixed(2)})</span>
+                                  <button
+                                    onClick={() => {
+                                      const twists = (selectedObject.splineTwistPoints || []).filter((_, i) => i !== idx);
+                                      updateObject(selectedObject.id, { splineTwistPoints: twists });
+                                    }}
+                                    className="text-rose-500 hover:text-rose-400"
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                  {/* Rotation */}
+                                  <div className="space-y-0.5">
+                                    <div className="flex justify-between text-[8px] text-neutral-400">
+                                      <span>Rotation:</span>
+                                      <span className="text-cyan-400 font-bold">{tp.rotation}°</span>
+                                    </div>
+                                    <input
+                                      type="range"
+                                      min="-180"
+                                      max="180"
+                                      value={tp.rotation}
+                                      onChange={(e) => {
+                                        const twists = (selectedObject.splineTwistPoints || []).map((item, i) => 
+                                          i === idx ? { ...item, rotation: parseInt(e.target.value) } : item
+                                        );
+                                        updateObject(selectedObject.id, { splineTwistPoints: twists });
+                                      }}
+                                      className="w-full accent-cyan-500 scale-90"
+                                    />
+                                  </div>
+                                  {/* Scale */}
+                                  <div className="space-y-0.5">
+                                    <div className="flex justify-between text-[8px] text-neutral-400">
+                                      <span>Thickness:</span>
+                                      <span className="text-cyan-400 font-bold">{tp.scale.toFixed(1)}x</span>
+                                    </div>
+                                    <input
+                                      type="range"
+                                      min="10"
+                                      max="300"
+                                      value={tp.scale * 100}
+                                      onChange={(e) => {
+                                        const twists = (selectedObject.splineTwistPoints || []).map((item, i) => 
+                                          i === idx ? { ...item, scale: parseInt(e.target.value) / 100 } : item
+                                        );
+                                        updateObject(selectedObject.id, { splineTwistPoints: twists });
+                                      }}
+                                      className="w-full accent-cyan-500 scale-90"
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Done & Cancel buttons */}
+                        <div className="grid grid-cols-2 gap-2 pt-2 border-t border-neutral-800/40">
+                          <button
+                            onClick={() => {
+                              // Permanent baking logic of Spline warp
+                              const bounds = calculateBoundingBox(selectedObject.splineOriginalPoints || selectedObject.points);
+                              const minX = bounds.x;
+                              const maxX = bounds.x + bounds.width;
+                              const midY = bounds.y + bounds.height / 2;
+
+                              const evaluateCubicBezierLocal = (p0: Point, p1: Point, p2: Point, p3: Point, t: number): Point => {
+                                const mt = 1 - t;
+                                return {
+                                  x: mt * mt * mt * p0.x + 3 * mt * mt * t * p1.x + 3 * mt * t * t * p2.x + t * t * t * p3.x,
+                                  y: mt * mt * mt * p0.y + 3 * mt * mt * t * p1.y + 3 * mt * t * t * p2.y + t * t * t * p3.y
+                                };
+                              };
+
+                              const evaluateCubicBezierDerivativeLocal = (p0: Point, p1: Point, p2: Point, p3: Point, t: number): Point => {
+                                const mt = 1 - t;
+                                return {
+                                  x: 3 * mt * mt * (p1.x - p0.x) + 6 * mt * t * (p2.x - p1.x) + 3 * t * t * (p3.x - p2.x),
+                                  y: 3 * mt * mt * (p1.y - p0.y) + 6 * mt * t * (p2.y - p1.y) + 3 * t * t * (p3.y - p2.y)
+                                };
+                              };
+
+                              const getSplineWarpedLocal = (p: Point): Point => {
+                                if (!selectedObject.splineControlPoints || selectedObject.splineControlPoints.length === 0) return p;
+                                
+                                const width = bounds.width || 1;
+                                const t = Math.max(0, Math.min(1, (p.x - minX) / width));
+                                const perpOffset = p.y - midY;
+                                
+                                const segmentsCount = selectedObject.splineControlPoints.length;
+                                const rawSegmentT = t * segmentsCount;
+                                let segIndex = Math.floor(rawSegmentT);
+                                if (segIndex >= segmentsCount) segIndex = segmentsCount - 1;
+                                const localT = rawSegmentT - segIndex;
+                                
+                                const seg = selectedObject.splineControlPoints[segIndex];
+                                if (!seg) return p;
+                                
+                                const curvePt = evaluateCubicBezierLocal(seg.start, seg.cp1, seg.cp2, seg.end, localT);
+                                const tangent = evaluateCubicBezierDerivativeLocal(seg.start, seg.cp1, seg.cp2, seg.end, localT);
+                                const len = Math.sqrt(tangent.x * tangent.x + tangent.y * tangent.y) || 1;
+                                const normal = { x: -tangent.y / len, y: tangent.x / len };
+                                
+                                let interpolatedRotation = 0;
+                                let interpolatedScale = 1.0;
+                                
+                                const twists = selectedObject.splineTwistPoints || [];
+                                if (twists.length > 0) {
+                                  const sortedTwists = [...twists].sort((a, b) => a.t - b.t);
+                                  if (t <= sortedTwists[0].t) {
+                                    interpolatedRotation = sortedTwists[0].rotation;
+                                    interpolatedScale = sortedTwists[0].scale;
+                                  } else if (t >= sortedTwists[sortedTwists.length - 1].t) {
+                                    interpolatedRotation = sortedTwists[sortedTwists.length - 1].rotation;
+                                    interpolatedScale = sortedTwists[sortedTwists.length - 1].scale;
+                                  } else {
+                                    for (let i = 0; i < sortedTwists.length - 1; i++) {
+                                      const tp0 = sortedTwists[i];
+                                      const tp1 = sortedTwists[i + 1];
+                                      if (t >= tp0.t && t <= tp1.t) {
+                                        const ratio = (t - tp0.t) / (tp1.t - tp0.t);
+                                        interpolatedRotation = tp0.rotation + (tp1.rotation - tp0.rotation) * ratio;
+                                        interpolatedScale = tp0.scale + (tp1.scale - tp0.scale) * ratio;
+                                        break;
+                                      }
+                                    }
+                                  }
+                                }
+                                
+                                const angleRad = interpolatedRotation * Math.PI / 180;
+                                const rotatedNormalX = normal.x * Math.cos(angleRad) - normal.y * Math.sin(angleRad);
+                                const rotatedNormalY = normal.x * Math.sin(angleRad) + normal.y * Math.cos(angleRad);
+                                
+                                return {
+                                  x: curvePt.x + perpOffset * interpolatedScale * rotatedNormalX,
+                                  y: curvePt.y + perpOffset * interpolatedScale * rotatedNormalY
+                                };
+                              };
+
+                              const deformedPoints = (selectedObject.splineOriginalPoints || selectedObject.points).map(p => {
+                                return getSplineWarpedLocal(p);
+                              });
+
+                              updateObject(selectedObject.id, {
+                                points: deformedPoints,
+                                splineActive: undefined,
+                                splineControlPoints: undefined,
+                                splineTwistPoints: undefined,
+                                splineOriginalPoints: undefined
+                              });
+                              setActiveTool('SEL');
+                            }}
+                            className="py-2 bg-emerald-500 text-neutral-950 hover:bg-emerald-400 font-bold rounded-xl transition-all shadow-md shadow-emerald-500/10"
+                          >
+                            Bake & Done
+                          </button>
+                          <button
+                            onClick={() => {
+                              // Cancel deformation
+                              updateObject(selectedObject.id, {
+                                splineActive: undefined,
+                                splineControlPoints: undefined,
+                                splineTwistPoints: undefined,
+                                splineOriginalPoints: undefined
                               });
                               setActiveTool('SEL');
                             }}
