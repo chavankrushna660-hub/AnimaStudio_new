@@ -1303,43 +1303,8 @@ export default function CanvasArea({
 
   // Enforce locked bone rigid distance constraints!
   const enforceBoneConstraints = (updatedObjects: { [id: string]: VectorObject }) => {
-    let resolved = true;
-    for (let iter = 0; iter < 5; iter++) {
-      for (const bone of bones) {
-        const startObj = updatedObjects[bone.startObjectId];
-        const endObj = updatedObjects[bone.endObjectId];
-        if (!startObj || !endObj) continue;
-
-        const startWorld = localToWorld({ x: bone.startLocalX, y: bone.startLocalY }, startObj.transform, startObj.pivots[0]);
-        const endWorld = localToWorld({ x: bone.endLocalX, y: bone.endLocalY }, endObj.transform, endObj.pivots[0]);
-
-        const dist = distance(startWorld, endWorld);
-        // Force rigid non-detachable constraint under all circumstances to ensure solid connection
-        if (Math.abs(dist - bone.lockedDistance) > 0.01) {
-          const dx = endWorld.x - startWorld.x;
-          const dy = endWorld.y - startWorld.y;
-          const ratio = bone.lockedDistance / (dist || 1);
-          
-          const targetEndWorld = {
-            x: startWorld.x + dx * ratio,
-            y: startWorld.y + dy * ratio,
-          };
-
-          const worldDelta = {
-            x: targetEndWorld.x - endWorld.x,
-            y: targetEndWorld.y - endWorld.y,
-          };
-
-          endObj.transform = {
-            ...endObj.transform,
-            x: Number((endObj.transform.x + worldDelta.x).toFixed(2)),
-            y: Number((endObj.transform.y + worldDelta.y).toFixed(2)),
-          };
-          resolved = false;
-        }
-      }
-      if (resolved) break;
-    }
+    // Bypassed completely to prevent delayed relaxation, elastic lag, or detachment.
+    return;
   };
 
   // Recursively propagates transforms down the bone / parent-child hierarchy tree
@@ -1348,10 +1313,13 @@ export default function CanvasArea({
     changedObjectId: string,
     deltaX: number,
     deltaY: number,
-    deltaRot: number
+    deltaRot: number,
+    movedSet: Set<string> = new Set<string>()
   ) => {
     const parent = updatedObjects[changedObjectId];
     if (!parent) return;
+
+    movedSet.add(changedObjectId);
 
     // Get child IDs from both:
     // 1. Direct parent-child hierarchy (child.parentId === parent.id)
@@ -1368,11 +1336,12 @@ export default function CanvasArea({
     const uniqueChildIds = Array.from(new Set([...directChildIds, ...boneChildIds]));
 
     for (const childId of uniqueChildIds) {
+      if (movedSet.has(childId)) continue; // Prevent double transform
+
       const child = updatedObjects[childId];
       if (!child) continue;
 
-      // Find associated bone if any
-      const bone = bones.find(b => b.startObjectId === changedObjectId && b.endObjectId === childId);
+      const childOrigT = { ...child.transform };
 
       // Determine rotation change
       const nextRotation = Number((child.transform.rotation + deltaRot).toFixed(2));
@@ -1381,13 +1350,11 @@ export default function CanvasArea({
       child.transform = {
         ...child.transform,
         rotation: nextRotation,
-        x: Number((child.transform.x + deltaX).toFixed(2)),
-        y: Number((child.transform.y + deltaY).toFixed(2)),
       };
 
-      // If the parent rotated, we should rotate the child's position around the parent's pivot/joint
       if (deltaRot !== 0) {
         let pJointLocal = { x: 0, y: 0 };
+        const bone = bones.find(b => b.startObjectId === changedObjectId && b.endObjectId === childId);
         if (bone) {
           pJointLocal = { x: bone.startLocalX, y: bone.startLocalY };
         } else if (parent.pivots && parent.pivots[0]) {
@@ -1405,24 +1372,16 @@ export default function CanvasArea({
         
         child.transform.x = Number(rotatedChildWorldPos.x.toFixed(2));
         child.transform.y = Number(rotatedChildWorldPos.y.toFixed(2));
+      } else {
+        child.transform.x = Number((child.transform.x + deltaX).toFixed(2));
+        child.transform.y = Number((child.transform.y + deltaY).toFixed(2));
       }
 
-      // Enforce rigid joint connection: child joint must perfectly attach to parent joint
-      const pJoint = localToWorld({ x: bone ? bone.startLocalX : 0, y: bone ? bone.startLocalY : 0 }, parent.transform, parent.pivots[0]);
-      const cJoint = localToWorld({ x: bone ? bone.endLocalX : 0, y: bone ? bone.endLocalY : 0 }, child.transform, child.pivots[0]);
-      
-      const dx_joint = pJoint.x - cJoint.x;
-      const dy_joint = pJoint.y - cJoint.y;
-
-      child.transform.x = Number((child.transform.x + dx_joint).toFixed(2));
-      child.transform.y = Number((child.transform.y + dy_joint).toFixed(2));
-
       // Recursively propagate to grandchild objects!
-      propagateRigTransforms(updatedObjects, childId, deltaX, deltaY, deltaRot);
+      const nextDX = child.transform.x - childOrigT.x;
+      const nextDY = child.transform.y - childOrigT.y;
+      propagateRigTransforms(updatedObjects, childId, nextDX, nextDY, deltaRot, movedSet);
     }
-    
-    // Always enforce top-level strict skeletal constraints on final propagation output
-    enforceBoneConstraints(updatedObjects);
   };
 
   // Generate 10 interactive handles for scaling, rotation, and pivot anchoring
@@ -3175,69 +3134,32 @@ export default function CanvasArea({
         let nextX = Number((initialTransform.x + dx).toFixed(2));
         let nextY = Number((initialTransform.y + dy).toFixed(2));
 
-        if (obj.parentId && objects[obj.parentId]) {
-          const parent = objects[obj.parentId];
-          const bone = bones.find(b => (b.startObjectId === obj.parentId && b.endObjectId === obj.id) || (b.startObjectId === obj.id && b.endObjectId === obj.parentId));
-          
-          const parentPivot = parent.pivots[0] || { localX: 0, localY: 0 };
-          const parentPivotWorld = {
-            x: parent.transform.x + parentPivot.localX,
-            y: parent.transform.y + parentPivot.localY
-          };
-
-          const currentDist = distance({ x: nextX, y: nextY }, parentPivotWorld);
-          const restLength = bone ? bone.lockedDistance : 120;
-          const maxDistance = restLength * 1.5;
-
-          if (currentDist > maxDistance) {
-            // Elastic connection limit hit!
-            const dx_parent = nextX - parentPivotWorld.x;
-            const dy_parent = nextY - parentPivotWorld.y;
-            const ratio = maxDistance / (currentDist || 1);
-            
-            nextX = Number((parentPivotWorld.x + dx_parent * ratio).toFixed(2));
-            nextY = Number((parentPivotWorld.y + dy_parent * ratio).toFixed(2));
-            setElasticWarningId(obj.id);
-          } else {
-            setElasticWarningId(null);
-          }
-
-          // Closed edge constraint for rigged child drawings
-          const isParentClosed = parent.type === 'shape' && parent.shapeType !== 'line';
-          if (isParentClosed) {
-            // Test X movement independently (sliding collision response)
-            const testTransformX = { ...obj.transform, x: nextX, y: obj.transform.y };
-            if (!isChildInsideParent(obj, parent, testTransformX, objects)) {
-              nextX = obj.transform.x;
-            }
-            // Test Y movement independently (sliding collision response)
-            const testTransformY = { ...obj.transform, x: nextX, y: nextY };
-            if (!isChildInsideParent(obj, parent, testTransformY, objects)) {
-              nextY = obj.transform.y;
-            }
-          }
-        } else {
-          setElasticWarningId(null);
-        }
-
-        const deltaX = nextX - obj.transform.x;
-        const deltaY = nextY - obj.transform.y;
+        setElasticWarningId(null);
 
         setObjects(prev => {
           const updated = { ...prev };
+          const activeObj = updated[selectedObjectId];
+          if (!activeObj) return prev;
+
+          const deltaX = nextX - activeObj.transform.x;
+          const deltaY = nextY - activeObj.transform.y;
+
           updated[selectedObjectId] = {
-            ...updated[selectedObjectId],
+            ...activeObj,
             transform: {
-              ...updated[selectedObjectId].transform,
+              ...activeObj.transform,
               x: nextX,
               y: nextY,
             }
           };
 
+          const movedSet = new Set<string>();
+          movedSet.add(selectedObjectId);
+
           // Relative translation for permanently attached drawings
-          if (obj.attachedGroupId) {
+          if (activeObj.attachedGroupId) {
             (Object.values(updated) as VectorObject[]).forEach(otherObj => {
-              if (otherObj.id !== selectedObjectId && otherObj.attachedGroupId === obj.attachedGroupId) {
+              if (otherObj.id !== selectedObjectId && otherObj.attachedGroupId === activeObj.attachedGroupId) {
                 updated[otherObj.id] = {
                   ...otherObj,
                   transform: {
@@ -3246,11 +3168,12 @@ export default function CanvasArea({
                     y: Number((otherObj.transform.y + deltaY).toFixed(2))
                   }
                 };
+                movedSet.add(otherObj.id);
               }
             });
           }
 
-          propagateRigTransforms(updated, selectedObjectId, deltaX, deltaY, 0);
+          propagateRigTransforms(updated, selectedObjectId, deltaX, deltaY, 0, movedSet);
           return updated;
         });
       }
@@ -3624,48 +3547,7 @@ export default function CanvasArea({
       setKnifePath([]);
     }
 
-    if (elasticWarningId) {
-      const childId = elasticWarningId;
-      const child = objects[childId];
-      if (child && child.parentId && objects[child.parentId]) {
-        const parent = objects[child.parentId];
-        const bone = bones.find(b => (b.startObjectId === parent.id && b.endObjectId === childId) || (b.startObjectId === childId && b.endObjectId === parent.id));
-        const restLength = bone ? bone.lockedDistance : 120;
-        
-        const parentPivot = parent.pivots[0] || { localX: 0, localY: 0 };
-        const parentPivotWorld = {
-          x: parent.transform.x + parentPivot.localX,
-          y: parent.transform.y + parentPivot.localY
-        };
-
-        const currentDist = distance({ x: child.transform.x, y: child.transform.y }, parentPivotWorld) || 1;
-        const dx_parent = child.transform.x - parentPivotWorld.x;
-        const dy_parent = child.transform.y - parentPivotWorld.y;
-        
-        const ratio = restLength / currentDist;
-        const targetX = Number((parentPivotWorld.x + dx_parent * ratio).toFixed(2));
-        const targetY = Number((parentPivotWorld.y + dy_parent * ratio).toFixed(2));
-
-        const deltaX = targetX - child.transform.x;
-        const deltaY = targetY - child.transform.y;
-
-        setObjects(prev => {
-          const updated = { ...prev };
-          updated[childId] = {
-            ...updated[childId],
-            transform: {
-              ...updated[childId].transform,
-              x: targetX,
-              y: targetY
-            }
-          };
-          propagateRigTransforms(updated, childId, deltaX, deltaY, 0);
-          return updated;
-        });
-        historyPush();
-      }
-      setElasticWarningId(null);
-    }
+    setElasticWarningId(null);
 
     if (dragMode === 'meshPoint' || dragMode === 'meshGridPoint' || dragMode === 'puppetPin' || dragMode === 'lassoControlPoint' || dragMode === 'smartWarpPin' || dragMode === 'paintColor' || dragMode === 'latticePoint' || dragMode === 'splineHandle') {
       if (dragMode === 'meshPoint' && selectedObjectId && draggedMeshPointIndex !== null) {

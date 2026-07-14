@@ -1402,17 +1402,6 @@ export default function RightPanel({
     const transformUpdate = { ...selectedObject.transform, [property]: nextVal };
     updateObject(selectedObject.id, { transform: transformUpdate });
 
-    // Synchronization for permanently attached drawings
-    if ((property === 'x' || property === 'y') && selectedObject.attachedGroupId) {
-      Object.values(objects).forEach(otherObj => {
-        if (otherObj.id !== selectedObject.id && otherObj.attachedGroupId === selectedObject.attachedGroupId) {
-          const oVal = (otherObj.transform as any)[property] || 0;
-          const nextOVal = Number((oVal + amount).toFixed(2));
-          updateObject(otherObj.id, { transform: { ...otherObj.transform, [property]: nextOVal } });
-        }
-      });
-    }
-
     // BATCH APPLY to checked Smart Control drawings
     const checkedIds = Object.keys(smartCheckedIds).filter(id => smartCheckedIds[id] && objects[id]);
     checkedIds.forEach(id => {
@@ -1480,17 +1469,6 @@ export default function RightPanel({
 
     const transformUpdate = { ...selectedObject.transform, [property]: value };
     updateObject(selectedObject.id, { transform: transformUpdate });
-
-    // Synchronization for permanently attached drawings
-    if ((property === 'x' || property === 'y') && selectedObject.attachedGroupId) {
-      Object.values(objects).forEach(otherObj => {
-        if (otherObj.id !== selectedObject.id && otherObj.attachedGroupId === selectedObject.attachedGroupId) {
-          const oVal = (otherObj.transform as any)[property] || 0;
-          const nextOVal = Number((oVal + delta).toFixed(2));
-          updateObject(otherObj.id, { transform: { ...otherObj.transform, [property]: nextOVal } });
-        }
-      });
-    }
 
     // Batch Apply
     const checkedIds = Object.keys(smartCheckedIds).filter(id => smartCheckedIds[id] && objects[id]);

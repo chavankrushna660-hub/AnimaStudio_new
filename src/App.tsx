@@ -1486,11 +1486,23 @@ export default function App() {
         const sYRatio = origT.scaleY !== 0 ? (newT.scaleY !== undefined ? newT.scaleY : origT.scaleY ?? 1) / origT.scaleY : 1;
 
         // Propagate recursively
-        const propagate = (parentId: string, deltaX: number, deltaY: number, deltaRot: number, scaleXRatio: number, scaleYRatio: number) => {
+        const propagate = (
+          parentId: string,
+          deltaX: number,
+          deltaY: number,
+          deltaRot: number,
+          scaleXRatio: number,
+          scaleYRatio: number,
+          movedSet: Set<string> = new Set<string>()
+        ) => {
+          movedSet.add(parentId);
+
           // Get direct child IDs
           const childIds = Object.keys(updated).filter(k => updated[k].parentId === parentId);
 
           for (const childId of childIds) {
+            if (movedSet.has(childId)) continue; // Prevent double propagation/loops
+
             const child = updated[childId];
             if (!child) continue;
 
@@ -1556,20 +1568,6 @@ export default function App() {
               childNewT.perspective = Number(((childNewT.perspective ?? 0) + dPersp).toFixed(2));
             }
 
-            // Snapping rigid bones to guarantee zero detachment
-            const parentObj = updated[parentId];
-            const associatedBone = bones.find(b => b.startObjectId === parentId && b.endObjectId === childId);
-            if (associatedBone && !associatedBone.allowDetach) {
-              const pJoint = localToWorld({ x: associatedBone.startLocalX, y: associatedBone.startLocalY }, parentObj.transform, parentObj.pivots?.[0]);
-              const cJoint = localToWorld({ x: associatedBone.endLocalX, y: associatedBone.endLocalY }, childNewT, child.pivots?.[0]);
-              
-              const dx_snap = pJoint.x - cJoint.x;
-              const dy_snap = pJoint.y - cJoint.y;
-
-              childNewT.x = Number((childNewT.x + dx_snap).toFixed(2));
-              childNewT.y = Number((childNewT.y + dy_snap).toFixed(2));
-            }
-
             updated[childId] = {
               ...child,
               transform: childNewT
@@ -1582,9 +1580,12 @@ export default function App() {
             const nextSXRatio = childOrigT.scaleX !== 0 ? (childNewT.scaleX ?? 1) / childOrigT.scaleX : 1;
             const nextSYRatio = childOrigT.scaleY !== 0 ? (childNewT.scaleY ?? 1) / childOrigT.scaleY : 1;
 
-            propagate(childId, nextDX, nextDY, nextDRot, nextSXRatio, nextSYRatio);
+            propagate(childId, nextDX, nextDY, nextDRot, nextSXRatio, nextSYRatio, movedSet);
           }
         };
+
+        const globalMovedSet = new Set<string>();
+        globalMovedSet.add(id);
 
         // 1. Instantly propagate translation for permanently attached sibling group
         if (obj.attachedGroupId && (dX !== 0 || dY !== 0)) {
@@ -1601,15 +1602,16 @@ export default function App() {
                 ...sibling,
                 transform: siblingNewT
               };
+              globalMovedSet.add(k);
 
               // Propagate hierarchical transformations down from each sibling
-              propagate(k, dX, dY, 0, 1, 1);
+              propagate(k, dX, dY, 0, 1, 1, globalMovedSet);
             }
           });
         }
 
         // 2. Propagate parent-child hierarchies from the modified object
-        propagate(id, dX, dY, dRot, sXRatio, sYRatio);
+        propagate(id, dX, dY, dRot, sXRatio, sYRatio, globalMovedSet);
       }
 
       return updated;
