@@ -120,6 +120,8 @@ interface RightPanelProps {
   updateDeformPointTransform?: (property: string, value: number) => void;
   liquifySettings?: LiquifyBrushSettings;
   setLiquifySettings?: React.Dispatch<React.SetStateAction<LiquifyBrushSettings>>;
+  hideLassoSelection?: boolean;
+  setHideLassoSelection?: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
 const isChildInsideParent = (
@@ -182,6 +184,8 @@ export default function RightPanel({
   updateDeformPointTransform,
   liquifySettings,
   setLiquifySettings,
+  hideLassoSelection = false,
+  setHideLassoSelection,
 }: RightPanelProps) {
   // Batch/Smart Controls check state
   const [smartCheckedIds, setSmartCheckedIds] = useState<{ [id: string]: boolean }>({});
@@ -851,6 +855,9 @@ export default function RightPanel({
 
   const handleRemoveLassoArea = () => {
     setLassoPoints([]);
+    if (setHideLassoSelection) {
+      setHideLassoSelection(false);
+    }
   };
 
   // Attachment Handlers
@@ -2037,13 +2044,26 @@ export default function RightPanel({
                     <Sparkles className="w-4 h-4 text-amber-400" />
                     Multi-Drawing Lasso Transform
                   </span>
-                  <button
-                    onClick={() => setLassoPoints([])}
-                    className="text-[10px] font-black px-2 py-1 rounded-lg border bg-rose-500/10 text-rose-300 border-rose-500/30 hover:bg-rose-500/20 hover:text-rose-200 transition-all font-mono cursor-pointer"
-                    title="Clear Selection Loop"
-                  >
-                    CLEAR
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => setHideLassoSelection?.(!hideLassoSelection)}
+                      className={`text-[10px] font-black px-2 py-1 rounded-lg border transition-all font-mono cursor-pointer ${
+                        hideLassoSelection
+                          ? 'bg-amber-500/20 text-amber-300 border-amber-500/30 hover:bg-amber-500/30'
+                          : 'bg-neutral-850 text-neutral-300 border-neutral-700 hover:bg-neutral-800'
+                      }`}
+                      title="Hide or show the lasso outline on canvas"
+                    >
+                      {hideLassoSelection ? 'SHOW L.A.' : 'HIDE L.A.'}
+                    </button>
+                    <button
+                      onClick={() => setLassoPoints([])}
+                      className="text-[10px] font-black px-2 py-1 rounded-lg border bg-rose-500/10 text-rose-300 border-rose-500/30 hover:bg-rose-500/20 hover:text-rose-200 transition-all font-mono cursor-pointer"
+                      title="Clear Selection Loop"
+                    >
+                      CLEAR
+                    </button>
+                  </div>
                 </div>
 
                 {/* Info HUD */}

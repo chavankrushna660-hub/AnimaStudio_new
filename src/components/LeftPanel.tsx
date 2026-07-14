@@ -350,9 +350,17 @@ export default function LeftPanel({
               />
             ) : (
               <span 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (selectedObjectId === obj.id) {
+                    setSelectedObjectId(null);
+                  } else {
+                    setSelectedObjectId(obj.id);
+                  }
+                }}
                 onDoubleClick={(e) => startRename(obj, e)}
-                className="text-xs truncate font-bold group-hover/item:text-white transition-colors"
-                title="Double click to rename"
+                className="text-xs truncate font-bold group-hover/item:text-white transition-colors cursor-pointer"
+                title="Click to select/unselect, Double click to rename"
               >
                 {obj.name}
               </span>
@@ -535,7 +543,13 @@ export default function LeftPanel({
                   <span className="text-[9px] text-neutral-500 font-mono">SELECTED</span>
                 </div>
                 <div className="bg-neutral-900 border border-neutral-800/60 rounded-xl p-2 flex items-center justify-between gap-2">
-                  <span className="text-xs truncate font-bold text-neutral-200 flex-1">{objects[selectedObjectId].name}</span>
+                  <span 
+                    onClick={() => setSelectedObjectId(null)}
+                    className="text-xs truncate font-bold text-neutral-200 flex-1 cursor-pointer hover:text-rose-400 transition-colors"
+                    title="Click to unselect drawing"
+                  >
+                    {objects[selectedObjectId].name}
+                  </span>
                   <button
                     onClick={() => duplicateObject(selectedObjectId)}
                     className="bg-amber-500 hover:bg-amber-600 text-neutral-950 text-[10px] font-black px-2.5 py-1 rounded-lg uppercase tracking-wider transition-all cursor-pointer shadow-md shrink-0"

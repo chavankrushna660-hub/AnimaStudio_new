@@ -489,6 +489,7 @@ export default function App() {
   const [lassoMode, setLassoMode] = useState<'freehand' | 'pen'>('freehand');
   const [penLassoPoints, setPenLassoPoints] = useState<Point[]>([]);
   const [fillToolColor, setFillToolColor] = useState<string>('#4CAF50');
+  const [hideLassoSelection, setHideLassoSelection] = useState<boolean>(false);
 
   // Brush Custom Settings for lifelike drawing
   const [brushSettings, setBrushSettings] = useState<BrushSettings>({
@@ -2404,6 +2405,18 @@ export default function App() {
     setSelectedObjectId(null);
     setFrames([{ index: 0, objects: {} }]);
     setCurrentFrameIndex(0);
+    setLassoPoints([]);
+    setPenLassoPoints([]);
+    setSmartPinnedIds([]);
+    setDraft360Views([]);
+    setDraftAnchorId(null);
+    setIs360WizardActive(false);
+    setSelectedDeformPointIndex(null);
+    setSelectedDeformPointType(null);
+    setOriginalDeformPointCoords(null);
+    setUndoStack([]);
+    setRedoStack([]);
+    setHideLassoSelection(false);
   };
 
   // Timeline operations
@@ -3062,6 +3075,8 @@ export default function App() {
           isRecording={isRecording}
           liquifySettings={liquifySettings}
           setLiquifySettings={setLiquifySettings}
+          hideLassoSelection={hideLassoSelection}
+          setHideLassoSelection={setHideLassoSelection}
         />
 
         {/* Right Collapsible Properties, Sliders, Smart Pinned Controls */}
@@ -3118,6 +3133,8 @@ export default function App() {
           updateDeformPointTransform={updateDeformPointTransform}
           liquifySettings={liquifySettings}
           setLiquifySettings={setLiquifySettings}
+          hideLassoSelection={hideLassoSelection}
+          setHideLassoSelection={setHideLassoSelection}
         />
       </div>
 

@@ -695,6 +695,8 @@ interface CanvasAreaProps {
   isRecording?: boolean;
   liquifySettings?: LiquifyBrushSettings;
   setLiquifySettings?: React.Dispatch<React.SetStateAction<LiquifyBrushSettings>>;
+  hideLassoSelection?: boolean;
+  setHideLassoSelection?: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
 const initializeCageState = (obj: VectorObject): any => {
@@ -813,6 +815,8 @@ export default function CanvasArea({
   isRecording = false,
   liquifySettings,
   setLiquifySettings,
+  hideLassoSelection = false,
+  setHideLassoSelection,
 }: CanvasAreaProps) {
   const activeObjects: { [id: string]: VectorObject } = React.useMemo(() => {
     if (autoTween) {
@@ -5489,7 +5493,7 @@ export default function CanvasArea({
     }
 
     // Render current active Lasso selection path
-    if (!isRecording && lassoPoints && lassoPoints.length > 0) {
+    if (!isRecording && lassoPoints && lassoPoints.length > 0 && !hideLassoSelection) {
       ctx.save();
       ctx.beginPath();
       ctx.moveTo(lassoPoints[0].x, lassoPoints[0].y);
