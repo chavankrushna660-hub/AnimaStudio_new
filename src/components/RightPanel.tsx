@@ -31,7 +31,7 @@ import {
   MapPin
 } from 'lucide-react';
 import { VectorObject, Bone, Layer, Pivot, Transform, Point, Frame, RealismSettings, SmartMeshColorState, SmartWarpState, ColorMeshPoint, ColorMeshCell, BrushSettings, LiquifyBrushSettings } from '../types';
-import { distance, localToWorld, worldToLocal, calculateBoundingBox, isPointInPolygon, findClosestView360 } from '../utils/math';
+import { distance, localToWorld, worldToLocal, calculateBoundingBox, isPointInPolygon, findClosestView360, rotatePoint } from '../utils/math';
 import { extrude2DTo3D, deleteFace3D, extrudeFace3D, extrudeEdge3D } from '../utils/engine3D';
 
 const hslToHex = (h: number, s: number = 100, l: number = 50): string => {
@@ -187,6 +187,264 @@ export default function RightPanel({
   const [smartCheckedIds, setSmartCheckedIds] = useState<{ [id: string]: boolean }>({});
   const [faceExtrudeDist, setFaceExtrudeDist] = useState<number>(30);
   const [edgeExtrudeDist, setEdgeExtrudeDist] = useState<number>(30);
+
+  // Global Multi-Drawing Lasso states and logic
+  const [globalLassoSelectedMap, setGlobalLassoSelectedMap] = useState<{
+    [objectId: string]: {
+      points: number[];
+      subPaths: { [subPathIndex: number]: number[] };
+    };
+  }>({});
+
+  const [lassoSliders, setLassoSliders] = useState({
+    translateX: 0,
+    translateY: 0,
+    rotate: 0,
+    scaleX: 1,
+    scaleY: 1,
+    skewX: 0,
+    skewY: 0
+  });
+
+  const objectsRef = React.useRef(objects);
+  React.useEffect(() => {
+    objectsRef.current = objects;
+  }, [objects]);
+
+  const prevLassoPointsLengthRef = React.useRef(0);
+
+  React.useEffect(() => {
+    if (lassoPoints && lassoPoints.length >= 3) {
+      if (lassoPoints.length !== prevLassoPointsLengthRef.current) {
+        setLassoSliders({
+          translateX: 0,
+          translateY: 0,
+          rotate: 0,
+          scaleX: 1,
+          scaleY: 1,
+          skewX: 0,
+          skewY: 0
+        });
+
+        // Compute which points/subPaths of which active/unlocked/visible drawings are inside the lasso
+        const map: {
+          [objectId: string]: {
+            points: number[];
+            subPaths: { [subPathIndex: number]: number[] };
+          };
+        } = {};
+
+        (Object.values(objectsRef.current) as VectorObject[]).forEach(obj => {
+          if (obj.isHidden || obj.isLocked || obj.type === '360_container') return;
+
+          const localPivot = obj.pivots?.[0] || { localX: 0, localY: 0 };
+          const insideIndices: number[] = [];
+          if (obj.points) {
+            obj.points.forEach((p, idx) => {
+              const wPt = localToWorld(p, obj.transform, localPivot);
+              if (isPointInPolygon(wPt, lassoPoints)) {
+                insideIndices.push(idx);
+              }
+            });
+          }
+
+          const insideSubPaths: { [subPathIdx: number]: number[] } = {};
+          if (obj.subPaths) {
+            obj.subPaths.forEach((sub, subIdx) => {
+              const insideSubIndices: number[] = [];
+              sub.forEach((p, idx) => {
+                const wPt = localToWorld(p, obj.transform, localPivot);
+                if (isPointInPolygon(wPt, lassoPoints)) {
+                  insideSubIndices.push(idx);
+                }
+              });
+              if (insideSubIndices.length > 0) {
+                insideSubPaths[subIdx] = insideSubIndices;
+              }
+            });
+          }
+
+          if (insideIndices.length > 0 || Object.keys(insideSubPaths).length > 0) {
+            map[obj.id] = {
+              points: insideIndices,
+              subPaths: insideSubPaths
+            };
+          }
+        });
+
+        setGlobalLassoSelectedMap(map);
+      }
+    } else {
+      setGlobalLassoSelectedMap({});
+    }
+    prevLassoPointsLengthRef.current = lassoPoints ? lassoPoints.length : 0;
+  }, [lassoPoints]);
+
+  const applyLassoTransformToAllFrames = (type: string, value: number) => {
+    if (!lassoPoints || lassoPoints.length < 3) return;
+    const map = globalLassoSelectedMap;
+    if (Object.keys(map).length === 0) return;
+
+    // Calculate lasso center in world coordinates
+    const sumX = lassoPoints.reduce((sum, p) => sum + p.x, 0);
+    const sumY = lassoPoints.reduce((sum, p) => sum + p.y, 0);
+    const lassoCenter = { x: sumX / lassoPoints.length, y: sumY / lassoPoints.length };
+
+    // Function to transform a single point
+    const transformPointWithLasso = (
+      p: Point,
+      obj: VectorObject,
+      center: Point,
+      transformType: string,
+      val: number
+    ): Point => {
+      const localPivot = obj.pivots?.[0] || { localX: 0, localY: 0 };
+      const W = localToWorld(p, obj.transform, localPivot);
+
+      let WPrime = { ...W };
+      if (transformType === 'translateX') {
+        WPrime.x += val;
+      } else if (transformType === 'translateY') {
+        WPrime.y += val;
+      } else if (transformType === 'rotate') {
+        WPrime = rotatePoint(W, val, center);
+      } else if (transformType === 'scaleX') {
+        WPrime.x = center.x + (W.x - center.x) * val;
+      } else if (transformType === 'scaleY') {
+        WPrime.y = center.y + (W.y - center.y) * val;
+      } else if (transformType === 'skewX') {
+        const rad = (val * Math.PI) / 180;
+        WPrime.x = W.x + (W.y - center.y) * Math.tan(rad);
+      } else if (transformType === 'skewY') {
+        const rad = (val * Math.PI) / 180;
+        WPrime.y = W.y + (W.x - center.x) * Math.tan(rad);
+      }
+
+      return {
+        ...p,
+        ...worldToLocal(WPrime, obj.transform, localPivot)
+      };
+    };
+
+    // Update current frame's objects state
+    setObjects(prev => {
+      const updated = { ...prev };
+      Object.keys(map).forEach(objId => {
+        const obj = updated[objId];
+        if (!obj) return;
+
+        const { points: insidePoints, subPaths: insideSubPaths } = map[objId];
+        
+        let nextPoints = obj.points ? [...obj.points] : [];
+        insidePoints.forEach(idx => {
+          if (nextPoints[idx]) {
+            nextPoints[idx] = transformPointWithLasso(nextPoints[idx], obj, lassoCenter, type, value);
+          }
+        });
+
+        let nextSubPaths = obj.subPaths ? obj.subPaths.map(sub => [...sub]) : undefined;
+        if (nextSubPaths) {
+          Object.keys(insideSubPaths).forEach(subIdxStr => {
+            const subIdx = parseInt(subIdxStr, 10);
+            const indices = insideSubPaths[subIdx];
+            if (nextSubPaths[subIdx]) {
+              indices.forEach(idx => {
+                if (nextSubPaths[subIdx][idx]) {
+                  nextSubPaths[subIdx][idx] = transformPointWithLasso(nextSubPaths[subIdx][idx], obj, lassoCenter, type, value);
+                }
+              });
+            }
+          });
+        }
+
+        updated[objId] = {
+          ...obj,
+          points: nextPoints,
+          subPaths: nextSubPaths
+        };
+      });
+      return updated;
+    });
+
+    // Update in all other frames
+    setFrames(prev => {
+      return prev.map(frame => {
+        const frameObjects = { ...(frame.objects || {}) };
+        let changed = false;
+
+        Object.keys(map).forEach(objId => {
+          const obj = frameObjects[objId];
+          if (!obj) return;
+
+          changed = true;
+          const { points: insidePoints, subPaths: insideSubPaths } = map[objId];
+          
+          let nextPoints = obj.points ? [...obj.points] : [];
+          insidePoints.forEach(idx => {
+            if (nextPoints[idx]) {
+              nextPoints[idx] = transformPointWithLasso(nextPoints[idx], obj, lassoCenter, type, value);
+            }
+          });
+
+          let nextSubPaths = obj.subPaths ? obj.subPaths.map(sub => [...sub]) : undefined;
+          if (nextSubPaths) {
+            Object.keys(insideSubPaths).forEach(subIdxStr => {
+              const subIdx = parseInt(subIdxStr, 10);
+              const indices = insideSubPaths[subIdx];
+              if (nextSubPaths[subIdx]) {
+                indices.forEach(idx => {
+                  if (nextSubPaths[subIdx][idx]) {
+                    nextSubPaths[subIdx][idx] = transformPointWithLasso(nextSubPaths[subIdx][idx], obj, lassoCenter, type, value);
+                  }
+                });
+              }
+            });
+          }
+
+          frameObjects[objId] = {
+            ...obj,
+            points: nextPoints,
+            subPaths: nextSubPaths
+          };
+        });
+
+        if (changed) {
+          return {
+            ...frame,
+            objects: frameObjects
+          };
+        }
+        return frame;
+      });
+    });
+  };
+
+  const handleLassoSliderChange = (type: 'translateX' | 'translateY' | 'rotate' | 'scaleX' | 'scaleY' | 'skewX' | 'skewY', value: number) => {
+    const prevVal = lassoSliders[type];
+    let diff = 0;
+    if (type === 'scaleX' || type === 'scaleY') {
+      diff = prevVal !== 0 ? value / prevVal : 1;
+    } else {
+      diff = value - prevVal;
+    }
+
+    applyLassoTransformToAllFrames(type, diff);
+
+    setLassoSliders(prev => ({
+      ...prev,
+      [type]: value
+    }));
+  };
+
+  const handleLassoNudge = (type: 'translateX' | 'translateY' | 'rotate' | 'scaleX' | 'scaleY' | 'skewX' | 'skewY', amount: number) => {
+    let nextVal = lassoSliders[type] + amount;
+    if (type === 'scaleX' || type === 'scaleY') {
+      nextVal = Math.max(0.01, Number((lassoSliders[type] + amount).toFixed(2)));
+    } else {
+      nextVal = Number((lassoSliders[type] + amount).toFixed(2));
+    }
+    handleLassoSliderChange(type, nextVal);
+  };
 
   const isLassoActive = !!selectedObject?.lassoDeformState?.active;
   const isDeformPointActive = activeTool === 'MSH' && selectedDeformPointIndex !== undefined && selectedDeformPointIndex !== null;
@@ -1771,10 +2029,214 @@ export default function RightPanel({
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 space-y-6 scrollbar-thin">
-            {!selectedObject ? (
-              <div className="text-center py-12 text-xs text-neutral-600 font-bold border border-dashed border-neutral-800/80 rounded-2xl p-4">
-                Select a drawing from the canvas or left hierarchy tree to inspect and transform.
+            {/* GLOBAL MULTI-DRAWING LASSO TRANSFORMER PANEL */}
+            {lassoPoints && lassoPoints.length >= 3 && (
+              <div className="space-y-4 bg-amber-500/10 p-4 rounded-2xl border border-amber-500/30 shadow-lg shadow-black/30">
+                <div className="flex items-center justify-between border-b border-amber-500/20 pb-2.5">
+                  <span className="text-xs font-black uppercase tracking-wider text-amber-400 flex items-center gap-1.5 font-mono animate-pulse">
+                    <Sparkles className="w-4 h-4 text-amber-400" />
+                    Multi-Drawing Lasso Transform
+                  </span>
+                  <button
+                    onClick={() => setLassoPoints([])}
+                    className="text-[10px] font-black px-2 py-1 rounded-lg border bg-rose-500/10 text-rose-300 border-rose-500/30 hover:bg-rose-500/20 hover:text-rose-200 transition-all font-mono cursor-pointer"
+                    title="Clear Selection Loop"
+                  >
+                    CLEAR
+                  </button>
+                </div>
+
+                {/* Info HUD */}
+                <div className="bg-neutral-900/60 border border-neutral-800/60 rounded-xl p-3 text-[10.5px] leading-relaxed text-neutral-300 space-y-1">
+                  <div className="font-bold text-amber-400 flex items-center gap-1 font-mono">
+                    <Info className="w-3.5 h-3.5" /> Lasso Region Active
+                  </div>
+                  <p className="text-neutral-400">
+                    Transforming all vertices inside the lasso simultaneously across <strong className="text-white font-bold">all frames</strong>.
+                  </p>
+                  <div className="flex gap-2 pt-1 font-mono text-[9px] text-neutral-400">
+                    <span>Drawings: <strong className="text-amber-400 font-bold">{Object.keys(globalLassoSelectedMap).length}</strong></span>
+                    <span>•</span>
+                    <span>Vertices: <strong className="text-amber-400 font-bold">
+                      {(Object.values(globalLassoSelectedMap) as { points: number[], subPaths: { [key: number]: number[] } }[]).reduce((total, sel) => {
+                        const subCount = Object.values(sel.subPaths || {}).reduce((subTotal, indices) => subTotal + (indices ? indices.length : 0), 0);
+                        return total + (sel.points ? sel.points.length : 0) + subCount;
+                      }, 0)}
+                    </strong></span>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  {/* Translate X */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-neutral-400 font-mono">Translate X</span>
+                      <span className="text-white font-bold font-mono">{lassoSliders.translateX.toFixed(1)}px</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="-500"
+                      max="500"
+                      step="1"
+                      value={lassoSliders.translateX}
+                      onChange={(e) => handleLassoSliderChange('translateX', Number(e.target.value))}
+                      className="w-full accent-amber-500 cursor-pointer"
+                    />
+                    <div className="flex items-center justify-between gap-1 pt-0.5">
+                      <button onClick={() => handleLassoNudge('translateX', -10)} className="flex-1 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold cursor-pointer">-10</button>
+                      <button onClick={() => handleLassoNudge('translateX', -1)} className="flex-1 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold cursor-pointer">-1</button>
+                      <button onClick={() => handleLassoNudge('translateX', 1)} className="flex-1 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold cursor-pointer">+1</button>
+                      <button onClick={() => handleLassoNudge('translateX', 10)} className="flex-1 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold cursor-pointer">+10</button>
+                    </div>
+                  </div>
+
+                  {/* Translate Y */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-neutral-400 font-mono">Translate Y</span>
+                      <span className="text-white font-bold font-mono">{lassoSliders.translateY.toFixed(1)}px</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="-500"
+                      max="500"
+                      step="1"
+                      value={lassoSliders.translateY}
+                      onChange={(e) => handleLassoSliderChange('translateY', Number(e.target.value))}
+                      className="w-full accent-amber-500 cursor-pointer"
+                    />
+                    <div className="flex items-center justify-between gap-1 pt-0.5">
+                      <button onClick={() => handleLassoNudge('translateY', -10)} className="flex-1 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold cursor-pointer">-10</button>
+                      <button onClick={() => handleLassoNudge('translateY', -1)} className="flex-1 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold cursor-pointer">-1</button>
+                      <button onClick={() => handleLassoNudge('translateY', 1)} className="flex-1 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold cursor-pointer">+1</button>
+                      <button onClick={() => handleLassoNudge('translateY', 10)} className="flex-1 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold cursor-pointer">+10</button>
+                    </div>
+                  </div>
+
+                  {/* Rotation */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-neutral-400 font-mono">Rotate Angle</span>
+                      <span className="text-white font-bold font-mono">{lassoSliders.rotate.toFixed(1)}°</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="-180"
+                      max="180"
+                      step="1"
+                      value={lassoSliders.rotate}
+                      onChange={(e) => handleLassoSliderChange('rotate', Number(e.target.value))}
+                      className="w-full accent-amber-500 cursor-pointer"
+                    />
+                    <div className="flex items-center justify-between gap-1 pt-0.5">
+                      <button onClick={() => handleLassoNudge('rotate', -15)} className="flex-1 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold cursor-pointer">-15°</button>
+                      <button onClick={() => handleLassoNudge('rotate', -1)} className="flex-1 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold cursor-pointer">-1°</button>
+                      <button onClick={() => handleLassoNudge('rotate', 1)} className="flex-1 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold cursor-pointer">+1°</button>
+                      <button onClick={() => handleLassoNudge('rotate', 15)} className="flex-1 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold cursor-pointer">+15°</button>
+                    </div>
+                  </div>
+
+                  {/* Scale X */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-neutral-400 font-mono">Scale X</span>
+                      <span className="text-white font-bold font-mono">{lassoSliders.scaleX.toFixed(2)}x</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="3.0"
+                      step="0.01"
+                      value={lassoSliders.scaleX}
+                      onChange={(e) => handleLassoSliderChange('scaleX', Number(e.target.value))}
+                      className="w-full accent-amber-500 cursor-pointer"
+                    />
+                    <div className="flex items-center justify-between gap-1 pt-0.5">
+                      <button onClick={() => handleLassoNudge('scaleX', -0.1)} className="flex-1 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold cursor-pointer">-0.1</button>
+                      <button onClick={() => handleLassoNudge('scaleX', -0.01)} className="flex-1 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold cursor-pointer">-0.01</button>
+                      <button onClick={() => handleLassoNudge('scaleX', 0.01)} className="flex-1 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold cursor-pointer">+0.01</button>
+                      <button onClick={() => handleLassoNudge('scaleX', 0.1)} className="flex-1 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold cursor-pointer">+0.1</button>
+                    </div>
+                  </div>
+
+                  {/* Scale Y */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-neutral-400 font-mono">Scale Y</span>
+                      <span className="text-white font-bold font-mono">{lassoSliders.scaleY.toFixed(2)}x</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="3.0"
+                      step="0.01"
+                      value={lassoSliders.scaleY}
+                      onChange={(e) => handleLassoSliderChange('scaleY', Number(e.target.value))}
+                      className="w-full accent-amber-500 cursor-pointer"
+                    />
+                    <div className="flex items-center justify-between gap-1 pt-0.5">
+                      <button onClick={() => handleLassoNudge('scaleY', -0.1)} className="flex-1 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold cursor-pointer">-0.1</button>
+                      <button onClick={() => handleLassoNudge('scaleY', -0.01)} className="flex-1 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold cursor-pointer">-0.01</button>
+                      <button onClick={() => handleLassoNudge('scaleY', 0.01)} className="flex-1 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold cursor-pointer">+0.01</button>
+                      <button onClick={() => handleLassoNudge('scaleY', 0.1)} className="flex-1 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold cursor-pointer">+0.1</button>
+                    </div>
+                  </div>
+
+                  {/* Skew X */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-neutral-400 font-mono">Skew X</span>
+                      <span className="text-white font-bold font-mono">{lassoSliders.skewX.toFixed(1)}°</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="-90"
+                      max="90"
+                      step="1"
+                      value={lassoSliders.skewX}
+                      onChange={(e) => handleLassoSliderChange('skewX', Number(e.target.value))}
+                      className="w-full accent-amber-500 cursor-pointer"
+                    />
+                    <div className="flex items-center justify-between gap-1 pt-0.5">
+                      <button onClick={() => handleLassoNudge('skewX', -5)} className="flex-1 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold cursor-pointer">-5°</button>
+                      <button onClick={() => handleLassoNudge('skewX', -1)} className="flex-1 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold cursor-pointer">-1°</button>
+                      <button onClick={() => handleLassoNudge('skewX', 1)} className="flex-1 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold cursor-pointer">+1°</button>
+                      <button onClick={() => handleLassoNudge('skewX', 5)} className="flex-1 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold cursor-pointer">+5°</button>
+                    </div>
+                  </div>
+
+                  {/* Skew Y */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-neutral-400 font-mono">Skew Y</span>
+                      <span className="text-white font-bold font-mono">{lassoSliders.skewY.toFixed(1)}°</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="-90"
+                      max="90"
+                      step="1"
+                      value={lassoSliders.skewY}
+                      onChange={(e) => handleLassoSliderChange('skewY', Number(e.target.value))}
+                      className="w-full accent-amber-500 cursor-pointer"
+                    />
+                    <div className="flex items-center justify-between gap-1 pt-0.5">
+                      <button onClick={() => handleLassoNudge('skewY', -5)} className="flex-1 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold cursor-pointer">-5°</button>
+                      <button onClick={() => handleLassoNudge('skewY', -1)} className="flex-1 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold cursor-pointer">-1°</button>
+                      <button onClick={() => handleLassoNudge('skewY', 1)} className="flex-1 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold cursor-pointer">+1°</button>
+                      <button onClick={() => handleLassoNudge('skewY', 5)} className="flex-1 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold cursor-pointer">+5°</button>
+                    </div>
+                  </div>
+                </div>
               </div>
+            )}
+
+            {!selectedObject ? (
+              (!lassoPoints || lassoPoints.length < 3) && (
+                <div className="text-center py-12 text-xs text-neutral-600 font-bold border border-dashed border-neutral-800/80 rounded-2xl p-4">
+                  Select a drawing from the canvas or left hierarchy tree to inspect and transform.
+                </div>
+              )
             ) : (
               <>
                 {/* LASSO DEFORM & SELECTION PANEL */}
