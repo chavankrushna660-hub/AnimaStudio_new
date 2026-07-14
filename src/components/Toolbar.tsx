@@ -21,7 +21,8 @@ import {
   Sparkles,
   Box,
   ZoomIn,
-  Share2
+  Share2,
+  Sliders
 } from 'lucide-react';
 
 interface ToolbarProps {
@@ -47,6 +48,7 @@ export default function Toolbar({
     { id: "PIN", name: "Puppet Pin", label: "Puppet Pin (PIN)", icon: PinIcon },
     { id: 'FIL', name: 'Fill', label: 'Fill Bucket (FIL)', icon: PaintBucketIcon },
     { id: 'LSO', name: 'Lasso Selection', label: 'Lasso Area & Fill (LSO)', icon: SparklesIcon, desc: 'Draw a lasso region to transform specific sub-areas or color fill them' },
+    { id: 'FSL', name: 'Free Selection', label: 'Adjustable Selection (FSL)', icon: SlidersIcon, desc: 'Draw or edit a selection area. Drag, double-click, or insert vertices to customize the region.' },
     { id: '360', name: '360° Studio', label: '360° Pseudo-3D (360)', icon: CompassIcon, desc: 'Create and animate 360-degree pseudo-3D objects' },
     { id: 'SHP', name: 'Shape', label: 'Shapes Tool (SHP)', icon: ShapesIcon },
     { id: 'MSH', name: 'Mesh Wrap', label: 'Geometry Deform (MSH)', icon: CropIcon, desc: 'Deform drawing geometry by dragging individual vertices deeply' },
@@ -145,3 +147,4 @@ function BoxIcon(props: any) { return <Box {...props} /> }
 function CompassIcon(props: any) { return <Compass {...props} /> }
 function ZoomInIcon(props: any) { return <ZoomIn {...props} /> }
 function Share2Icon(props: any) { return <Share2 {...props} /> }
+function SlidersIcon(props: any) { return <Sliders {...props} /> }

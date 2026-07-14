@@ -1150,7 +1150,7 @@ export default function CanvasArea({
   const [isDrawingLasso, setIsDrawingLasso] = useState(false);
   
   // Transform & drag gesture state
-  const [dragMode, setDragMode] = useState<'none' | 'move' | 'rotate' | 'scale' | 'pivot' | 'pin' | 'meshPoint' | 'meshGridPoint' | 'puppetPin' | 'lassoControlPoint' | 'directRigBone' | 'zoom' | 'pan' | 'paintColor' | 'smartWarpPin' | 'splineHandle' | 'latticePoint'>('none');
+  const [dragMode, setDragMode] = useState<'none' | 'move' | 'rotate' | 'scale' | 'pivot' | 'pin' | 'meshPoint' | 'meshGridPoint' | 'puppetPin' | 'lassoControlPoint' | 'directRigBone' | 'zoom' | 'pan' | 'paintColor' | 'smartWarpPin' | 'splineHandle' | 'latticePoint' | 'drag-lasso-selection-point'>('none');
   const [dragStartPoint, setDragStartPoint] = useState<Point>({ x: 0, y: 0 });
   const [initialTransform, setInitialTransform] = useState<any>(null);
   const [activeHandleIndex, setActiveHandleIndex] = useState<number | null>(null);
@@ -1672,6 +1672,66 @@ export default function CanvasArea({
         }
         setPenLassoPoints(prev => [...prev, coords]);
       }
+      return;
+    }
+
+    // Free Edit / Crop Selection tool pointer down
+    if (activeTool === 'FSL') {
+      // 1. Check if clicked near an existing lasso selection point
+      if (lassoPoints && lassoPoints.length > 0) {
+        let clickedPtIdx = -1;
+        let minDist = 14 / zoomScale;
+        lassoPoints.forEach((pt, idx) => {
+          const d = distance(coords, pt);
+          if (d < minDist) {
+            minDist = d;
+            clickedPtIdx = idx;
+          }
+        });
+
+        if (clickedPtIdx !== -1) {
+          // Double click removes the point
+          if (e.detail === 2) {
+            const nextLasso = lassoPoints.filter((_, idx) => idx !== clickedPtIdx);
+            setLassoPoints(nextLasso);
+            return;
+          }
+          setDragMode('drag-lasso-selection-point');
+          setDraggedMeshPointIndex(clickedPtIdx);
+          setDragStartPoint(coords);
+          return;
+        }
+
+        // 2. Check if clicked on a segment to insert a new point
+        if (lassoPoints.length >= 3) {
+          let segmentIdx = -1;
+          const segmentThreshold = 10 / zoomScale;
+          for (let i = 0; i < lassoPoints.length; i++) {
+            const p1 = lassoPoints[i];
+            const p2 = lassoPoints[(i + 1) % lassoPoints.length];
+            const d = pointToSegmentDistance(coords, p1, p2);
+            if (d < segmentThreshold) {
+              segmentIdx = i;
+              break;
+            }
+          }
+
+          if (segmentIdx !== -1) {
+            // Insert coords at index segmentIdx + 1
+            const nextLasso = [...lassoPoints];
+            nextLasso.splice(segmentIdx + 1, 0, coords);
+            setLassoPoints(nextLasso);
+            setDragMode('drag-lasso-selection-point');
+            setDraggedMeshPointIndex(segmentIdx + 1);
+            setDragStartPoint(coords);
+            return;
+          }
+        }
+      }
+
+      // 3. Otherwise, start a new lasso draw to redefine the area
+      setIsDrawingLasso(true);
+      setLassoPoints([coords]);
       return;
     }
 
@@ -2698,6 +2758,17 @@ export default function CanvasArea({
       return;
     }
 
+    if (dragMode === 'drag-lasso-selection-point' && draggedMeshPointIndex !== null) {
+      setLassoPoints(prev => {
+        const next = [...prev];
+        if (next[draggedMeshPointIndex]) {
+          next[draggedMeshPointIndex] = coords;
+        }
+        return next;
+      });
+      return;
+    }
+
     if (dragMode === 'puppetPin' && selectedObjectId && draggedMeshPointIndex !== null) {
       const obj = objects[selectedObjectId];
       if (obj) {
@@ -3113,7 +3184,7 @@ export default function CanvasArea({
       return;
     }
 
-    if (isDrawingLasso && activeTool === 'LSO') {
+    if (isDrawingLasso && (activeTool === 'LSO' || activeTool === 'FSL')) {
       setLassoPoints(prev => [...prev, coords]);
       return;
     }
@@ -5437,6 +5508,30 @@ export default function CanvasArea({
       ctx.setLineDash([6, 4]);
       ctx.stroke();
       ctx.restore();
+
+      // Render draggable control point handles if in Free Selection mode
+      if (activeTool === 'FSL') {
+        ctx.save();
+        lassoPoints.forEach((pt, idx) => {
+          const isDraggingThis = dragMode === 'drag-lasso-selection-point' && draggedMeshPointIndex === idx;
+          
+          // Outer glow/ring
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, (isDraggingThis ? 8 : 6) / zoomScale, 0, Math.PI * 2);
+          ctx.fillStyle = isDraggingThis ? '#F59E0B' : '#171717';
+          ctx.strokeStyle = '#F59E0B';
+          ctx.lineWidth = 1.5 / zoomScale;
+          ctx.fill();
+          ctx.stroke();
+
+          // Inner dot
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, (isDraggingThis ? 4 : 2) / zoomScale, 0, Math.PI * 2);
+          ctx.fillStyle = isDraggingThis ? '#FFFFFF' : '#F59E0B';
+          ctx.fill();
+        });
+        ctx.restore();
+      }
     }
 
     // Render current in-progress Pen selection path
@@ -5557,7 +5652,7 @@ export default function CanvasArea({
             className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer ${
               lassoMode === 'freehand'
                 ? 'bg-amber-500 text-neutral-950 font-black shadow shadow-amber-500/30'
-                : 'text-neutral-400 hover:text-white hover:bg-neutral-800/60'
+                 : 'text-neutral-400 hover:text-white hover:bg-neutral-800/60'
             }`}
           >
             <Sparkles className="w-3.5 h-3.5" />
@@ -5599,6 +5694,41 @@ export default function CanvasArea({
                 type="button"
                 onClick={() => setPenLassoPoints([])}
                 className="px-2.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer"
+              >
+                Clear
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Floating Free Selection Tool (FSL) HUD */}
+      {activeTool === 'FSL' && (
+        <div id="canvas-fsl-mode-hud" className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-4 bg-neutral-900/95 backdrop-blur-md px-5 py-3 rounded-2xl border border-amber-500/30 shadow-xl pointer-events-auto z-50 animate-fade-in text-white text-xs max-w-xl">
+          <span className="text-[10px] text-amber-400 font-black uppercase tracking-wider border-r border-neutral-800 pr-4 flex items-center gap-1.5 font-mono">
+            <Sparkles className="w-4 h-4 text-amber-400" /> FSL Active
+          </span>
+          <div className="grid grid-cols-3 gap-x-4 gap-y-1 text-neutral-300 text-[10.5px]">
+            <div className="flex items-center gap-1.5">
+              <span className="bg-amber-500/20 text-amber-300 px-1 py-0.5 rounded text-[8.5px] font-bold font-mono">DRAG</span>
+              <span>Refine points</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="bg-amber-500/20 text-amber-300 px-1 py-0.5 rounded text-[8.5px] font-bold font-mono font-mono">CLICK EDGE</span>
+              <span>Insert point</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="bg-amber-500/20 text-amber-300 px-1 py-0.5 rounded text-[8.5px] font-bold font-mono">DBL CLICK</span>
+              <span>Remove point</span>
+            </div>
+          </div>
+          {lassoPoints && lassoPoints.length > 0 && (
+            <>
+              <div className="h-6 w-[1px] bg-neutral-800 mx-1" />
+              <button
+                type="button"
+                onClick={() => setLassoPoints([])}
+                className="px-2.5 py-1.5 bg-rose-600/90 hover:bg-rose-500 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer font-mono"
               >
                 Clear
               </button>
