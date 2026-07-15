@@ -4199,19 +4199,11 @@ export default function CanvasArea({
       ctx.globalAlpha = combinedAlpha;
 
       // 1. Drop Shadow Effect
-      const shadowActive = (drawObj.shadow && drawObj.shadow.enabled) || !!drawObj.shadowEnabled;
-      if (shadowActive) {
-        if (drawObj.shadow && drawObj.shadow.enabled) {
-          ctx.shadowColor = drawObj.shadow.color || 'rgba(0,0,0,0.4)';
-          ctx.shadowBlur = drawObj.shadow.blur ?? 10;
-          ctx.shadowOffsetX = drawObj.shadow.offsetX ?? 5;
-          ctx.shadowOffsetY = drawObj.shadow.offsetY ?? 5;
-        } else {
-          ctx.shadowColor = drawObj.shadowColor || '#000000';
-          ctx.shadowBlur = drawObj.shadowBlur ?? 4;
-          ctx.shadowOffsetX = drawObj.shadowOffsetX ?? 2;
-          ctx.shadowOffsetY = drawObj.shadowOffsetY ?? 2;
-        }
+      if (drawObj.shadow && drawObj.shadow.enabled) {
+        ctx.shadowColor = drawObj.shadow.color || 'rgba(0,0,0,0.4)';
+        ctx.shadowBlur = drawObj.shadow.blur ?? 10;
+        ctx.shadowOffsetX = drawObj.shadow.offsetX ?? 5;
+        ctx.shadowOffsetY = drawObj.shadow.offsetY ?? 5;
       } else {
         ctx.shadowColor = 'transparent';
         ctx.shadowBlur = 0;
