@@ -397,6 +397,36 @@ const deformWithCage = (p: Point, cageState: any): Point => {
   };
 };
 
+const deformLocalPoint = (p: Point, drawObj: VectorObject, idx?: number): Point => {
+  try {
+    if (drawObj.lassoControlPoints && drawObj.lassoControlPoints.length > 0) {
+      return deformWithLassoControlPoints(p, drawObj.lassoControlPoints);
+    }
+    if (drawObj.lassoDeformState && drawObj.lassoDeformState.active) {
+      return deformWithLasso(p, drawObj);
+    }
+    if (drawObj.cageState && drawObj.cageState.active) {
+      return deformWithCage(p, drawObj.cageState);
+    }
+    if (drawObj.meshState && drawObj.meshState.active) {
+      const bounds = calculateBoundingBox(drawObj.points);
+      return getWarpedPoint(p, drawObj.meshState, bounds);
+    }
+    if (drawObj.splineActive && drawObj.splineControlPoints && drawObj.splineControlPoints.length > 0 && idx !== undefined) {
+      return deformWithSpline(p, drawObj, idx, drawObj.points.length);
+    }
+    if (drawObj.pins && drawObj.pins.length > 0) {
+      return deformWithPuppetPins(p, drawObj.pins);
+    }
+    if (drawObj.smartWarp && drawObj.smartWarp.pins && drawObj.smartWarp.pins.length > 0) {
+      return deformWithSmartWarp(p, drawObj.smartWarp);
+    }
+  } catch (err) {
+    console.error("deformLocalPoint error, falling back to original point:", err);
+  }
+  return p;
+};
+
 // Textured triangle renderer for 2D HTML5 Canvas
 const drawTexturedTriangle = (
   ctx: CanvasRenderingContext2D,
@@ -697,10 +727,25 @@ interface CanvasAreaProps {
   setLiquifySettings?: React.Dispatch<React.SetStateAction<LiquifyBrushSettings>>;
   hideLassoSelection?: boolean;
   setHideLassoSelection?: React.Dispatch<React.SetStateAction<boolean>>;
+  fslPoints?: Point[];
+  setFslPoints?: React.Dispatch<React.SetStateAction<Point[]>>;
+  hideFslSelection?: boolean;
+  setHideFslSelection?: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
 const initializeCageState = (obj: VectorObject): any => {
-  const bounds = calculateBoundingBox(obj.points);
+  // Get all points of the object to compute its bounding box reliably
+  let pts = obj.points;
+  if (!pts || pts.length === 0) {
+    if (obj.subPaths && obj.subPaths.length > 0) {
+      pts = obj.subPaths.flat();
+    }
+  }
+  if (!pts || pts.length === 0) {
+    pts = [{ x: -100, y: -100 }, { x: 100, y: 100 }];
+  }
+
+  const bounds = calculateBoundingBox(pts);
   const minX = bounds.x;
   const minY = bounds.y;
   const maxX = bounds.x + bounds.width;
@@ -817,6 +862,10 @@ export default function CanvasArea({
   setLiquifySettings,
   hideLassoSelection = false,
   setHideLassoSelection,
+  fslPoints = [],
+  setFslPoints,
+  hideFslSelection = false,
+  setHideFslSelection,
 }: CanvasAreaProps) {
   const activeObjects: { [id: string]: VectorObject } = React.useMemo(() => {
     if (autoTween) {
@@ -1682,10 +1731,10 @@ export default function CanvasArea({
     // Free Edit / Crop Selection tool pointer down
     if (activeTool === 'FSL') {
       // 1. Check if clicked near an existing lasso selection point
-      if (lassoPoints && lassoPoints.length > 0) {
+      if (fslPoints && fslPoints.length > 0) {
         let clickedPtIdx = -1;
         let minDist = 14 / zoomScale;
-        lassoPoints.forEach((pt, idx) => {
+        fslPoints.forEach((pt, idx) => {
           const d = distance(coords, pt);
           if (d < minDist) {
             minDist = d;
@@ -1696,23 +1745,23 @@ export default function CanvasArea({
         if (clickedPtIdx !== -1) {
           // Double click removes the point
           if (e.detail === 2) {
-            const nextLasso = lassoPoints.filter((_, idx) => idx !== clickedPtIdx);
-            setLassoPoints(nextLasso);
+            const nextLasso = fslPoints.filter((_, idx) => idx !== clickedPtIdx);
+            setFslPoints?.(nextLasso);
             return;
           }
-          setDragMode('drag-lasso-selection-point');
+          setDragMode('drag-fsl-selection-point');
           setDraggedMeshPointIndex(clickedPtIdx);
           setDragStartPoint(coords);
           return;
         }
 
         // 2. Check if clicked on a segment to insert a new point
-        if (lassoPoints.length >= 3) {
+        if (fslPoints.length >= 3) {
           let segmentIdx = -1;
           const segmentThreshold = 10 / zoomScale;
-          for (let i = 0; i < lassoPoints.length; i++) {
-            const p1 = lassoPoints[i];
-            const p2 = lassoPoints[(i + 1) % lassoPoints.length];
+          for (let i = 0; i < fslPoints.length; i++) {
+            const p1 = fslPoints[i];
+            const p2 = fslPoints[(i + 1) % fslPoints.length];
             const d = pointToSegmentDistance(coords, p1, p2);
             if (d < segmentThreshold) {
               segmentIdx = i;
@@ -1722,10 +1771,10 @@ export default function CanvasArea({
 
           if (segmentIdx !== -1) {
             // Insert coords at index segmentIdx + 1
-            const nextLasso = [...lassoPoints];
+            const nextLasso = [...fslPoints];
             nextLasso.splice(segmentIdx + 1, 0, coords);
-            setLassoPoints(nextLasso);
-            setDragMode('drag-lasso-selection-point');
+            setFslPoints?.(nextLasso);
+            setDragMode('drag-fsl-selection-point');
             setDraggedMeshPointIndex(segmentIdx + 1);
             setDragStartPoint(coords);
             return;
@@ -1733,9 +1782,16 @@ export default function CanvasArea({
         }
       }
 
-      // 3. Otherwise, start a new lasso draw to redefine the area
-      setIsDrawingLasso(true);
-      setLassoPoints([coords]);
+      // 3. Otherwise, if the loop is empty (or < 3 points), start drawing a new lasso
+      if (!fslPoints || fslPoints.length < 3) {
+        setIsDrawingLasso(true);
+        setFslPoints?.([coords]);
+      } else {
+        // Allow dragging the entire selection loop to prevent accidental loss
+        setDragMode('drag-fsl-entire-area');
+        setDragStartPoint(coords);
+        (window as any)._initialFslPoints = [...fslPoints];
+      }
       return;
     }
 
@@ -2773,6 +2829,30 @@ export default function CanvasArea({
       return;
     }
 
+    if (dragMode === 'drag-fsl-selection-point' && draggedMeshPointIndex !== null) {
+      setFslPoints?.(prev => {
+        const next = [...prev];
+        if (next[draggedMeshPointIndex]) {
+          next[draggedMeshPointIndex] = coords;
+        }
+        return next;
+      });
+      return;
+    }
+
+    if (dragMode === 'drag-fsl-entire-area') {
+      const dx = coords.x - dragStartPoint.x;
+      const dy = coords.y - dragStartPoint.y;
+      const initialPoints = (window as any)._initialFslPoints || [];
+      if (initialPoints.length > 0) {
+        setFslPoints?.(initialPoints.map((p: Point) => ({
+          x: p.x + dx,
+          y: p.y + dy
+        })));
+      }
+      return;
+    }
+
     if (dragMode === 'puppetPin' && selectedObjectId && draggedMeshPointIndex !== null) {
       const obj = objects[selectedObjectId];
       if (obj) {
@@ -2909,63 +2989,71 @@ export default function CanvasArea({
         const bStrength = liquifySettings?.brushStrength ?? 0.3;
         const bMode = liquifySettings?.brushMode ?? 'push';
 
-        const updatedPoints = obj.meshState.points.map((pt: any) => {
-          // Distance from brush center (the previous mouse position or the current mouse position in local space)
-          const dx = pt.currentX - currentLocal.x;
-          const dy = pt.currentY - currentLocal.y;
-          const distVal = Math.sqrt(dx * dx + dy * dy);
+        let pointsCopy = [...obj.meshState.points];
+        
+        const stepDist = Math.sqrt(vx * vx + vy * vy);
+        // Step size is 15% of brush size, but at least 5px, to prevent too many steps.
+        const stepSize = Math.max(5, bSize * 0.15);
+        const stepsCount = Math.max(1, Math.min(10, Math.ceil(stepDist / stepSize)));
+        
+        for (let step = 1; step <= stepsCount; step++) {
+          const t = step / stepsCount;
+          const interLocal = {
+            x: prevLocal.x + (currentLocal.x - prevLocal.x) * t,
+            y: prevLocal.y + (currentLocal.y - prevLocal.y) * t
+          };
+          const subVx = vx / stepsCount;
+          const subVy = vy / stepsCount;
           
-          if (distVal < bSize) {
-            // Smooth falloff weight (quadratic)
-            const w = Math.pow(1 - distVal / bSize, 2);
-            let nx = pt.currentX;
-            let ny = pt.currentY;
+          pointsCopy = pointsCopy.map((pt: any) => {
+            const dx = pt.currentX - interLocal.x;
+            const dy = pt.currentY - interLocal.y;
+            const distVal = Math.sqrt(dx * dx + dy * dy);
+            
+            if (distVal < bSize) {
+              const w = Math.pow(1 - distVal / bSize, 2);
+              let nx = pt.currentX;
+              let ny = pt.currentY;
 
-            if (bMode === 'push') {
-              nx += vx * w * bStrength;
-              ny += vy * w * bStrength;
-            } else if (bMode === 'pinch') {
-              // Pull towards brush center
-              const pvx = currentLocal.x - pt.currentX;
-              const pvy = currentLocal.y - pt.currentY;
-              nx += pvx * w * bStrength * 0.4;
-              ny += pvy * w * bStrength * 0.4;
-            } else if (bMode === 'bulge') {
-              // Push away from brush center
-              const bvx = pt.currentX - currentLocal.x;
-              const bvy = pt.currentY - currentLocal.y;
-              nx += bvx * w * bStrength * 0.4;
-              ny += bvy * w * bStrength * 0.4;
-            } else if (bMode === 'twist-cw') {
-              // Rotate CW around brush center
-              const rx = pt.currentX - currentLocal.x;
-              const ry = pt.currentY - currentLocal.y;
-              // tangent is (-ry, rx)
-              nx += -ry * w * bStrength * 0.15;
-              ny += rx * w * bStrength * 0.15;
-            } else if (bMode === 'twist-ccw') {
-              // Rotate CCW around brush center
-              const rx = pt.currentX - currentLocal.x;
-              const ry = pt.currentY - currentLocal.y;
-              // tangent is (ry, -rx)
-              nx += ry * w * bStrength * 0.15;
-              ny += -rx * w * bStrength * 0.15;
-            } else if (bMode === 'restore') {
-              // Pull back to original coordinates
-              const ox = pt.originalX - pt.currentX;
-              const oy = pt.originalY - pt.currentY;
-              nx += ox * w * bStrength * 0.4;
-              ny += oy * w * bStrength * 0.4;
+              if (bMode === 'push') {
+                nx += subVx * w * bStrength;
+                ny += subVy * w * bStrength;
+              } else if (bMode === 'pinch') {
+                const pvx = interLocal.x - pt.currentX;
+                const pvy = interLocal.y - pt.currentY;
+                nx += pvx * w * bStrength * 0.4 / stepsCount;
+                ny += pvy * w * bStrength * 0.4 / stepsCount;
+              } else if (bMode === 'bulge') {
+                const bvx = pt.currentX - interLocal.x;
+                const bvy = pt.currentY - interLocal.y;
+                nx += bvx * w * bStrength * 0.4 / stepsCount;
+                ny += bvy * w * bStrength * 0.4 / stepsCount;
+              } else if (bMode === 'twist-cw') {
+                const rx = pt.currentX - interLocal.x;
+                const ry = pt.currentY - interLocal.y;
+                nx += -ry * w * bStrength * 0.15 / stepsCount;
+                ny += rx * w * bStrength * 0.15 / stepsCount;
+              } else if (bMode === 'twist-ccw') {
+                const rx = pt.currentX - interLocal.x;
+                const ry = pt.currentY - interLocal.y;
+                nx += ry * w * bStrength * 0.15 / stepsCount;
+                ny += -rx * w * bStrength * 0.15 / stepsCount;
+              } else if (bMode === 'restore') {
+                const ox = pt.originalX - pt.currentX;
+                const oy = pt.originalY - pt.currentY;
+                nx += ox * w * bStrength * 0.4 / stepsCount;
+                ny += oy * w * bStrength * 0.4 / stepsCount;
+              }
+
+              return {
+                ...pt,
+                currentX: Number(nx.toFixed(2)),
+                currentY: Number(ny.toFixed(2))
+              };
             }
-
-            return {
-              ...pt,
-              currentX: Number(nx.toFixed(2)),
-              currentY: Number(ny.toFixed(2))
-            };
-          }
-          return pt;
-        });
+            return pt;
+          });
+        }
 
         setObjects(prev => {
           if (!prev[selectedObjectId] || !prev[selectedObjectId].meshState) return prev;
@@ -2975,7 +3063,7 @@ export default function CanvasArea({
               ...prev[selectedObjectId],
               meshState: {
                 ...prev[selectedObjectId].meshState!,
-                points: updatedPoints
+                points: pointsCopy
               }
             }
           };
@@ -3188,9 +3276,14 @@ export default function CanvasArea({
       return;
     }
 
-    if (isDrawingLasso && (activeTool === 'LSO' || activeTool === 'FSL')) {
-      setLassoPoints(prev => [...prev, coords]);
-      return;
+    if (isDrawingLasso) {
+      if (activeTool === 'LSO') {
+        setLassoPoints(prev => [...prev, coords]);
+        return;
+      } else if (activeTool === 'FSL') {
+        setFslPoints?.(prev => [...prev, coords]);
+        return;
+      }
     }
 
     if (isDrawing && activeTool === 'ERS') {
@@ -4029,30 +4122,7 @@ export default function CanvasArea({
       ctx.save();
 
       // Calculate warped local points
-      const bounds = calculateBoundingBox(drawObj.points);
-      let localPoints = drawObj.points;
-      
-      if (drawObj.lassoControlPoints && drawObj.lassoControlPoints.length > 0) {
-        localPoints = drawObj.points.map((p, idx) => {
-          const wasInsideLasso = drawObj.lassoControlPoints?.some(cp => cp.subPathIndex === undefined && cp.pointIndex === idx);
-          if (wasInsideLasso && drawObj.lassoControlPoints) {
-            return deformWithLassoControlPoints(p, drawObj.lassoControlPoints);
-          }
-          return p;
-        });
-      } else if (drawObj.lassoDeformState && drawObj.lassoDeformState.active) {
-        localPoints = drawObj.points.map(p => deformWithLasso(p, drawObj));
-      } else if (drawObj.cageState && drawObj.cageState.active) {
-        localPoints = drawObj.points.map(p => deformWithCage(p, drawObj.cageState));
-      } else if (drawObj.meshState && drawObj.meshState.active) {
-        localPoints = drawObj.points.map(p => getWarpedPoint(p, drawObj.meshState, bounds));
-      } else if (drawObj.splineActive && drawObj.splineControlPoints && drawObj.splineControlPoints.length > 0) {
-        localPoints = drawObj.points.map((p, idx) => deformWithSpline(p, drawObj, idx, drawObj.points.length));
-      } else if (drawObj.pins && drawObj.pins.length > 0) {
-        localPoints = drawObj.points.map(p => deformWithPuppetPins(p, drawObj.pins));
-      } else if (drawObj.smartWarp && drawObj.smartWarp.pins && drawObj.smartWarp.pins.length > 0) {
-        localPoints = drawObj.points.map(p => deformWithSmartWarp(p, drawObj.smartWarp));
-      }
+      const localPoints = drawObj.points.map((p, idx) => deformLocalPoint(p, drawObj, idx));
 
       // Get pivot and project points to world space
       const pivot = drawObj.pivots[0] || { localX: 0, localY: 0 };
@@ -4263,7 +4333,10 @@ export default function CanvasArea({
             // Clip 2: Only draw inside the lasso selection path
             ctx.beginPath();
             const localPivot = drawObj.pivots[0] || { localX: 0, localY: 0 };
-            const worldLassoPoints = fill.localLassoPoints.map(p => localToWorld(p, drawObj.transform, localPivot));
+            const worldLassoPoints = fill.localLassoPoints.map(p => {
+              const deformed = deformLocalPoint(p, drawObj);
+              return localToWorld(deformed, drawObj.transform, localPivot);
+            });
             if (worldLassoPoints.length > 0) {
               ctx.moveTo(worldLassoPoints[0].x, worldLassoPoints[0].y);
               for (let i = 1; i < worldLassoPoints.length; i++) {
@@ -4385,8 +4458,9 @@ export default function CanvasArea({
           const hasLassoDeformImage = !!(drawObj.lassoDeformState && drawObj.lassoDeformState.active && drawObj.lassoDeformState.lassoPoints && drawObj.lassoDeformState.lassoPoints.length >= 3);
           const hasMeshState = drawObj.meshState && drawObj.meshState.active;
           const hasPuppetPins = drawObj.pins && drawObj.pins.length > 0;
-
-          if (hasLassoDeformImage || hasMeshState || hasPuppetPins) {
+          const hasCageState = !!(drawObj.cageState && drawObj.cageState.active && drawObj.cageState.points && drawObj.cageState.points.length > 0);
+          
+          if (hasLassoDeformImage || hasMeshState || hasPuppetPins || hasCageState) {
             // Draw textured mesh deformation!
             const COLS = 24;
             const ROWS = 24;
@@ -4412,6 +4486,8 @@ export default function CanvasArea({
                   dp = getWarpedPoint(p, drawObj.meshState, imgBounds);
                 } else if (hasPuppetPins) {
                   dp = deformWithPuppetPins(p, drawObj.pins!);
+                } else if (hasCageState) {
+                  dp = deformWithCage(p, drawObj.cageState);
                 }
                 
                 vertices[r][c] = dp;
@@ -4532,14 +4608,17 @@ export default function CanvasArea({
           
           // Draw any subPaths of merged drawings
           if (drawObj.subPaths && drawObj.subPaths.length > 0) {
-            drawObj.subPaths.forEach(sub => {
-              let localSubPoints = sub;
-              if (drawObj.meshState && drawObj.meshState.active) {
-                const subBounds = calculateBoundingBox(sub);
-                localSubPoints = sub.map(p => getWarpedPoint(p, drawObj.meshState, subBounds));
-              } else if (drawObj.pins && drawObj.pins.length > 0) {
-                localSubPoints = sub.map(p => deformWithPuppetPins(p, drawObj.pins));
-              }
+            drawObj.subPaths.forEach((sub, subIdx) => {
+              const localSubPoints = sub.map((p, idx) => {
+                if (drawObj.lassoControlPoints && drawObj.lassoControlPoints.length > 0) {
+                  const wasInsideLasso = drawObj.lassoControlPoints.some(cp => cp.subPathIndex === subIdx && cp.pointIndex === idx);
+                  if (wasInsideLasso) {
+                    return deformWithLassoControlPoints(p, drawObj.lassoControlPoints);
+                  }
+                  return p;
+                }
+                return deformLocalPoint(p, drawObj, idx);
+              });
               const worldSubPoints = localSubPoints.map(p => {
                 const wp = localToWorld(p, drawObj.transform, pivot);
                 return {
@@ -4637,7 +4716,10 @@ export default function CanvasArea({
           // Clip 2: Only draw inside the lasso selection path
           ctx.beginPath();
           const localPivot = obj.pivots[0] || { localX: 0, localY: 0 };
-          const worldLassoPoints = fill.localLassoPoints.map(p => localToWorld(p, obj.transform, localPivot));
+          const worldLassoPoints = fill.localLassoPoints.map(p => {
+            const deformed = deformLocalPoint(p, obj);
+            return localToWorld(deformed, obj.transform, localPivot);
+          });
           if (worldLassoPoints.length > 0) {
             ctx.moveTo(worldLassoPoints[0].x, worldLassoPoints[0].y);
             for (let i = 1; i < worldLassoPoints.length; i++) {
@@ -5492,7 +5574,7 @@ export default function CanvasArea({
       ctx.restore();
     }
 
-    // Render current active Lasso selection path
+    // Render current active Lasso selection path (LSO)
     if (!isRecording && lassoPoints && lassoPoints.length > 0 && !hideLassoSelection) {
       ctx.save();
       ctx.beginPath();
@@ -5512,18 +5594,40 @@ export default function CanvasArea({
       ctx.setLineDash([6, 4]);
       ctx.stroke();
       ctx.restore();
+    }
+
+    // Render current active Free Selection Lasso path (FSL)
+    if (!isRecording && fslPoints && fslPoints.length > 0 && !hideFslSelection) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(fslPoints[0].x, fslPoints[0].y);
+      for (let i = 1; i < fslPoints.length; i++) {
+        ctx.lineTo(fslPoints[i].x, fslPoints[i].y);
+      }
+      ctx.closePath();
+      
+      // Beautiful violet glow fill for FSL
+      ctx.fillStyle = 'rgba(139, 92, 246, 0.08)'; // violet-500
+      ctx.fill();
+      
+      // Beautiful neon-violet dashed outline
+      ctx.strokeStyle = '#8B5CF6'; // violet-500
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 4]);
+      ctx.stroke();
+      ctx.restore();
 
       // Render draggable control point handles if in Free Selection mode
       if (activeTool === 'FSL') {
         ctx.save();
-        lassoPoints.forEach((pt, idx) => {
-          const isDraggingThis = dragMode === 'drag-lasso-selection-point' && draggedMeshPointIndex === idx;
+        fslPoints.forEach((pt, idx) => {
+          const isDraggingThis = dragMode === 'drag-fsl-selection-point' && draggedMeshPointIndex === idx;
           
           // Outer glow/ring
           ctx.beginPath();
           ctx.arc(pt.x, pt.y, (isDraggingThis ? 8 : 6) / zoomScale, 0, Math.PI * 2);
-          ctx.fillStyle = isDraggingThis ? '#F59E0B' : '#171717';
-          ctx.strokeStyle = '#F59E0B';
+          ctx.fillStyle = isDraggingThis ? '#8B5CF6' : '#171717';
+          ctx.strokeStyle = '#8B5CF6';
           ctx.lineWidth = 1.5 / zoomScale;
           ctx.fill();
           ctx.stroke();
@@ -5531,7 +5635,7 @@ export default function CanvasArea({
           // Inner dot
           ctx.beginPath();
           ctx.arc(pt.x, pt.y, (isDraggingThis ? 4 : 2) / zoomScale, 0, Math.PI * 2);
-          ctx.fillStyle = isDraggingThis ? '#FFFFFF' : '#F59E0B';
+          ctx.fillStyle = isDraggingThis ? '#FFFFFF' : '#8B5CF6';
           ctx.fill();
         });
         ctx.restore();
@@ -5608,6 +5712,9 @@ export default function CanvasArea({
     zoomScale,
     zoomOffset,
     lassoPoints,
+    fslPoints,
+    hideLassoSelection,
+    hideFslSelection,
     lassoMode,
     penLassoPoints,
     artboardW,
@@ -5726,12 +5833,12 @@ export default function CanvasArea({
               <span>Remove point</span>
             </div>
           </div>
-          {lassoPoints && lassoPoints.length > 0 && (
+          {fslPoints && fslPoints.length > 0 && (
             <>
               <div className="h-6 w-[1px] bg-neutral-800 mx-1" />
               <button
                 type="button"
-                onClick={() => setLassoPoints([])}
+                onClick={() => setFslPoints?.([])}
                 className="px-2.5 py-1.5 bg-rose-600/90 hover:bg-rose-500 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer font-mono"
               >
                 Clear

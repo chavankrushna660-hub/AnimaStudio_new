@@ -122,6 +122,10 @@ interface RightPanelProps {
   setLiquifySettings?: React.Dispatch<React.SetStateAction<LiquifyBrushSettings>>;
   hideLassoSelection?: boolean;
   setHideLassoSelection?: React.Dispatch<React.SetStateAction<boolean>>;
+  fslPoints?: Point[];
+  setFslPoints?: React.Dispatch<React.SetStateAction<Point[]>>;
+  hideFslSelection?: boolean;
+  setHideFslSelection?: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
 const isChildInsideParent = (
@@ -186,6 +190,10 @@ export default function RightPanel({
   setLiquifySettings,
   hideLassoSelection = false,
   setHideLassoSelection,
+  fslPoints = [],
+  setFslPoints,
+  hideFslSelection = false,
+  setHideFslSelection,
 }: RightPanelProps) {
   // Batch/Smart Controls check state
   const [smartCheckedIds, setSmartCheckedIds] = useState<{ [id: string]: boolean }>({});
@@ -673,7 +681,13 @@ export default function RightPanel({
 
   // Cage Deform helpers
   const handleInitCage = (obj: VectorObject) => {
-    const box = calculateBoundingBox(obj.points && obj.points.length > 0 ? obj.points : [{ x: -50, y: -50 }, { x: 50, y: 50 }]);
+    let pts = obj.points;
+    if (!pts || pts.length === 0) {
+      if (obj.subPaths && obj.subPaths.length > 0) {
+        pts = obj.subPaths.flat();
+      }
+    }
+    const box = calculateBoundingBox(pts && pts.length > 0 ? pts : [{ x: -100, y: -100 }, { x: 100, y: 100 }]);
     const padX = box.width * 0.15 || 15;
     const padY = box.height * 0.15 || 15;
     const minX = box.x - padX;
@@ -2046,7 +2060,11 @@ export default function RightPanel({
                   </span>
                   <div className="flex items-center gap-1.5">
                     <button
-                      onClick={() => setHideLassoSelection?.(!hideLassoSelection)}
+                      onClick={() => {
+                        if (lassoPoints && lassoPoints.length > 0) {
+                          setHideLassoSelection?.(!hideLassoSelection);
+                        }
+                      }}
                       className={`text-[10px] font-black px-2 py-1 rounded-lg border transition-all font-mono cursor-pointer ${
                         hideLassoSelection
                           ? 'bg-amber-500/20 text-amber-300 border-amber-500/30 hover:bg-amber-500/30'
@@ -2246,6 +2264,55 @@ export default function RightPanel({
                       <button onClick={() => handleLassoNudge('skewY', 1)} className="flex-1 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold cursor-pointer">+1°</button>
                       <button onClick={() => handleLassoNudge('skewY', 5)} className="flex-1 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[9px] font-bold cursor-pointer">+5°</button>
                     </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* GLOBAL FREE SELECTION LASSO PANEL */}
+            {fslPoints && fslPoints.length >= 3 && (
+              <div className="space-y-4 bg-violet-500/10 p-4 rounded-2xl border border-violet-500/30 shadow-lg shadow-black/30">
+                <div className="flex items-center justify-between border-b border-violet-500/20 pb-2.5">
+                  <span className="text-xs font-black uppercase tracking-wider text-violet-400 flex items-center gap-1.5 font-mono animate-pulse">
+                    <Sparkles className="w-4 h-4 text-violet-400" />
+                    Adjustable Selection (FSL)
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => {
+                        if (fslPoints && fslPoints.length > 0) {
+                          setHideFslSelection?.(!hideFslSelection);
+                        }
+                      }}
+                      className={`text-[10px] font-black px-2 py-1 rounded-lg border transition-all font-mono cursor-pointer ${
+                        hideFslSelection
+                          ? 'bg-violet-500/20 text-violet-300 border-violet-500/30 hover:bg-violet-500/30'
+                          : 'bg-neutral-850 text-neutral-300 border-neutral-700 hover:bg-neutral-800'
+                      }`}
+                      title="Hide or show the FSL outline on canvas"
+                    >
+                      {hideFslSelection ? 'SHOW FSL' : 'HIDE FSL'}
+                    </button>
+                    <button
+                      onClick={() => setFslPoints?.([])}
+                      className="text-[10px] font-black px-2 py-1 rounded-lg border bg-rose-500/10 text-rose-300 border-rose-500/30 hover:bg-rose-500/20 hover:text-rose-200 transition-all font-mono cursor-pointer"
+                      title="Clear FSL Loop"
+                    >
+                      CLEAR FSL
+                    </button>
+                  </div>
+                </div>
+
+                {/* FSL Info HUD */}
+                <div className="bg-neutral-900/60 border border-neutral-800/60 rounded-xl p-3 text-[10.5px] leading-relaxed text-neutral-300 space-y-1">
+                  <div className="font-bold text-violet-400 flex items-center gap-1 font-mono">
+                    <Info className="w-3.5 h-3.5" /> Free Selection Active
+                  </div>
+                  <p className="text-neutral-400">
+                    You can drag the control points to adjust the area, drag the background to move it, or insert new points by clicking on the edges.
+                  </p>
+                  <div className="flex justify-between items-center pt-2 border-t border-neutral-800/40">
+                    <span className="font-mono text-[9px] text-neutral-400">Points: <strong className="text-violet-400 font-bold">{fslPoints.length}</strong></span>
                   </div>
                 </div>
               </div>

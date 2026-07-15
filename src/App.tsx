@@ -486,10 +486,12 @@ export default function App() {
 
   // Lasso selection area points state
   const [lassoPoints, setLassoPoints] = useState<Point[]>([]);
+  const [fslPoints, setFslPoints] = useState<Point[]>([]);
   const [lassoMode, setLassoMode] = useState<'freehand' | 'pen'>('freehand');
   const [penLassoPoints, setPenLassoPoints] = useState<Point[]>([]);
   const [fillToolColor, setFillToolColor] = useState<string>('#4CAF50');
   const [hideLassoSelection, setHideLassoSelection] = useState<boolean>(false);
+  const [hideFslSelection, setHideFslSelection] = useState<boolean>(false);
 
   // Brush Custom Settings for lifelike drawing
   const [brushSettings, setBrushSettings] = useState<BrushSettings>({
@@ -2406,6 +2408,7 @@ export default function App() {
     setFrames([{ index: 0, objects: {} }]);
     setCurrentFrameIndex(0);
     setLassoPoints([]);
+    setFslPoints([]);
     setPenLassoPoints([]);
     setSmartPinnedIds([]);
     setDraft360Views([]);
@@ -2414,9 +2417,10 @@ export default function App() {
     setSelectedDeformPointIndex(null);
     setSelectedDeformPointType(null);
     setOriginalDeformPointCoords(null);
+    setHideLassoSelection(false);
+    setHideFslSelection(false);
     setUndoStack([]);
     setRedoStack([]);
-    setHideLassoSelection(false);
   };
 
   // Timeline operations
@@ -3047,6 +3051,8 @@ export default function App() {
           setLayers={setLayers}
           lassoPoints={lassoPoints}
           setLassoPoints={setLassoPoints}
+          fslPoints={fslPoints}
+          setFslPoints={setFslPoints}
           lassoMode={lassoMode}
           setLassoMode={setLassoMode}
           penLassoPoints={penLassoPoints}
@@ -3077,6 +3083,8 @@ export default function App() {
           setLiquifySettings={setLiquifySettings}
           hideLassoSelection={hideLassoSelection}
           setHideLassoSelection={setHideLassoSelection}
+          hideFslSelection={hideFslSelection}
+          setHideFslSelection={setHideFslSelection}
         />
 
         {/* Right Collapsible Properties, Sliders, Smart Pinned Controls */}
@@ -3113,6 +3121,8 @@ export default function App() {
           setActiveTool={setActiveTool}
           lassoPoints={lassoPoints}
           setLassoPoints={setLassoPoints}
+          fslPoints={fslPoints}
+          setFslPoints={setFslPoints}
           lassoMode={lassoMode}
           setLassoMode={setLassoMode}
           penLassoPoints={penLassoPoints}
@@ -3135,6 +3145,8 @@ export default function App() {
           setLiquifySettings={setLiquifySettings}
           hideLassoSelection={hideLassoSelection}
           setHideLassoSelection={setHideLassoSelection}
+          hideFslSelection={hideFslSelection}
+          setHideFslSelection={setHideFslSelection}
         />
       </div>
 

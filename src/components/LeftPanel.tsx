@@ -350,14 +350,6 @@ export default function LeftPanel({
               />
             ) : (
               <span 
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (selectedObjectId === obj.id) {
-                    setSelectedObjectId(null);
-                  } else {
-                    setSelectedObjectId(obj.id);
-                  }
-                }}
                 onDoubleClick={(e) => startRename(obj, e)}
                 className="text-xs truncate font-bold group-hover/item:text-white transition-colors cursor-pointer"
                 title="Click to select/unselect, Double click to rename"
