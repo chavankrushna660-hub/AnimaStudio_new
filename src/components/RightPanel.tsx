@@ -5046,6 +5046,185 @@ export default function RightPanel({
                     </div>
                   </div>
 
+                  {/* Selected Object Adjustments & Effects Sub-section */}
+                  <div className="pt-3 border-t border-neutral-800/40 space-y-3">
+                    <span className="text-[10px] text-amber-400 block font-black uppercase tracking-wider flex items-center gap-1.5">
+                      <Feather className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
+                      Adjust Selected Drawing Style
+                    </span>
+
+                    {/* Thickness / Stroke Width Slider */}
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-neutral-400 font-bold uppercase tracking-wide">Drawing Thickness / Width</span>
+                        <span className="text-amber-400 font-black text-[10px]">{selectedObject.strokeWidth}px</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="1"
+                        max="120"
+                        step="0.5"
+                        value={selectedObject.strokeWidth || 5}
+                        onChange={(e) => updateObject(selectedObject.id, { strokeWidth: parseFloat(e.target.value) })}
+                        className="w-full h-1 bg-neutral-950 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                      />
+                    </div>
+
+                    {/* Opacity Slider */}
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-neutral-400 font-bold uppercase tracking-wide">Drawing Opacity</span>
+                        <span className="text-amber-400 font-black text-[10px]">{Math.round((selectedObject.opacity !== undefined ? selectedObject.opacity : 1) * 100)}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0.05"
+                        max="1"
+                        step="0.01"
+                        value={selectedObject.opacity !== undefined ? selectedObject.opacity : 1}
+                        onChange={(e) => updateObject(selectedObject.id, { opacity: parseFloat(e.target.value) })}
+                        className="w-full h-1 bg-neutral-950 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                      />
+                    </div>
+
+                    {/* Stroke / Color Opacity Slider */}
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-neutral-400 font-bold uppercase tracking-wide">Drawing Color Opacity</span>
+                        <span className="text-amber-400 font-black text-[10px]">{Math.round((selectedObject.strokeOpacity !== undefined ? selectedObject.strokeOpacity : 1) * 100)}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0.05"
+                        max="1"
+                        step="0.01"
+                        value={selectedObject.strokeOpacity !== undefined ? selectedObject.strokeOpacity : 1}
+                        onChange={(e) => updateObject(selectedObject.id, { strokeOpacity: parseFloat(e.target.value) })}
+                        className="w-full h-1 bg-neutral-950 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                      />
+                    </div>
+
+                    {/* Blur Effect Slider */}
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-neutral-400 font-bold uppercase">Blur Effect</span>
+                        <span className="text-amber-400 font-black text-[10px]">{selectedObject.blur || 0}px</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="30"
+                        step="0.5"
+                        value={selectedObject.blur || 0}
+                        onChange={(e) => updateObject(selectedObject.id, { blur: parseFloat(e.target.value) })}
+                        className="w-full h-1 bg-neutral-950 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                      />
+                    </div>
+
+                    {/* Fill Color Active Toggle */}
+                    <div className="flex items-center justify-between py-1.5 bg-neutral-950/30 px-2 rounded-lg border border-neutral-800/40">
+                      <div className="flex flex-col">
+                        <span className="text-[10px] text-neutral-300 font-bold uppercase">Apply Fill Color</span>
+                        <span className="text-[8px] text-neutral-500">If disabled, drawing fill is transparent</span>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={selectedObject.fillColor !== 'transparent'}
+                          onChange={(e) => {
+                            const isChecked = e.target.checked;
+                            updateObject(selectedObject.id, {
+                              fillColor: isChecked ? '#ffffff' : 'transparent'
+                            });
+                          }}
+                          className="sr-only peer"
+                        />
+                        <div className="w-8 h-4 bg-neutral-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-neutral-400 after:border-neutral-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-amber-500 peer-checked:after:bg-white" />
+                      </label>
+                    </div>
+
+                    {/* Drop Shadow Section */}
+                    <div className="space-y-2 pt-1 border-t border-neutral-800/20">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-neutral-300 font-bold uppercase tracking-wider">
+                          👥 Drop Shadow Effect
+                        </span>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={!!selectedObject.shadowEnabled}
+                            onChange={(e) => updateObject(selectedObject.id, { shadowEnabled: e.target.checked })}
+                            className="sr-only peer"
+                          />
+                          <div className="w-8 h-4 bg-neutral-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-neutral-400 after:border-neutral-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-amber-500 peer-checked:after:bg-white" />
+                        </label>
+                      </div>
+
+                      {selectedObject.shadowEnabled && (
+                        <div className="space-y-2 pt-1.5 border-t border-neutral-800/30 animate-fade-in text-[10px]">
+                          {/* Shadow Color */}
+                          <div className="flex items-center justify-between">
+                            <span className="text-[9px] text-neutral-500 uppercase font-bold">Shadow Color</span>
+                            <input
+                              type="color"
+                              value={selectedObject.shadowColor || '#000000'}
+                              onChange={(e) => updateObject(selectedObject.id, { shadowColor: e.target.value })}
+                              className="w-5 h-5 rounded border border-neutral-800 cursor-pointer bg-neutral-950"
+                            />
+                          </div>
+
+                          {/* Shadow Blur */}
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[9px] text-neutral-500 uppercase font-bold">Shadow Blur</span>
+                              <span className="text-amber-400 font-bold font-mono">{selectedObject.shadowBlur || 4}px</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="0"
+                              max="40"
+                              value={selectedObject.shadowBlur || 4}
+                              onChange={(e) => updateObject(selectedObject.id, { shadowBlur: parseInt(e.target.value) })}
+                              className="w-full h-1 bg-neutral-950 rounded accent-amber-500 appearance-none cursor-pointer"
+                            />
+                          </div>
+
+                          {/* Shadow Offset X */}
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[9px] text-neutral-500 uppercase font-bold">Offset X</span>
+                              <span className="text-amber-400 font-bold font-mono">{selectedObject.shadowOffsetX || 2}px</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="-30"
+                              max="30"
+                              value={selectedObject.shadowOffsetX || 2}
+                              onChange={(e) => updateObject(selectedObject.id, { shadowOffsetX: parseInt(e.target.value) })}
+                              className="w-full h-1 bg-neutral-950 rounded accent-amber-500 appearance-none cursor-pointer"
+                            />
+                          </div>
+
+                          {/* Shadow Offset Y */}
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[9px] text-neutral-500 uppercase font-bold">Offset Y</span>
+                              <span className="text-amber-400 font-bold font-mono">{selectedObject.shadowOffsetY || 2}px</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="-30"
+                              max="30"
+                              value={selectedObject.shadowOffsetY || 2}
+                              onChange={(e) => updateObject(selectedObject.id, { shadowOffsetY: parseInt(e.target.value) })}
+                              className="w-full h-1 bg-neutral-950 rounded accent-amber-500 appearance-none cursor-pointer"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
                   {/* Pin to Smart Controls Switch */}
                   <div className="flex items-center justify-between pt-2 border-t border-neutral-800/40">
                     <span className="text-xs text-neutral-400 font-bold">Pin to Smart Controls</span>

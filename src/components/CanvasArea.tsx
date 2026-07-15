@@ -4180,22 +4180,38 @@ export default function CanvasArea({
       }
       if (layer) {
         combinedAlpha *= layer.opacity !== undefined ? layer.opacity : 1;
-        if (layer.blurAmount && layer.blurAmount > 0) {
-          ctx.filter = `blur(${layer.blurAmount}px)`;
-        } else {
-          ctx.filter = 'none';
-        }
+      }
+      
+      // Combine layer blur amount and per-object blur value
+      let totalBlur = 0;
+      if (layer && layer.blurAmount && layer.blurAmount > 0) {
+        totalBlur += layer.blurAmount;
+      }
+      if (drawObj.blur && drawObj.blur > 0) {
+        totalBlur += drawObj.blur;
+      }
+
+      if (totalBlur > 0) {
+        ctx.filter = `blur(${totalBlur}px)`;
       } else {
         ctx.filter = 'none';
       }
       ctx.globalAlpha = combinedAlpha;
 
       // 1. Drop Shadow Effect
-      if (drawObj.shadow && drawObj.shadow.enabled) {
-        ctx.shadowColor = drawObj.shadow.color || 'rgba(0,0,0,0.4)';
-        ctx.shadowBlur = drawObj.shadow.blur ?? 10;
-        ctx.shadowOffsetX = drawObj.shadow.offsetX ?? 5;
-        ctx.shadowOffsetY = drawObj.shadow.offsetY ?? 5;
+      const shadowActive = (drawObj.shadow && drawObj.shadow.enabled) || !!drawObj.shadowEnabled;
+      if (shadowActive) {
+        if (drawObj.shadow && drawObj.shadow.enabled) {
+          ctx.shadowColor = drawObj.shadow.color || 'rgba(0,0,0,0.4)';
+          ctx.shadowBlur = drawObj.shadow.blur ?? 10;
+          ctx.shadowOffsetX = drawObj.shadow.offsetX ?? 5;
+          ctx.shadowOffsetY = drawObj.shadow.offsetY ?? 5;
+        } else {
+          ctx.shadowColor = drawObj.shadowColor || '#000000';
+          ctx.shadowBlur = drawObj.shadowBlur ?? 4;
+          ctx.shadowOffsetX = drawObj.shadowOffsetX ?? 2;
+          ctx.shadowOffsetY = drawObj.shadowOffsetY ?? 2;
+        }
       } else {
         ctx.shadowColor = 'transparent';
         ctx.shadowBlur = 0;
@@ -4596,7 +4612,7 @@ export default function CanvasArea({
             strokeWidth: drawObj.strokeWidth,
             strokeOpacity: drawObj.strokeOpacity ?? 1.0,
             hardness: drawObj.hardness ?? 0.8,
-            blur: drawObj.blur ?? 0,
+            blur: (drawObj.blur ?? 0) + (layer?.blurAmount ?? 0),
             shadowEnabled: drawObj.shadowEnabled ?? false,
             shadowColor: drawObj.shadowColor ?? '#000000',
             shadowBlur: drawObj.shadowBlur ?? 4,
